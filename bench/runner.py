@@ -78,7 +78,7 @@ def run_bench(
     n: int = 1000,
     warmup: int = 100,
 ) -> BenchResult:
-    """Discard warmup iters; time n iters with perf_counter (us samples).
+    """Discard warmup iters; time n iters with perf_counter (µs samples).
 
     Counters sum across measured iters (None -> {}); a non-int counter
     value raises TypeError naming the key.
