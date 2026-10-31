@@ -3,7 +3,6 @@ cffi==2.1.1
 cryptography==50.0.2
 iniconfig==2.3.1
 librt==0.16.0
--e git+https://github.com/DavidZapataOh/mandate.git@271603b14b43f38ac0977d3d94992e0091389088#egg=mandate
 mypy==2.4.1
 mypy_extensions==1.1.0
 packaging==26.3
