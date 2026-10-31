@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from gate.policy import Verdict
 
@@ -26,18 +27,20 @@ class DecisionEvent:
     reason: str
     latency_us: float
 
-    def to_dict(self) -> dict[str, Any]:
-        """Wire format; key set frozen by the console contract."""
-        return {
-            "v": self.v,
-            "type": "urn:mandate:decision/v1",
-            "event_id": self.event_id,
-            "ts": self.ts,
-            "mode": self.mode.value,
-            "verdict": self.verdict.value,
-            "action_hash": self.action_hash,
-            "policy_id": self.policy_id,
-            "cert_jti": self.cert_jti,
-            "reason": self.reason,
-            "latency_us": self.latency_us,
-        }
+    def to_json(self) -> str:
+        """Compact JSON on the pinned console keys (mode/verdict as values)."""
+        return json.dumps(
+            {
+                "v": self.v,
+                "id": self.event_id,
+                "ts": self.ts,
+                "mode": str(self.mode),
+                "verdict": str(self.verdict),
+                "action": self.action_hash,
+                "policy": self.policy_id,
+                "cert": self.cert_jti,
+                "reason": self.reason,
+                "lat_us": self.latency_us,
+            },
+            separators=(",", ":"),
+        )

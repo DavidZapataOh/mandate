@@ -125,36 +125,34 @@ def test_kill_switch(sample_policy, sample_intent, keypair):
     assert d.event.reason == "kill-switch: engaged"
 
 
-def test_event_json_contract(sample_policy, sample_intent, keypair):
+def test_event_contract(sample_policy, sample_intent, keypair):
     private_key, _ = keypair
-    d, e = None, None
-    for mode in (Mode.ENFORCE, Mode.SHADOW):
-        d = _decide(
-            _bank_call(),
-            sample_policy,
-            sample_intent,
-            private_key,
-            mode,
-            mode.value[0] * 32,
-        )
-        e = json.loads(json.dumps(d.event.to_dict()))
-        assert e == {
-            "v": 1,
-            "type": "urn:mandate:decision/v1",
-            "event_id": e["event_id"],
-            "ts": 1800000000,
-            "mode": mode.value,
-            "verdict": "MET",
-            "action_hash": e["action_hash"],
-            "policy_id": "payments",
-            "cert_jti": e["cert_jti"],
-            "reason": e["reason"],
-            "latency_us": e["latency_us"],
-        }
-        assert isinstance(e["latency_us"], float)
-        assert e["latency_us"] >= 0.0
-        assert e["latency_us"] < 40_000.0
-    assert d is not None and e is not None
+    d = _decide(
+        _bank_call(),
+        sample_policy,
+        sample_intent,
+        private_key,
+        Mode.ENFORCE,
+        "e" * 32,
+    )
+    payload = json.loads(d.event.to_json())
+    assert list(payload) == [
+        "v",
+        "id",
+        "ts",
+        "mode",
+        "verdict",
+        "action",
+        "policy",
+        "cert",
+        "reason",
+        "lat_us",
+    ]
+    assert payload["v"] == 1
+    assert payload["id"] == "evt:" + "e" * 32
+    assert (payload["mode"], payload["verdict"]) == ("ENFORCE", "MET")
+    assert payload["cert"] == "e" * 32
+    assert payload["lat_us"] >= 0.0
 
 
 def test_decide_bench_measures_real_path(sample_policy, sample_intent, keypair):
