@@ -1,0 +1,6 @@
+# Per-path budgets. Every measured path needs a complete section or the gate fails closed.
+# [paths.<name>]
+# p50_us = 0.0
+# p95_us = 0.0
+# min_decisions_per_s = 0.0
+[paths]
