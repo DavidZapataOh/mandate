@@ -3,4 +3,27 @@
 # p50_us = 0.0
 # p95_us = 0.0
 # min_decisions_per_s = 0.0
-[paths]
+[paths."gate.cava.hash"]
+p50_us = 10.0
+p95_us = 10.0
+min_decisions_per_s = 100000.0
+
+[paths."gate.policy.evaluate"]
+p50_us = 3.0
+p95_us = 3.0
+min_decisions_per_s = 400000.0
+
+[paths."gate.certs.verify"]
+p50_us = 220.0
+p95_us = 250.0
+min_decisions_per_s = 4000.0
+
+[paths."gate.shim.decide"]
+p50_us = 140.0
+p95_us = 150.0
+min_decisions_per_s = 7000.0
+
+[paths."gate.approval.verify"]
+p50_us = 140.0
+p95_us = 170.0
+min_decisions_per_s = 6500.0
