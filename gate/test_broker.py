@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from gate.broker import Delegation, Scope, mint, verify_chain
+from gate.broker import Delegation, Scope, action_within_scope, mint, verify_chain
 from gate.certs import BitstringRevocation, generate_keypair
 
 
@@ -191,3 +191,30 @@ def test_narrowed_equal_cap_mints():
         5,
     )
     assert d.scope.max_spend_cents == 20000
+
+
+def test_action_within_scope(sample_action):
+    narrow = Scope(atoms=("mcp:bank.pay",), max_spend_cents=5000)
+    ok_action = dataclasses.replace(
+        sample_action, targets=("mcp:bank.pay", "amount:USD:100")
+    )
+    assert action_within_scope(narrow, ok_action) == (True, "ok: within scope")
+    over_target = dataclasses.replace(
+        sample_action,
+        targets=("mcp:bank.pay", "domain:evil.com", "amount:USD:100"),
+    )
+    assert action_within_scope(narrow, over_target) == (
+        False,
+        "scope: target outside delegation",
+    )
+    over_spend = dataclasses.replace(
+        sample_action, targets=("mcp:bank.pay", "amount:USD:6000")
+    )
+    assert action_within_scope(narrow, over_spend) == (
+        False,
+        "scope: spend exceeds delegation",
+    )
+    bad = dataclasses.replace(
+        sample_action, targets=("mcp:bank.pay", "amount:USD:lots")
+    )
+    assert action_within_scope(narrow, bad) == (False, "scope: malformed amount")

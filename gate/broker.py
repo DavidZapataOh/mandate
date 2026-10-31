@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
+from gate.cava import CavaAction
 from gate.certs import BitstringRevocation
 
 PREFIX = b"delegate/v1:"
@@ -126,3 +127,22 @@ def verify_chain(
         parent_pub = link.child_pub
         parent_scope = link.scope
     return (True, "ok: chain valid")
+
+
+def action_within_scope(scope: Scope, action: CavaAction) -> tuple[bool, str]:
+    """Every target covered and spend within cap."""
+    amounts: list[int] = []
+    for target in action.targets:
+        if target.startswith("amount:"):
+            try:
+                amounts.append(int(target.rsplit(":", 1)[-1]))
+            except ValueError:
+                return (False, "scope: malformed amount")
+    atoms = set(scope.atoms)
+    for target in action.targets:
+        if not target.startswith("amount:") and target not in atoms:
+            return (False, "scope: target outside delegation")
+    for cents in amounts:
+        if cents > scope.max_spend_cents:
+            return (False, "scope: spend exceeds delegation")
+    return (True, "ok: within scope")
