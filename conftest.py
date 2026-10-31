@@ -3,7 +3,8 @@
 import pytest
 
 from gate.cava import CavaAction, Freshness
-from gate.policy import Intent, Policy, Rule
+from gate.certs import CertClaims, generate_keypair
+from gate.policy import Intent, Policy, Rule, Verdict
 
 
 @pytest.fixture
@@ -56,4 +57,26 @@ def sample_policy() -> Policy:
                 approval_required=False,
             ),
         ),
+    )
+
+
+@pytest.fixture
+def keypair() -> tuple[bytes, bytes]:
+    return generate_keypair()
+
+
+@pytest.fixture
+def cert_claims() -> CertClaims:
+    return CertClaims(
+        action_hash="5393e9fa493501ae0f5a7247bd5e8c6722b37d05996e2baab609ac920990002b",
+        policy_id="payments",
+        policy_version=1,
+        verdict=Verdict.MET,
+        freshness_nonce="deadbeef00112233445566778899aabbcc",
+        issued_at=1800000000,
+        expires_at=1800000300,
+        scope="mcp:bank.pay:transfer:checking-881",
+        reasoning_commitment="b5" * 32,
+        evidence_refs=("ev:funds-proof-7f3a",),
+        revocation_index=7,
     )
