@@ -1,0 +1,37 @@
+[project]
+name = "mandate"
+version = "0.1.0"
+description = "Independent authorization and verification layer between AI agents and the world."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["gate", "evidence", "bank", "zk", "swarm", "mandate"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "S"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["gate.test_*", "evidence.test_*", "bank.test_*", "zk.test_*", "swarm.test_*", "mandate.test_*", "e2e.test_*", "bench.test_*"]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+markers = ["live: tests requiring live external services"]
