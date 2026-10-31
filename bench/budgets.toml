@@ -1,29 +1,27 @@
 # Per-path budgets. Every measured path needs a complete section or the gate fails closed.
-# [paths.<name>]
-# p50_us = 0.0
-# p95_us = 0.0
-# min_decisions_per_s = 0.0
+# Rule: p50/p95 = max(local x9, CI-observed x3); min_decisions_per_s = min(local /9, CI-observed /3).
+# CI (shared Linux runner) measured 3-8x slower than local; all budgets keep >=2x margin over every observed actual.
 [paths."gate.cava.hash"]
-p50_us = 10.0
-p95_us = 10.0
-min_decisions_per_s = 100000.0
+p50_us = 28.0
+p95_us = 46.0
+min_decisions_per_s = 32000.0
 
 [paths."gate.policy.evaluate"]
-p50_us = 3.0
-p95_us = 3.0
-min_decisions_per_s = 400000.0
+p50_us = 7.0
+p95_us = 17.0
+min_decisions_per_s = 85000.0
 
 [paths."gate.certs.verify"]
-p50_us = 220.0
-p95_us = 250.0
-min_decisions_per_s = 4000.0
+p50_us = 641.0
+p95_us = 743.0
+min_decisions_per_s = 1500.0
 
 [paths."gate.shim.decide"]
-p50_us = 140.0
-p95_us = 150.0
-min_decisions_per_s = 7000.0
+p50_us = 408.0
+p95_us = 467.0
+min_decisions_per_s = 2400.0
 
 [paths."gate.approval.verify"]
-p50_us = 140.0
-p95_us = 170.0
-min_decisions_per_s = 6500.0
+p50_us = 413.0
+p95_us = 502.0
+min_decisions_per_s = 2300.0
