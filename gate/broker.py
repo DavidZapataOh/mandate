@@ -62,13 +62,7 @@ def mint(
     revocation_index: int,
 ) -> Delegation:
     """Mint a child link; raises unless scope is strictly inside parent."""
-    atoms = set(scope.atoms)
-    parent_atoms = set(parent_scope.atoms)
-    subset = atoms <= parent_atoms
-    cap_within = scope.max_spend_cents <= parent_scope.max_spend_cents
-    narrowed = atoms < parent_atoms
-    lowered = scope.max_spend_cents < parent_scope.max_spend_cents
-    if not (subset and cap_within and (narrowed or lowered)):
+    if not _strictly_inside(scope, parent_scope):
         raise ValueError("cannot delegate: scope exceeds parent")
     unsigned = Delegation(
         v=1,
@@ -122,7 +116,11 @@ def verify_chain(
             return (False, "bad-signature: chain link invalid")
         if not _strictly_inside(link.scope, parent_scope):
             return (False, "scope: link exceeds parent")
-        if revoked.is_revoked(link.revocation_index):
+        try:
+            is_revoked = revoked.is_revoked(link.revocation_index)
+        except IndexError:
+            return (False, "malformed: revocation index out of range")
+        if is_revoked:
             return (False, "revoked: delegation revoked")
         parent_pub = link.child_pub
         parent_scope = link.scope

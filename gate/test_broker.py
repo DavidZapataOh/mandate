@@ -178,6 +178,24 @@ def test_empty_chain_rejected():
     ) == (False, "empty: chain has no links")
 
 
+def test_out_of_range_revocation_index_denied() -> None:
+    root_priv, root_pub = generate_keypair()
+    _, child_pub = generate_keypair()
+    link = mint(
+        root_priv,
+        root_pub,
+        child_pub,
+        Scope(atoms=("mcp:bank.pay",), max_spend_cents=5000),
+        _root_scope(),
+        1800003600,
+        5000,
+    )
+    ok, reason = verify_chain(
+        (link,), root_pub, _root_scope(), 1800000000, BitstringRevocation()
+    )
+    assert (ok, reason) == (False, "malformed: revocation index out of range")
+
+
 def test_narrowed_equal_cap_mints():
     parent_priv, parent_pub = generate_keypair()
     _, child_pub = generate_keypair()
