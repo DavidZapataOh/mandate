@@ -33,7 +33,28 @@ strict = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["gate.test_*", "evidence.test_*", "bank.test_*", "zk.test_*", "swarm.test_*", "mandate.test_*", "e2e.test_*", "bench.test_*"]
+module = [
+    "bank.test_verifier",
+    "bench.test_report",
+    "bench.test_runner",
+    "e2e.test_drills_service",
+    "e2e.test_smoke_imports",
+    "evidence.test_evidence",
+    "evidence.test_tlsn_live",
+    "gate.test_approval",
+    "gate.test_broker",
+    "gate.test_cava",
+    "gate.test_certs",
+    "gate.test_mcp_proxy",
+    "gate.test_perf",
+    "gate.test_policy",
+    "gate.test_registry",
+    "gate.test_shim",
+    "gate.test_vault",
+    "mandate.test_sdk",
+    "zk.test_circuit_live",
+    "zk.test_settle",
+]
 ignore_errors = true
 
 [tool.pytest.ini_options]

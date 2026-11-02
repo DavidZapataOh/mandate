@@ -23,7 +23,7 @@ NOW = 1800000100
 NONCE = "dd11ee22ff3300445566778899001122"
 
 
-def _call():
+def _call() -> RawCall:
     return RawCall(
         runtime="cli",
         executable="bank.pay",
@@ -41,7 +41,7 @@ def _call():
     )
 
 
-def _policy():
+def _policy() -> Policy:
     return Policy(
         policy_id="payments",
         version=1,
@@ -59,7 +59,7 @@ def _policy():
     )
 
 
-def _intent():
+def _intent() -> Intent:
     return Intent(
         amount_cents=20000,
         currency="USD",
@@ -68,7 +68,7 @@ def _intent():
     )
 
 
-def _request(private_key, mode=Mode.ENFORCE):
+def _request(private_key: bytes, mode: Mode = Mode.ENFORCE) -> RunRequest:
     return RunRequest(
         call=_call(),
         policy=_policy(),
@@ -164,13 +164,13 @@ POLICY = {
 }
 
 
-def _policy_file(tmp_path):
+def _policy_file(tmp_path: Path) -> Path:
     path = tmp_path / "policy.json"
     path.write_text(json.dumps(POLICY))
     return path
 
 
-def _argv(policy, **over):
+def _argv(policy: Path, **over: str) -> list[str]:
     args = {
         "policy": str(policy),
         "amount_cents": "20000",
