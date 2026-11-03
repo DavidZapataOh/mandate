@@ -1,22 +1,23 @@
 """Meta Model API client: Responses API with stateless encrypted replay.
 
+Uses the OpenAI SDK pointed at Meta Model API, as the Meta docs prescribe.
 Every call is traced (model, response id, request id, latency, tokens) so
 each governed action can name the Meta call that proposed it.
 """
 
 import hashlib
-import json
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import httpx2
+import openai
+from openai import OpenAI, omit
+
 DEFAULT_BASE_URL = "https://api.meta.ai/v1"
 _COMMIT_DOMAIN = b"mandate/reasoning/v1\n"
 
-Transport = Callable[[str, dict[str, str], bytes], tuple[int, dict[str, str], bytes]]
 Item = dict[str, Any]
 
 
@@ -32,7 +33,7 @@ class MetaTrace:
         model: Model id echoed by the API.
         response_id: Response id (resp_...).
         request_id: x-request-id header when the API sends one.
-        latency_ms: Wall time of the HTTP round trip.
+        latency_ms: Wall time of the call.
         input_tokens: Billed input tokens.
         output_tokens: Billed output tokens.
     """
@@ -51,7 +52,7 @@ class MetaResponse:
 
     Args:
         trace: Audit facts for the call.
-        output: Raw output items, in order, for stateless replay.
+        output: Output items as plain dicts, in order, for stateless replay.
     """
 
     trace: MetaTrace
@@ -70,34 +71,13 @@ class MetaResponse:
     @property
     def text(self) -> str:
         """Concatenated assistant output text."""
-        parts: list[str] = []
-        for item in self.output:
-            if item.get("type") != "message":
-                continue
-            for block in item.get("content") or []:
-                if block.get("type") == "output_text":
-                    parts.append(str(block.get("text", "")))
-        return "".join(parts)
-
-
-def urllib_transport(
-    url: str, headers: dict[str, str], payload: bytes
-) -> tuple[int, dict[str, str], bytes]:
-    """POST over stdlib urllib; HTTP errors return their status and body."""
-    if not url.startswith("https://"):
-        raise ValueError(f"refusing non-https url: {url}")
-    req = urllib.request.Request(  # noqa: S310 (https enforced above)
-        url, data=payload, headers=headers, method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:  # noqa: S310
-            return (
-                resp.status,
-                {k.lower(): v for k, v in resp.headers.items()},
-                resp.read(),
-            )
-    except urllib.error.HTTPError as exc:
-        return (exc.code, {k.lower(): v for k, v in exc.headers.items()}, exc.read())
+        return "".join(
+            str(block.get("text", ""))
+            for item in self.output
+            if item.get("type") == "message"
+            for block in item.get("content") or []
+            if block.get("type") == "output_text"
+        )
 
 
 def api_key_from_env(env: Mapping[str, str]) -> str:
@@ -116,8 +96,8 @@ def api_key_from_env(env: Mapping[str, str]) -> str:
 def reasoning_commitment(items: Iterable[Item]) -> str:
     """SHA-256 commitment over the encrypted reasoning of a turn chain.
 
-    Order-independent across non-reasoning items, order-preserving across
-    reasoning items. Domain-separated and length-prefixed.
+    Ignores non-reasoning items, preserves reasoning order, and is
+    domain-separated and length-prefixed.
 
     Raises:
         ValueError: When a reasoning item lacks encrypted_content.
@@ -142,7 +122,8 @@ class MetaClient:
     Args:
         api_key: Meta Model API key.
         base_url: API base URL.
-        transport: HTTP POST function; injectable for tests.
+        http_client: Optional HTTP client; injectable for tests.
+        max_retries: SDK retry budget for transient failures.
         clock: Monotonic clock in seconds; injectable for tests.
     """
 
@@ -150,12 +131,16 @@ class MetaClient:
         self,
         api_key: str,
         base_url: str = DEFAULT_BASE_URL,
-        transport: Transport = urllib_transport,
+        http_client: httpx2.Client | None = None,
+        max_retries: int = 2,
         clock: Callable[[], float] = time.perf_counter,
     ) -> None:
-        self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
-        self._transport = transport
+        self._sdk = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            http_client=http_client,
+            max_retries=max_retries,
+        )
         self._clock = clock
 
     def respond(
@@ -172,46 +157,39 @@ class MetaClient:
         Raises:
             MetaAPIError: On HTTP errors, API errors, or bad payloads.
         """
-        body: dict[str, Any] = {
-            "model": model,
-            "input": input,
-            "store": False,
-            "include": ["reasoning.encrypted_content"],
-            "reasoning": {"effort": effort},
-        }
-        tool_list = list(tools)
-        if tool_list:
-            body["tools"] = tool_list
-        if instructions is not None:
-            body["instructions"] = instructions
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        tool_list: Any = list(tools) or omit
         start = self._clock()
-        status, resp_headers, raw = self._transport(
-            f"{self._base_url}/responses", headers, json.dumps(body).encode()
-        )
-        latency_ms = (self._clock() - start) * 1000.0
-        if status >= 400:
-            raise MetaAPIError(f"HTTP {status}: {raw[:300]!r}")
         try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            # SDK types follow OpenAI's catalog; Meta adds values such as
+            # effort "max", so the typed overloads cannot match.
+            resp = self._sdk.responses.create(  # type: ignore[call-overload]
+                model=model,
+                input=input,
+                store=False,
+                include=["reasoning.encrypted_content"],
+                reasoning={"effort": effort},
+                tools=tool_list,
+                instructions=omit if instructions is None else instructions,
+            )
+        except openai.APIStatusError as exc:
+            raise MetaAPIError(f"HTTP {exc.status_code}: {exc.message}") from exc
+        except (openai.APIResponseValidationError, ValueError) as exc:
             raise MetaAPIError("response undecodable") from exc
-        if not isinstance(data, dict):
+        latency_ms = (self._clock() - start) * 1000.0
+        if not hasattr(resp, "status"):
             raise MetaAPIError("response undecodable")
-        if data.get("error"):
-            raise MetaAPIError(f"API error: {data['error']}")
-        if data.get("status") != "completed":
-            raise MetaAPIError(f"response status {data.get('status')}")
-        usage = data.get("usage") or {}
+        if resp.error is not None:
+            raise MetaAPIError(f"API error: {resp.error.message}")
+        if resp.status != "completed":
+            raise MetaAPIError(f"response status {resp.status}")
+        usage = resp.usage
         trace = MetaTrace(
-            model=str(data.get("model", model)),
-            response_id=str(data.get("id", "")),
-            request_id=resp_headers.get("x-request-id"),
+            model=resp.model,
+            response_id=resp.id,
+            request_id=resp._request_id,
             latency_ms=latency_ms,
-            input_tokens=int(usage.get("input_tokens", 0)),
-            output_tokens=int(usage.get("output_tokens", 0)),
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
         )
-        return MetaResponse(trace=trace, output=tuple(data.get("output") or ()))
+        output = tuple(item.model_dump(exclude_none=True) for item in resp.output)
+        return MetaResponse(trace=trace, output=output)

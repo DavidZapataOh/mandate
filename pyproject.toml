@@ -5,7 +5,7 @@ description = "Independent authorization and verification layer between AI agent
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = ["cryptography>=42", "pyjwt>=2.10"]
+dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16"]
 
 [project.scripts]
 mandate = "mandate.cli:main"
@@ -52,6 +52,7 @@ module = [
     "gate.test_registry",
     "gate.test_shim",
     "gate.test_vault",
+    "demo.test_make_bill",
     "swarm.test_meta_client",
     "mandate.test_sdk",
     "zk.test_circuit_live",

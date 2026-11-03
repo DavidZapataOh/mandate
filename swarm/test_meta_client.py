@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 
+import httpx2
 import pytest
 
 from swarm.meta_client import (
@@ -20,14 +21,18 @@ REASONING = {
 }
 CALL = {
     "type": "function_call",
+    "id": "fc_1",
     "call_id": "call_1",
     "name": "pay_bill",
     "arguments": '{"to": "acme-991", "amount_cents": 20000}',
+    "status": "completed",
 }
 MESSAGE = {
     "type": "message",
+    "id": "msg_1",
     "role": "assistant",
-    "content": [{"type": "output_text", "text": "Paying the bill."}],
+    "status": "completed",
+    "content": [{"type": "output_text", "text": "Paying the bill.", "annotations": []}],
 }
 
 
@@ -35,47 +40,72 @@ def _body(output, **over):
     body = {
         "id": "resp_abc",
         "object": "response",
+        "created_at": 1714502400,
         "status": "completed",
         "model": "muse-spark-1.3",
         "error": None,
         "output": output,
-        "usage": {"input_tokens": 69, "output_tokens": 163, "total_tokens": 232},
+        "parallel_tool_calls": True,
+        "tool_choice": "auto",
+        "tools": [],
+        "usage": {
+            "input_tokens": 69,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 163,
+            "output_tokens_details": {"reasoning_tokens": 120},
+            "total_tokens": 232,
+        },
     }
     body.update(over)
-    return json.dumps(body).encode()
+    return body
 
 
-class _Recorder:
-    def __init__(self, status=200, body=b"", headers=None):
+class _Server:
+    def __init__(self, status=200, body=None, headers=None, raw=None):
         self.status = status
         self.body = body
+        self.raw = raw
         self.headers = {"x-request-id": "req-77"} if headers is None else headers
-        self.calls = []
+        self.requests = []
 
-    def __call__(self, url, headers, payload):
-        self.calls.append((url, headers, json.loads(payload)))
-        return (self.status, self.headers, self.body)
+    def __call__(self, request):
+        self.requests.append(request)
+        content = self.raw if self.raw is not None else json.dumps(self.body).encode()
+        headers = dict(self.headers, **{"content-type": "application/json"})
+        return httpx2.Response(self.status, headers=headers, content=content)
 
-
-def _clock():
-    ticks = iter([10.0, 10.25])
-    return lambda: next(ticks)
+    def client(self, clock=None):
+        http = httpx2.Client(transport=httpx2.MockTransport(self))
+        ticks = iter([10.0, 10.25])
+        return MetaClient(
+            "sk-test",
+            http_client=http,
+            max_retries=0,
+            clock=clock or (lambda: next(ticks)),
+        )
 
 
 def test_request_shape_is_stateless_encrypted_replay():
-    rec = _Recorder(body=_body([REASONING, CALL]))
-    client = MetaClient("sk-test", transport=rec, clock=_clock())
-    tools = ({"type": "function", "name": "pay_bill", "parameters": {}},)
-    client.respond(
+    server = _Server(body=_body([REASONING, CALL]))
+    tools = (
+        {
+            "type": "function",
+            "name": "pay_bill",
+            "description": "Pay a bill.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    )
+    server.client().respond(
         "muse-spark-1.3",
         [{"role": "user", "content": "pay"}],
         tools=tools,
         instructions="be exact",
         effort="high",
     )
-    url, headers, sent = rec.calls[0]
-    assert url == f"{DEFAULT_BASE_URL}/responses"
-    assert headers["Authorization"] == "Bearer sk-test"
+    request = server.requests[0]
+    sent = json.loads(request.content)
+    assert str(request.url) == f"{DEFAULT_BASE_URL}/responses"
+    assert request.headers["authorization"] == "Bearer sk-test"
     assert sent["model"] == "muse-spark-1.3"
     assert sent["store"] is False
     assert sent["include"] == ["reasoning.encrypted_content"]
@@ -86,40 +116,40 @@ def test_request_shape_is_stateless_encrypted_replay():
 
 
 def test_response_parsed_and_traced():
-    rec = _Recorder(body=_body([REASONING, CALL, MESSAGE]))
-    client = MetaClient("sk-test", transport=rec, clock=_clock())
-    resp = client.respond("muse-spark-1.3", "pay")
+    server = _Server(body=_body([REASONING, CALL, MESSAGE]))
+    resp = server.client().respond("muse-spark-1.3", "pay")
     assert resp.trace.model == "muse-spark-1.3"
     assert resp.trace.response_id == "resp_abc"
     assert resp.trace.request_id == "req-77"
     assert resp.trace.latency_ms == 250.0
     assert (resp.trace.input_tokens, resp.trace.output_tokens) == (69, 163)
-    assert resp.reasoning_items == (REASONING,)
-    assert resp.function_calls == (CALL,)
+    assert [i["encrypted_content"] for i in resp.reasoning_items] == [
+        "Q-PaENCRYPTEDblob"
+    ]
+    assert [(c["name"], c["call_id"]) for c in resp.function_calls] == [
+        ("pay_bill", "call_1")
+    ]
     assert resp.text == "Paying the bill."
-    assert resp.output == (REASONING, CALL, MESSAGE)
+    assert [i["type"] for i in resp.output] == ["reasoning", "function_call", "message"]
 
 
 def test_missing_request_id_header_is_none():
-    rec = _Recorder(body=_body([MESSAGE]), headers={})
-    resp = MetaClient("k", transport=rec, clock=_clock()).respond("m", "x")
-    assert resp.trace.request_id is None
+    server = _Server(body=_body([MESSAGE]), headers={})
+    assert server.client().respond("m", "x").trace.request_id is None
 
 
 @pytest.mark.parametrize(
-    ("status", "body", "match"),
+    ("server", "match"),
     [
-        (401, b'{"error": {"message": "bad key"}}', "HTTP 401"),
-        (200, _body([], error={"message": "boom"}), "boom"),
-        (200, _body([], status="failed"), "status failed"),
-        (200, b"not json", "undecodable"),
+        (_Server(status=401, body={"error": {"message": "bad key"}}), "HTTP 401"),
+        (_Server(body=_body([], status="failed")), "status failed"),
+        (_Server(body=_body([], error={"code": "x", "message": "boom"})), "boom"),
+        (_Server(raw=b"not json"), "undecodable"),
     ],
 )
-def test_errors_raise(status, body, match):
-    rec = _Recorder(status=status, body=body)
-    client = MetaClient("k", transport=rec, clock=_clock())
+def test_errors_raise(server, match):
     with pytest.raises(MetaAPIError, match=match):
-        client.respond("m", "x")
+        server.client().respond("m", "x")
 
 
 def test_reasoning_commitment_binds_encrypted_content():
@@ -152,9 +182,8 @@ def test_api_key_from_env():
 
 @pytest.mark.live
 def test_live_meta_call_commits_reasoning():
-    env = dict(os.environ)
     try:
-        key = api_key_from_env(env)
+        key = api_key_from_env(dict(os.environ))
     except KeyError:
         pytest.skip("live: set MODEL_API_KEY or META_API_KEY")
     resp = MetaClient(key).respond(
