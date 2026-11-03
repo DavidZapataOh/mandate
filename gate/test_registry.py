@@ -113,3 +113,11 @@ def test_anchor_referenced():
         reg.anchor(1800000400)
     with pytest.raises(ValueError, match="no keypair"):
         Registry().anchor(1800000400)
+
+
+def test_registry_accepts_anchor_entries():
+    registry = Registry()
+    assert registry.append("anchor", '{"v":1}') == 1
+    assert verify_inclusion(registry.prove(1), registry.root()) is True
+    with pytest.raises(ValueError, match="unknown entry kind"):
+        registry.append("bogus", "x")

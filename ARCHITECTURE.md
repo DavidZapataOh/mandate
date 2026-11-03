@@ -15,4 +15,4 @@ TODO: record each architectural decision with date and rationale.
 TODO: principals, trust boundaries, and out-of-scope threats.
 
 ## Honest seams
-TODO: every simplification or fallback is labeled here with its location.
+- Reasoning anchor (swarm/anchor.py): binds a certificate to the model, response id and encrypted reasoning that Meta returned. Meta Model API does not authenticate replayed encrypted reasoning, so the anchor proves non-substitution after issuance, not that Meta re-verified the reasoning.

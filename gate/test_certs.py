@@ -7,6 +7,7 @@ from gate.certs import (
     disclose,
     issue_certificate,
     issue_sd_jwt,
+    read_claims,
     verify_certificate,
     verify_sd_jwt,
 )
@@ -106,3 +107,15 @@ def test_discloses_subset_only(keypair, cert_claims):
     tampered = sandwich[:-4] + "AAAA"
     _, ok, reason = verify_sd_jwt(tampered, public_key, 1800000100)
     assert (ok, reason) == (False, "tampered: disclosure digest unknown")
+
+
+def test_bad_public_key_is_a_reason(keypair, cert_claims):
+    private_key, _ = keypair
+    token = issue_certificate(cert_claims, private_key, "jti-k")
+    bad = (None, "malformed: bad public key")
+    assert read_claims("x.y.z", b"short") == bad
+    store, clean = SingleUseStore(), BitstringRevocation()
+    assert verify_certificate(token, b"short", 1800000100, store, clean) == (
+        False,
+        "malformed: bad public key",
+    )

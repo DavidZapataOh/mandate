@@ -7,12 +7,12 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from gate.shim import RawCall
+from swarm.anchor import ReasoningAnchor, anchor_from
 from swarm.meta_client import (
     Item,
     MetaAPIError,
     MetaResponse,
     MetaTrace,
-    reasoning_commitment,
 )
 
 MODEL = "muse-spark-1.3"
@@ -130,7 +130,8 @@ class Proposal:
         call: The proposed call, mapped for the gate.
         call_id: Id of the function call, needed to report its outcome.
         trace: Audit facts of the Meta call that proposed it.
-        reasoning_commitment: Commitment over the turn's encrypted reasoning.
+        anchor: Identity of the Meta response and its encrypted reasoning.
+        reasoning_commitment: The anchor digest, committed into the certificate.
         rationale: The model's stated reasoning text.
         transcript: Input and output items, replayable statelessly.
     """
@@ -138,9 +139,18 @@ class Proposal:
     call: RawCall
     call_id: str
     trace: MetaTrace
+    anchor: ReasoningAnchor
     reasoning_commitment: str
     rationale: str
     transcript: tuple[Item, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            self.reasoning_commitment != self.anchor.digest()
+            or self.anchor.model != self.trace.model
+            or self.anchor.response_id != self.trace.response_id
+        ):
+            raise ValueError("proposal: commitment does not match anchor")
 
 
 def bill_input(pdf: bytes, filename: str, request: str) -> list[Item]:
@@ -203,14 +213,15 @@ def propose_payment(
         raise ProposalError(f"{len(calls)} payments proposed")
     call = call_from_tool(calls[0], source, evidence_refs)
     try:
-        commitment = reasoning_commitment(resp.output)
+        anchor = anchor_from(resp.trace, resp.output)
     except ValueError as exc:
         raise MetaAPIError("response undecodable") from exc
     return Proposal(
         call=call,
         call_id=calls[0]["call_id"],
         trace=resp.trace,
-        reasoning_commitment=commitment,
+        anchor=anchor,
+        reasoning_commitment=anchor.digest(),
         rationale=resp.text,
         transcript=(*items, *resp.output),
     )

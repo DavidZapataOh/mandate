@@ -173,6 +173,12 @@ def test_reasoning_commitment_rejects_redacted_items():
         reasoning_commitment([bare])
 
 
+def test_reasoning_commitment_rejects_newline_blobs():
+    item = {"type": "reasoning", "encrypted_content": "a\nb"}
+    with pytest.raises(ValueError, match="without newlines"):
+        reasoning_commitment([item])
+
+
 def test_api_key_from_env():
     assert api_key_from_env({"MODEL_API_KEY": "a", "META_API_KEY": "b"}) == "a"
     assert api_key_from_env({"META_API_KEY": "b"}) == "b"

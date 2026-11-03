@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import json
 
 import pytest
@@ -12,11 +13,11 @@ from swarm.agent import (
     propose_payment,
     report_outcome,
 )
+from swarm.anchor import ReasoningAnchor
 from swarm.conftest import ARGS, REASONING, TRACE, message, tool_call
 from swarm.meta_client import MetaAPIError
 
-# sha256(b"mandate/reasoning/v1\n1\nE1\n"), hand-derived
-COMMIT_E1 = "a92d0af9b6b7d4ce82a96e9a8a15b4fd445d39be1dddab2e22fc21f4d01778c9"
+ANCHOR_1 = "ecdf64cc119eedfb70667704cdb4f24c8c26cdfee47d2f628fd095dc2ab139f6"
 
 
 def test_call_from_tool_maps_to_raw_call():
@@ -92,7 +93,10 @@ def test_propose_payment_returns_governable_proposal(fake_meta):
     assert ("to", "acme-991") in proposal.call.args
     assert proposal.call_id == "call_1"
     assert proposal.trace == TRACE
-    assert proposal.reasoning_commitment == COMMIT_E1
+    assert proposal.anchor == ReasoningAnchor(
+        v=1, model="muse-spark-1.3", response_id="resp_1", blobs=("E1",)
+    )
+    assert proposal.reasoning_commitment == ANCHOR_1
     assert proposal.rationale == "Paying Acme."
     assert proposal.transcript == (*sent["input"], *output)
 
@@ -154,3 +158,13 @@ def test_propose_payment_rejects_redacted_reasoning(fake_meta):
     meta = fake_meta([redacted, tool_call()])
     with pytest.raises(MetaAPIError, match="response undecodable"):
         propose_payment(meta, b"%PDF", "acme.pdf", "Pay.", source="checking-881")
+
+
+def test_proposal_rejects_drifted_commitment(fake_meta):
+    meta = fake_meta([REASONING, tool_call()])
+    proposal = propose_payment(meta, b"%PDF", "acme.pdf", "Pay.", source="checking-881")
+    with pytest.raises(ValueError, match="commitment does not match anchor"):
+        dataclasses.replace(proposal, reasoning_commitment="00" * 32)
+    other = dataclasses.replace(proposal.anchor, response_id="resp_2")
+    with pytest.raises(ValueError, match="commitment does not match anchor"):
+        dataclasses.replace(proposal, anchor=other, reasoning_commitment=other.digest())

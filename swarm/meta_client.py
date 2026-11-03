@@ -93,14 +93,26 @@ def api_key_from_env(env: Mapping[str, str]) -> str:
     raise KeyError("set MODEL_API_KEY or META_API_KEY")
 
 
+def check_blob(blob: str) -> None:
+    """Validate one encrypted reasoning blob.
+
+    Raises:
+        ValueError: When the blob is empty or contains a newline.
+    """
+    if not blob or "\n" in blob:
+        raise ValueError("reasoning blob must be non-empty without newlines")
+
+
 def reasoning_commitment(items: Iterable[Item]) -> str:
     """SHA-256 commitment over the encrypted reasoning of a turn chain.
 
     Ignores non-reasoning items, preserves reasoning order, and is
-    domain-separated and length-prefixed.
+    domain-separated, count-prefixed and newline-delimited; blobs must not
+    contain newlines.
 
     Raises:
-        ValueError: When a reasoning item lacks encrypted_content.
+        ValueError: When a reasoning item lacks encrypted_content or its
+            blob is empty or contains a newline.
     """
     blobs: list[bytes] = []
     for item in items:
@@ -109,6 +121,7 @@ def reasoning_commitment(items: Iterable[Item]) -> str:
         content = item.get("encrypted_content")
         if not isinstance(content, str) or not content:
             raise ValueError("reasoning item without encrypted_content")
+        check_blob(content)
         blobs.append(content.encode("utf-8"))
     digest = hashlib.sha256(_COMMIT_DOMAIN + f"{len(blobs)}\n".encode())
     for blob in blobs:

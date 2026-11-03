@@ -15,7 +15,7 @@ EMPTY_ROOT = hashlib.sha256(b"registry/v1:empty").hexdigest()
 _LEAF_PREFIX = b"leaf/v1:"
 _NODE_PREFIX = b"node/v1:"
 _ANCHOR_PREFIX = b"anchor/v1:"
-_ENTRY_KINDS = frozenset({"execution", "denial"})
+_ENTRY_KINDS = frozenset({"execution", "denial", "anchor"})
 _DIGEST_LEN = 32
 _HEX64 = re.compile(r"[0-9a-fA-F]{64}")
 
@@ -95,7 +95,7 @@ def _tree_root(leaves: list[bytes]) -> bytes:
 
 
 class Registry:
-    """Append-only log of execution/denial receipts."""
+    """Append-only log of execution, denial and reasoning-anchor entries."""
 
     def __init__(
         self,

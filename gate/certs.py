@@ -126,7 +126,10 @@ def issue_certificate(claims: CertClaims, private_key: bytes, jti: str) -> str:
 
 
 def _decode(token: str, public_key: bytes) -> tuple[dict[str, Any] | None, str | None]:
-    key = Ed25519PublicKey.from_public_bytes(public_key)
+    try:
+        key = Ed25519PublicKey.from_public_bytes(public_key)
+    except ValueError:
+        return (None, "malformed: bad public key")
     try:
         payload = jwt.decode(
             token,
@@ -145,6 +148,28 @@ def _decode(token: str, public_key: bytes) -> tuple[dict[str, Any] | None, str |
     except jwt.PyJWTError:
         return (None, "malformed: token undecodable")
     return (payload, None)
+
+
+def read_claims(token: str, public_key: bytes) -> tuple[dict[str, Any] | None, str]:
+    """Signature-checked certificate subject; no freshness, no consumption.
+
+    Args:
+        token: Compact JWS certificate.
+        public_key: Raw Ed25519 public key of the issuer.
+
+    Returns:
+        ``(subject, "ok: decoded")`` on success, else ``(None, reason)``.
+    """
+    payload, error = _decode(token, public_key)
+    if payload is None or error is not None:
+        return (None, error or "malformed: token undecodable")
+    try:
+        subject = payload["events"][EVENT_TYPE]
+    except (KeyError, TypeError):
+        return (None, "malformed: token undecodable")
+    if not isinstance(subject, dict):
+        return (None, "malformed: token undecodable")
+    return (subject, "ok: decoded")
 
 
 def _freshness(payload: dict[str, Any], now: int) -> str | None:
