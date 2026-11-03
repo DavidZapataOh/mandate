@@ -63,6 +63,7 @@ class RunResult:
         certificate: Issued certificate, or None when denied or shadowed.
         event: Decision event record.
         payment: Recorded payment, or None when nothing executed.
+        action: The canonical action the gate decided on.
     """
 
     verdict: Verdict
@@ -70,6 +71,7 @@ class RunResult:
     certificate: str | None
     event: DecisionEvent
     payment: Payment | None
+    action: CavaAction | None = None
 
 
 def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResult:
@@ -100,11 +102,11 @@ def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResu
         holder_keys=request.holder_keys,
         consents=request.consents,
     )
+    action = canonize(request.call, request.nonce, request.timestamp)
     if decision.certificate is None:
         return RunResult(
-            decision.verdict, decision.event.reason, None, decision.event, None
+            decision.verdict, decision.event.reason, None, decision.event, None, action
         )
-    action = canonize(request.call, request.nonce, request.timestamp)
     bank_result = verifier.verify_and_execute(
         bank, decision.certificate, to_proposed(action), request.now
     )
@@ -114,6 +116,7 @@ def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResu
         decision.certificate,
         decision.event,
         bank_result.payment,
+        action,
     )
 
 

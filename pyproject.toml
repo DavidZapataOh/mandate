@@ -11,6 +11,7 @@ dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16
 mandate = "mandate.cli:main"
 mandate-hook = "swarm.hook:cli"
 mandate-desk = "swarm.server:cli"
+mandate-console = "swarm.console:cli"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -69,14 +70,19 @@ module = [
     "swarm.test_attacker",
     "swarm.test_anchor",
     "swarm.test_attribution",
+    "swarm.test_console",
+    "swarm.test_console_line",
     "swarm.test_desk",
     "swarm.test_flow",
     "swarm.test_hook",
+    "swarm.test_hub",
     "swarm.test_hookio",
     "swarm.test_intent",
+    "swarm.test_journal_tail",
     "swarm.test_mcp_bridge",
     "swarm.test_redteam",
     "swarm.test_server",
+    "swarm.test_server_events",
     "swarm.test_state",
     "swarm.test_meta_client",
     "swarm.test_voice",

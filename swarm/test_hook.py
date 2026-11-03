@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from swarm.console_line import read_console_line
 from swarm.hook import main
 from swarm.hookio import ChildStarted
 from swarm.state import (
@@ -394,3 +395,19 @@ def test_event_serialization_failure_denies(send, monkeypatch):
     code, out = send(EDIT)
     assert code == 0
     assert _reason(out) == "malformed: mandate error"
+
+
+def test_journal_reads_as_console_lines(send, state_dir):
+    _bound_child(send)
+    send(EDIT, nonce="e" * 32)
+    text = (state_dir / "journal.jsonl").read_text().splitlines()[-1]
+    line = read_console_line(text)
+    assert (line.seq, line.source, line.forensic) == (0, "hook", None)
+    assert line.subject == {
+        "agent": "child-1",
+        "tool": "edit_file",
+        "targets": ["file:README.md"],
+        "tool_use_id": "call_1",
+    }
+    assert (line.event["id"], line.event["verdict"]) == ("evt:" + "e" * 32, "MET")
+    assert line.meta["provider"] == "muse-code"

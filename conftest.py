@@ -1,10 +1,14 @@
 """Shared pytest fixtures (lives outside packages, never shipped)."""
 
 import itertools
-from collections.abc import Callable
+import socket
+import threading
+import time
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
+import uvicorn
 
 from bank.api import Bank
 from bank.verifier import Verifier
@@ -12,6 +16,7 @@ from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair
 from gate.consent import Consent, sign_consent
 from gate.policy import Intent, Policy, Rule, Verdict
+from swarm.console_line import ConsoleLine
 from swarm.desk import PaymentDesk
 
 
@@ -96,7 +101,9 @@ DESK_NOW = 1800001000
 @pytest.fixture
 def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
     def build(
-        register: bool = True, clock: Callable[[], int] | None = None
+        register: bool = True,
+        clock: Callable[[], int] | None = None,
+        publish: Callable[[ConsoleLine], object] | None = None,
     ) -> tuple[PaymentDesk, bytes | None]:
         gate_priv, gate_pub = generate_keypair()
         counter = itertools.count(1)
@@ -107,6 +114,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             gate_key=gate_priv,
             clock=clock or (lambda: DESK_NOW),
             nonces=lambda: f"{next(counter):032x}",
+            publish=publish,
         )
         if not register:
             return desk, None
@@ -124,3 +132,30 @@ def sign_quote() -> Callable[[bytes, dict[str, Any]], bytes]:
         return sign_consent(holder_priv, unsigned).signature
 
     return sign
+
+
+@pytest.fixture
+def serve() -> Iterator[Callable[[Any], str]]:
+    servers: list[tuple[uvicorn.Server, threading.Thread]] = []
+
+    def start(app: Any) -> str:
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(app, log_level="warning"))
+        thread = threading.Thread(
+            target=server.run, kwargs={"sockets": [sock]}, daemon=True
+        )
+        thread.start()
+        deadline = time.monotonic() + 10
+        while not server.started:
+            if time.monotonic() > deadline:
+                raise RuntimeError("server did not start")
+            time.sleep(0.02)
+        servers.append((server, thread))
+        return f"http://127.0.0.1:{port}"
+
+    yield start
+    for server, thread in servers:
+        server.should_exit = True
+        thread.join(5)

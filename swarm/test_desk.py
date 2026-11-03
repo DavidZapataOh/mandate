@@ -1,5 +1,5 @@
 from gate.certs import generate_keypair
-from gate.registry import Registry
+from gate.registry import InclusionProof, Registry, verify_inclusion
 
 NOW = 1800001000
 SUMMARY = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881"
@@ -183,3 +183,99 @@ def test_approve_on_confirmed_changes_nothing(make_desk, sign_quote):
     done = desk.confirm(q["quote_id"])
     assert desk.approve(q["quote_id"], sig) == done
     assert desk.status(q["quote_id"]) == done
+
+
+def _published(make_desk, **kwargs):
+    lines = []
+    desk, holder = make_desk(publish=lines.append, **kwargs)
+    return desk, holder, lines
+
+
+def test_desk_publishes_each_step(make_desk, sign_quote):
+    desk, holder, lines = _published(make_desk)
+    q = _quote(desk)
+    desk.approve("q:000001", b"\x00" * 64)
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    desk.confirm("q:000001")
+    desk.status("q:000001")
+    assert [(x.subject["step"], x.subject["status"]) for x in lines] == [
+        ("quote", "quoted"),
+        ("approve", "denied"),
+        ("approve", "approved"),
+        ("confirm", "confirmed"),
+    ]
+    assert {x.subject["summary"] for x in lines} == {SUMMARY}
+    assert [x.forensic is None for x in lines] == [True, True, True, False]
+
+
+def test_confirm_line_carries_the_gate_run(make_desk, sign_quote):
+    desk, holder, lines = _published(make_desk)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    line = lines[-1]
+    assert line.subject == {
+        "step": "confirm",
+        "quote_id": "q:000001",
+        "status": "confirmed",
+        "summary": SUMMARY,
+        "payment_id": "pay:000001",
+        "reason": "ok: executed",
+    }
+    forensic = line.forensic
+    assert line.event["verdict"] == "MET"
+    assert forensic["action_hash"] == line.event["action"]
+    assert forensic["cert_claims"]["action_hash"] == line.event["action"]
+    assert forensic["cert_claims"]["scope"] == "mcp:bank.pay:transfer:checking-881"
+    assert forensic["cava"]["targets"] == [
+        "amount:USD:20000",
+        "from:checking-881",
+        "ref:A-991",
+        "to:acme-991",
+    ]
+    assert forensic["cava"]["evidence_refs"] == ["q:000001"]
+    assert forensic["policy"] == {"policy_id": "desk", "rule_id": "pay-with-consent"}
+    assert forensic["consent"] == q["consent"]
+    body = (
+        '{"payment_id":"pay:000001","quote_id":"q:000001",'
+        '"reason":"ok: executed","status":"confirmed"}'
+    )
+    proof = forensic["registry"]
+    assert (proof["seq"], proof["leaves"], proof["siblings"]) == (1, 1, [])
+    assert proof["root"] == _root("execution", body)
+    assert verify_inclusion(
+        InclusionProof(**{**proof, "siblings": ()}), _root("execution", body)
+    )
+    assert forensic["anchor"] is None
+
+
+def test_denied_confirm_line_has_no_claims(make_desk, sign_quote):
+    now = [NOW]
+    desk, holder, lines = _published(make_desk, clock=lambda: now[0])
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    now[0] = NOW + 601
+    desk.confirm("q:000001")
+    line = lines[-1]
+    assert (line.subject["status"], line.subject["reason"]) == (
+        "denied",
+        "consent: expired",
+    )
+    assert line.event["verdict"] == "NOT_MET"
+    assert line.forensic["cert_claims"] is None
+    assert line.forensic["registry"]["seq"] == 1
+
+
+def test_malformed_quote_line(make_desk):
+    desk, _, lines = _published(make_desk)
+    desk.quote("acmé", 20000, "USD", "A-991")
+    assert lines[0].subject == {
+        "step": "quote",
+        "quote_id": None,
+        "status": "denied",
+        "summary": "Pay 200.00 USD to acmé (ref A-991) from checking-881",
+        "payment_id": None,
+        "reason": "consent: malformed",
+    }

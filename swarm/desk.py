@@ -5,15 +5,18 @@ import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from bank.api import Bank
 from bank.verifier import Verifier
+from gate.certs import public_key_of
 from gate.consent import Consent, ConsentLedger, consent_bytes, verify_signature
+from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule
 from gate.registry import Registry
 from gate.shim import Mode, RawCall
 from mandate.client import RunRequest, run_governed
+from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
 from swarm.meta_client import reasoning_commitment
 
 DESK_POLICY = Policy(
@@ -27,6 +30,7 @@ DESK_POLICY = Policy(
 )
 _KEY_LEN = 32
 _REVOCATION_BITS = 1024
+_T = TypeVar("_T")
 
 
 @dataclass
@@ -48,6 +52,8 @@ class PaymentDesk:
         clock: Current unix time in seconds.
         nonces: Source of unique nonces for consents and certificates.
         quote_ttl_s: Seconds a quote stays approvable.
+        publish: Receives one console line per desk step, under the desk lock,
+            so line order is the desk's order.
     """
 
     def __init__(
@@ -59,6 +65,7 @@ class PaymentDesk:
         clock: Callable[[], int],
         nonces: Callable[[], str],
         quote_ttl_s: int = 600,
+        publish: Callable[[ConsoleLine], object] | None = None,
     ) -> None:
         self.bank = bank
         self.registry = Registry()
@@ -68,6 +75,8 @@ class PaymentDesk:
         self._clock = clock
         self._nonces = nonces
         self._ttl = quote_ttl_s
+        self._publish = publish
+        self._gate_pub = public_key_of(gate_key)
         self._ledger = ConsentLedger()
         self._holders: tuple[bytes, ...] = ()
         self._quotes: dict[str, _Quote] = {}
@@ -75,6 +84,23 @@ class PaymentDesk:
         self._seq = 0
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
+
+    @property
+    def source(self) -> str:
+        """Account every quote debits."""
+        return self._source
+
+    def guarded(self, work: Callable[[Bank, Verifier], _T]) -> _T:
+        """Run ``work`` against the desk's bank and verifier under the desk lock.
+
+        Args:
+            work: Callable receiving the bank and the verifier.
+
+        Returns:
+            Whatever ``work`` returns.
+        """
+        with self._lock:
+            return work(self.bank, self._verifier)
 
     @property
     def holder_keys(self) -> tuple[bytes, ...]:
@@ -130,11 +156,15 @@ class PaymentDesk:
             try:
                 consent_bytes(consent)
             except ValueError:
-                return {"status": "denied", "reason": "consent: malformed"}
+                denied = {"status": "denied", "reason": "consent: malformed"}
+                self._emit("quote", denied, consent)
+                return denied
             self._seq += 1
             record = _Quote(self._seq, consent)
             self._quotes[_quote_id(self._seq)] = record
-            return self._quoted_view(record)
+            view = self._quoted_view(record)
+            self._emit("quote", view, consent)
+            return view
 
     def pending(self) -> list[dict[str, Any]]:
         """Quotes still awaiting approval, in id order."""
@@ -165,17 +195,23 @@ class PaymentDesk:
                 return self._view(quote_id, record)
             if self._clock() > record.consent.expires_at:
                 record.status = "expired"
-                return self._view(quote_id, record)
+                view = self._view(quote_id, record)
+                self._emit("approve", view, record.consent)
+                return view
             signed = dataclasses.replace(record.consent, signature=signature)
             if not verify_signature(signed, self._holders):
-                return {
+                denied = {
                     "status": "denied",
                     "reason": "consent: bad signature",
                     "quote_id": quote_id,
                 }
+                self._emit("approve", denied, record.consent)
+                return denied
             record.consent = signed
             record.status = "approved"
-            return self._view(quote_id, record)
+            view = self._view(quote_id, record)
+            self._emit("approve", view, signed)
+            return view
 
     def confirm(self, quote_id: str) -> dict[str, Any]:
         """Run the approved payment through the gate, at most once.
@@ -267,8 +303,38 @@ class PaymentDesk:
             sort_keys=True,
             separators=(",", ":"),
         )
-        self.registry.append("execution" if paid else "denial", body)
+        seq = self.registry.append("execution" if paid else "denial", body)
+        forensic = None
+        if outcome.action is not None:
+            forensic = forensic_of(
+                outcome.action,
+                DESK_POLICY,
+                outcome.certificate,
+                self._gate_pub,
+                consent=c,
+                proof=self.registry.prove(seq),
+            )
+        self._emit("confirm", result, c, outcome.event, forensic)
         return dict(result)
+
+    def _emit(
+        self,
+        step: str,
+        view: dict[str, Any],
+        consent: Consent,
+        event: DecisionEvent | None = None,
+        forensic: dict[str, Any] | None = None,
+    ) -> None:
+        if self._publish is None:
+            return
+        summary = pay_summary(
+            str(consent.amount_cents),
+            consent.currency,
+            consent.recipient,
+            consent.reference,
+            consent.source,
+        )
+        self._publish(desk_line(step, view, summary, event, forensic))
 
     def _quoted_view(self, record: _Quote) -> dict[str, Any]:
         c = record.consent
@@ -276,9 +342,8 @@ class PaymentDesk:
         return {
             "status": "quoted",
             "quote_id": _quote_id(record.number),
-            "summary": (
-                f"Pay {cents // 100}.{cents % 100:02d} {c.currency} to "
-                f"{c.recipient} (ref {c.reference}) from {c.source}"
+            "summary": pay_summary(
+                str(cents), c.currency, c.recipient, c.reference, c.source
             ),
             "consent": {
                 "amount_cents": cents,

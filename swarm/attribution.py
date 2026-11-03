@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from gate.events import DecisionEvent
@@ -97,23 +97,3 @@ def event_v2_json(event: DecisionEvent, attribution: Attribution | None) -> str:
         },
         separators=(",", ":"),
     )
-
-
-def read_event_line(line: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Parse a v2 or bare v1 event object into (event, meta).
-
-    Raises:
-        ValueError: If the line is neither shape.
-    """
-    obj = json.loads(line)
-    if isinstance(obj, dict):
-        v = obj.get("v")
-        if type(v) is int and v == 2:
-            meta = obj.get("meta")
-            if isinstance(obj.get("event"), dict) and (
-                meta is None or isinstance(meta, dict)
-            ):
-                return obj["event"], meta
-        elif type(v) is int and v == 1:
-            return obj, None
-    raise ValueError("unknown event line")

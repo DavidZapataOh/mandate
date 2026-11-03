@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from gate.events import DecisionEvent
 from gate.policy import Verdict
 from gate.shim import Mode
@@ -12,7 +10,6 @@ from swarm.attribution import (
     from_attacker,
     from_hook,
     from_trace,
-    read_event_line,
 )
 from swarm.hookio import ToolCall
 from swarm.meta_client import MetaTrace
@@ -84,30 +81,3 @@ def test_hook_attribution():
     assert from_hook(call) == Attribution(
         "muse-code", "muse-spark-1.3", None, "call_7", None, None, None, None
     )
-
-
-def test_reader_accepts_v1_and_v2():
-    v1_event = json.loads(V1)
-    assert read_event_line(V1) == (v1_event, None)
-    meta = from_trace(TRACE, None)
-    event, got = read_event_line(event_v2_json(EVENT, meta))
-    assert event == v1_event
-    assert got is not None and got["response_id"] == "resp_1"
-    with pytest.raises(ValueError, match="unknown event line"):
-        read_event_line('{"v":3}')
-
-
-@pytest.mark.parametrize(
-    "line",
-    [
-        "[]",
-        '"x"',
-        '{"v":2.0,"event":{},"meta":null}',
-        '{"v":true}',
-        '{"v":2,"event":{},"meta":"junk"}',
-        '{"v":2,"event":"x","meta":null}',
-    ],
-)
-def test_reader_rejects_malformed_lines(line):
-    with pytest.raises(ValueError, match="unknown event line"):
-        read_event_line(line)

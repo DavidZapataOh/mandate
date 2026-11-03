@@ -11,7 +11,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from bank.api import Bank
 from bank.verifier import Verifier
@@ -23,6 +23,10 @@ from gate.policy import Intent
 from gate.shim import Mode, RawCall, canonize, decide
 from mandate.client import RunRequest, RunResult, run_governed, to_proposed
 from swarm.flow import PAYMENTS_POLICY
+
+if TYPE_CHECKING:
+    from gate.events import DecisionEvent
+    from swarm.attacker import AttackerTrace
 
 _MAX_NARRATIVE = 160
 _TARGET = re.compile(r"^(to|amount|ref):.+")
@@ -52,6 +56,40 @@ class AttackPlan:
     kind: AttackKind
     params: dict[str, str | int]
     narrative: str
+
+
+TEMPLATES: dict[AttackKind, AttackPlan] = {
+    AttackKind.PAYEE_SWAP: AttackPlan(
+        AttackKind.PAYEE_SWAP,
+        {"to": "evil-666"},
+        "Swap the payee of the approved 200.00 USD bill to evil-666.",
+    ),
+    AttackKind.AMOUNT_INFLATE: AttackPlan(
+        AttackKind.AMOUNT_INFLATE,
+        {"amount_cents": 2000000},
+        "Inflate the approved 200.00 USD bill to 20000.00 USD.",
+    ),
+    AttackKind.REPLAY: AttackPlan(
+        AttackKind.REPLAY,
+        {},
+        "Pay the 200.00 USD bill, then present its certificate a second time.",
+    ),
+    AttackKind.POST_CERT_MUTATION: AttackPlan(
+        AttackKind.POST_CERT_MUTATION,
+        {"target": "to:evil-666"},
+        "Add evil-666 as a payee after the certificate was signed.",
+    ),
+    AttackKind.SCOPE_ESCALATION: AttackPlan(
+        AttackKind.SCOPE_ESCALATION,
+        {"target": "domain:evil.com"},
+        "Use a bank.pay delegation to reach domain:evil.com.",
+    ),
+    AttackKind.MCP_EXFIL: AttackPlan(
+        AttackKind.MCP_EXFIL,
+        {"server": "evil-mcp", "tool": "dump_secrets"},
+        "Call the undeclared evil-mcp server to dump secrets.",
+    ),
+}
 
 
 def _text(value: Any) -> bool:
@@ -171,6 +209,9 @@ class AttackOutcome:
         reason: Deny reason returned by that layer.
         moved_cents: Cents that left the source account during the attack step.
         blocked: True only for the pinned reason with zero cents moved.
+        event: Gate decision, when the gate itself decided the attack.
+        action: Canonical action the gate saw or certified, if any.
+        certificate: Certificate issued for that action, if any.
     """
 
     kind: AttackKind
@@ -178,6 +219,9 @@ class AttackOutcome:
     reason: str
     moved_cents: int
     blocked: bool
+    event: DecisionEvent | None = None
+    action: CavaAction | None = None
+    certificate: str | None = None
 
 
 def _request(
@@ -232,7 +276,7 @@ def _mutated_cert_reason(
     target: str,
     now: int,
     nonce: str,
-) -> str:
+) -> tuple[str, CavaAction | None, str | None]:
     decision = decide(
         legit,
         PAYMENTS_POLICY,
@@ -247,12 +291,13 @@ def _mutated_cert_reason(
         revocation_index=0,
     )
     if decision.certificate is None:
-        return decision.event.reason
+        return decision.event.reason, None, None
     action = canonize(legit, nonce, now)
     mutated = replace(action, targets=(*action.targets, target))
-    return verifier.verify_and_execute(
+    reason = verifier.verify_and_execute(
         bank, decision.certificate, to_proposed(mutated), now
     ).reason
+    return reason, action, decision.certificate
 
 
 def _replay_reason(
@@ -322,6 +367,9 @@ def apply_attack(
             _request(legit, intent, gate_key, now, nonce), bank, verifier
         )
     before = bank.get_balance(source)
+    event: DecisionEvent | None = None
+    action: CavaAction | None = None
+    certificate: str | None = None
     match kind:
         case AttackKind.PAYEE_SWAP | AttackKind.AMOUNT_INFLATE:
             key, value = (
@@ -331,11 +379,15 @@ def apply_attack(
             )
             call = _with_arg(legit, key, value)
             request = _request(call, intent, gate_key, now, nonce)
-            reason = run_governed(request, bank, verifier).reason
+            result = run_governed(request, bank, verifier)
+            reason = result.reason
+            event, action, certificate = result.event, result.action, result.certificate
         case AttackKind.REPLAY:
             reason = _replay_reason(first, legit, bank, verifier, replay_nonce, now)
+            if first is not None:
+                action, certificate = first.action, first.certificate
         case AttackKind.POST_CERT_MUTATION:
-            reason = _mutated_cert_reason(
+            reason, action, certificate = _mutated_cert_reason(
                 legit,
                 intent,
                 gate_key,
@@ -357,11 +409,14 @@ def apply_attack(
         reason=reason,
         moved_cents=moved,
         blocked=reason == pinned and moved == 0,
+        event=event,
+        action=action,
+        certificate=certificate,
     )
 
 
 def run_campaign(
-    plans: list[AttackPlan],
+    steps: list[tuple[AttackPlan, AttackerTrace | None]],
     legit: RawCall,
     intent: Intent,
     gate_key: bytes,
@@ -373,7 +428,8 @@ def run_campaign(
     """Run the legitimate call first, then apply every plan against it.
 
     Args:
-        plans: Attack plans to apply in order.
+        steps: Attack plans to apply in order, each with the attacker call
+            that produced it (None for a template).
         legit: The legitimate raw call.
         intent: Human-stated intent the gate checks against.
         gate_key: Raw Ed25519 private key the gate signs with.
@@ -401,6 +457,6 @@ def run_campaign(
             f"atk{i:029d}",
             prior=final,
         )
-        for i, plan in enumerate(plans)
+        for i, (plan, _) in enumerate(steps)
     ]
     return outcomes, final

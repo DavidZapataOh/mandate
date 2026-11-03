@@ -7,6 +7,7 @@ from gate.certs import (
     disclose,
     issue_certificate,
     issue_sd_jwt,
+    public_key_of,
     read_claims,
     verify_certificate,
     verify_sd_jwt,
@@ -119,3 +120,8 @@ def test_bad_public_key_is_a_reason(keypair, cert_claims):
         False,
         "malformed: bad public key",
     )
+
+
+def test_public_key_of_matches_keypair(keypair):
+    private_key, public_key = keypair
+    assert public_key_of(private_key) == public_key

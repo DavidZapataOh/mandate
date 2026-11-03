@@ -13,3 +13,9 @@ coverage.xml
 .DS_Store
 .idea/
 .vscode/
+.impeccable/questions/
+.impeccable/builds/
+.impeccable/review/
+node_modules/
+test-results/
+playwright-report/

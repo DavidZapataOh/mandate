@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mandate Console</title>
+  </head>
+  <body>
+    <header>
+      <h1>Mandate</h1>
+      <p id="stream-state" role="status">CONNECTING</p>
+      <div role="group" aria-label="View mode">
+        <button type="button" id="mode-game" aria-pressed="true">GAME</button>
+        <button type="button" id="mode-forensic" aria-pressed="false">FORENSIC</button>
+      </div>
+    </header>
+    <main>
+      <ol id="ledger" aria-label="Ledger" aria-live="polite"></ol>
+    </main>
+    <aside id="forensic" aria-label="Forensic detail" hidden></aside>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

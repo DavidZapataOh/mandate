@@ -38,6 +38,8 @@ To run the desk locally, start `mandate-desk` (after `pip install -e .`). It pri
 
 The reasoning anchor (`swarm/anchor.py`, checked by `e2e/test_anchor_live.py`) binds a certificate to the model, response id and encrypted reasoning that Meta returned, so it proves non-substitution after issuance; Meta Model API does not authenticate replayed encrypted reasoning, so it does not prove that Meta re-verified the reasoning. The attacker row counts as open weights only when its recorded provider reads `baseten`; an attacker that fell back to the Meta Model API is labeled `meta-fallback`. The attacker model fills the parameters of six fixed attack templates, and each plan is applied deterministically through the real defense layer it targets.
 
+The console shows what the gate decides as it happens. Build it with `cd console && npm ci && npm run build`, then run `mandate-console` (after `pip install -e .`); it prints the pairing URL and `Console: http://127.0.0.1:8766/console/`. `POST /api/attack {"kind": ...}` runs one of six pinned template attacks (no model call), and the ledger labels it `TEMPLATE`. `--journal <state-dir>/journal.jsonl` streams Muse Code hook decisions into the same ledger. `--record run.jsonl` captures the stream of one process; use a fresh file per run, because a capture whose line numbers start over is refused. A capture copied to `console/public/replay/<name>.jsonl` plays at `/console/?replay=<name>` under a permanent `REPLAY` label after `npm run build` and a restart of `mandate-console`, which serves the build it found at startup. Verify with `cd console && npm run e2e`.
+
 ## Architecture
 See [ARCHITECTURE.md](ARCHITECTURE.md).
 

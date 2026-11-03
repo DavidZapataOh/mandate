@@ -79,6 +79,15 @@ class BitstringRevocation:
         return bool(self._words[index // 8] & (1 << (index % 8)))
 
 
+def public_key_of(private_key: bytes) -> bytes:
+    """Raw 32-byte Ed25519 public key for a raw private key."""
+    return (
+        Ed25519PrivateKey.from_private_bytes(private_key)
+        .public_key()
+        .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    )
+
+
 def generate_keypair() -> tuple[bytes, bytes]:
     """Fresh Ed25519 (private_raw, public_raw); 32 bytes each."""
     private = Ed25519PrivateKey.generate()

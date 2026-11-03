@@ -7,6 +7,7 @@ import pytest
 
 from bank.api import Bank
 from bank.verifier import Verifier
+from gate.cava import Freshness, action_hash
 from gate.policy import Intent, Policy, Rule, Verdict
 from gate.shim import Mode, RawCall
 from mandate.cli import main
@@ -249,3 +250,13 @@ def test_fresh_venv_install_smoke(tmp_path):
     )
     assert governed.returncode == 0, governed.stderr[-2000:]
     assert governed.stdout == f"EXECUTED payment=pay:000001 event=evt:{NONCE}\n"
+
+
+@pytest.mark.parametrize("mode", [Mode.ENFORCE, Mode.SHADOW])
+def test_run_result_carries_the_decided_action(keypair, mode):
+    priv, pub = keypair
+    bank = Bank({"checking-881": 50000, "acme-991": 0})
+    result = run_governed(_request(priv, mode), bank, Verifier(pub))
+    assert result.action is not None
+    assert action_hash(result.action) == result.event.action_hash
+    assert result.action.freshness == Freshness(NONCE, TS)
