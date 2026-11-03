@@ -63,7 +63,16 @@ class FakeMeta:
         self.outputs = list(outputs)
         self.requests = []
 
-    def respond(self, model, input, *, tools=(), instructions=None, effort="medium"):
+    def respond(
+        self,
+        model,
+        input,
+        *,
+        tools=(),
+        instructions=None,
+        effort="medium",
+        text_format=None,
+    ):
         self.requests.append(
             {
                 "model": model,
@@ -71,6 +80,7 @@ class FakeMeta:
                 "tools": list(tools),
                 "instructions": instructions,
                 "effort": effort,
+                "text_format": text_format,
             }
         )
         output = self.outputs.pop(0)

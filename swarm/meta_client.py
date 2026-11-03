@@ -167,8 +167,18 @@ class MetaClient:
         tools: Iterable[Item] = (),
         instructions: str | None = None,
         effort: str = "medium",
+        text_format: Item | None = None,
     ) -> MetaResponse:
         """One Responses API turn; never stores server-side state.
+
+        Args:
+            model: Model id.
+            input: Prompt text or replayed items.
+            tools: Function tool definitions.
+            instructions: System instructions.
+            effort: Reasoning effort.
+            text_format: Structured-output format (text.format), e.g. a
+                json_schema item; omitted when None.
 
         Raises:
             MetaAPIError: On HTTP errors, API errors, or bad payloads.
@@ -186,6 +196,7 @@ class MetaClient:
                 reasoning={"effort": effort},
                 tools=tool_list,
                 instructions=omit if instructions is None else instructions,
+                text=omit if text_format is None else {"format": text_format},
             )
         except openai.APIStatusError as exc:
             raise MetaAPIError(f"HTTP {exc.status_code}: {exc.message}") from exc

@@ -119,6 +119,7 @@ class Responder(Protocol):
         tools: Iterable[Item] = (),
         instructions: str | None = None,
         effort: str = "medium",
+        text_format: Item | None = None,
     ) -> MetaResponse: ...
 
 

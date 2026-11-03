@@ -71,7 +71,9 @@ def run_bill(
         pdf: Bill bytes.
         filename: Bill file name.
         request: User request text.
-        intent: Human-stated intent the proposal must match.
+        intent: Human-stated intent the proposal must match. The gate does not
+            yet verify the holder signature, bind the debit account to it, or
+            consume intents; callers must pass only confirmed intents.
         policy: Policy to evaluate against.
         gate_key: Raw Ed25519 private key for certificate issuance.
         bank: Ledger to execute against.

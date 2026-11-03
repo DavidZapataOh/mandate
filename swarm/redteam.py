@@ -11,7 +11,7 @@ import json
 import re
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from bank.api import Bank
 from bank.verifier import Verifier
@@ -23,9 +23,6 @@ from gate.policy import Intent
 from gate.shim import Mode, RawCall, canonize, decide
 from mandate.client import RunRequest, RunResult, run_governed, to_proposed
 from swarm.flow import PAYMENTS_POLICY
-
-if TYPE_CHECKING:
-    pass
 
 _MAX_NARRATIVE = 160
 _TARGET = re.compile(r"^(to|amount|ref):.+")

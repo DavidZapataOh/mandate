@@ -202,3 +202,16 @@ def test_live_meta_call_commits_reasoning():
     assert "MANDATE_OK" in resp.text
     assert resp.reasoning_items, "expected encrypted reasoning items"
     assert len(reasoning_commitment(resp.output)) == 64
+
+
+def test_respond_sends_text_format():
+    server = _Server(body=_body([MESSAGE]))
+    fmt = {"type": "json_schema", "name": "x", "strict": True, "schema": {}}
+    server.client().respond("muse-spark-1.3", "hi", text_format=fmt)
+    assert json.loads(server.requests[0].content)["text"] == {"format": fmt}
+
+
+def test_respond_omits_text_format_by_default():
+    server = _Server(body=_body([MESSAGE]))
+    server.client().respond("muse-spark-1.3", "hi")
+    assert "text" not in json.loads(server.requests[0].content)
