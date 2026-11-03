@@ -38,6 +38,7 @@ module = [
     "bench.test_report",
     "bench.test_runner",
     "e2e.test_drills_service",
+    "e2e.test_flow_a",
     "e2e.test_smoke_imports",
     "evidence.test_evidence",
     "evidence.test_tlsn_live",
