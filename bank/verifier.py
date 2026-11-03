@@ -112,6 +112,20 @@ class PaymentResult:
     payment: Payment | None
 
 
+_PAYMENT_PREFIXES = ("amount:", "from:", "to:", "ref:")
+
+
+def _ambiguous(targets: tuple[str, ...]) -> bool:
+    """True when any payment field appears more than once.
+
+    The bank never picks one copy: the gate may have checked another.
+    """
+    return any(
+        sum(1 for t in targets if t.startswith(prefix)) > 1
+        for prefix in _PAYMENT_PREFIXES
+    )
+
+
 def _parse_payment(targets: tuple[str, ...]) -> tuple[str, int, str, str, str] | None:
     """First parseable (currency, cents, from, to, ref); None when incomplete."""
     currency = ""
@@ -244,6 +258,8 @@ class Verifier:
         digest = action_hash(action)
         if digest != approved:
             return PaymentResult(False, "mismatch: action hash differs", None)
+        if _ambiguous(action.targets):
+            return PaymentResult(False, "denied: ambiguous payment fields", None)
         parsed = _parse_payment(action.targets)
         if parsed is None:
             return PaymentResult(False, "denied: action is not a payment", None)

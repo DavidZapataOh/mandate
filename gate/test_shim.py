@@ -17,7 +17,12 @@ def _bank_call() -> RawCall:
         runtime="mcp",
         executable="bank.pay",
         operation="transfer",
-        args=(("to", "acme-991"), ("amount", "20000"), ("currency", "USD")),
+        args=(
+            ("to", "acme-991"),
+            ("amount", "20000"),
+            ("currency", "USD"),
+            ("ref", "A-991"),
+        ),
         category="payments",
         evidence_refs=(),
         reversible=False,
@@ -43,7 +48,7 @@ def _decide(call, policy, intent, private_key, mode, nonce, kill_switch=False):
 
 def test_allow_path(sample_policy, sample_intent, keypair):
     action = canonize(_bank_call(), "n" * 32, 1800000000)
-    assert action.targets == ("amount:USD:20000", "to:acme-991")
+    assert action.targets == ("amount:USD:20000", "ref:A-991", "to:acme-991")
     messy = canonize(
         RawCall(
             runtime="mcp",

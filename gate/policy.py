@@ -68,6 +68,36 @@ def _parse_amount(targets: tuple[str, ...]) -> tuple[str, int] | None:
     return None
 
 
+def _values(targets: tuple[str, ...], prefix: str) -> list[str]:
+    return [t[len(prefix) :] for t in targets if t.startswith(prefix)]
+
+
+def _money_ambiguity(targets: tuple[str, ...]) -> str | None:
+    """Reason when a money field appears more than once; executors could
+    read a different copy than the gate checked."""
+    fields = (
+        ("amount:", "amount"),
+        ("from:", "source"),
+        ("to:", "recipient"),
+        ("ref:", "reference"),
+    )
+    for prefix, name in fields:
+        if len(_values(targets, prefix)) > 1:
+            return f"{name} target ambiguous"
+    return None
+
+
+def _bound_to_intent(
+    targets: tuple[str, ...], prefix: str, expected: str, name: str
+) -> tuple[Verdict, tuple[str, ...]] | None:
+    found = _values(targets, prefix)
+    if not found:
+        return (Verdict.NOT_CHECKABLE, (f"{name} not stated",))
+    if found[0] != expected:
+        return (Verdict.NOT_MET, (f"{name} differs from intent",))
+    return None
+
+
 def evaluate(
     action: CavaAction, policy: Policy, intent: Intent
 ) -> tuple[Verdict, tuple[str, ...]]:
@@ -79,6 +109,9 @@ def evaluate(
         found = any(t.startswith("amount:") for t in action.targets)
         if not found:
             return (Verdict.NOT_CHECKABLE, ("amount not stated",))
+        ambiguous = _money_ambiguity(action.targets)
+        if ambiguous is not None:
+            return (Verdict.NOT_CHECKABLE, (ambiguous,))
         parsed = _parse_amount(action.targets)
         if parsed is None:
             return (Verdict.NOT_CHECKABLE, ("amount target malformed",))
@@ -89,4 +122,11 @@ def evaluate(
             return (Verdict.NOT_MET, ("amount differs from intent",))
         if rule.amount_lte_cents is not None and cents > rule.amount_lte_cents:
             return (Verdict.NOT_MET, ("amount exceeds ceiling",))
+        for prefix, expected, name in (
+            ("to:", intent.recipient, "recipient"),
+            ("ref:", intent.reference, "reference"),
+        ):
+            bound = _bound_to_intent(action.targets, prefix, expected, name)
+            if bound is not None:
+                return bound
     return (Verdict.MET, (f"rule {rule.rule_id} satisfied",))

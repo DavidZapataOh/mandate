@@ -252,3 +252,49 @@ def test_verifier_isolated():
         cwd=ROOT,
     )
     assert run.returncode == 0, run.stderr
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        (
+            "amount:USD:0",
+            "amount:USD:200000",
+            "from:checking-881",
+            "ref:A-991",
+            "to:acme-991",
+        ),
+        (
+            "amount:USD:20000",
+            "from:checking-881",
+            "ref:A-991",
+            "to:acme-991",
+            "to:evil-666",
+        ),
+        (
+            "amount:USD:20000",
+            "from:checking-881",
+            "from:savings-1",
+            "ref:A-991",
+            "to:acme-991",
+        ),
+        (
+            "amount:USD:20000",
+            "from:checking-881",
+            "ref:A-991",
+            "ref:B-1",
+            "to:acme-991",
+        ),
+    ],
+)
+def test_duplicate_payment_fields_denied(keypair, targets):
+    priv, pub = keypair
+    token = _token(gate_action_hash(_gate_action(targets)), priv, "bank-jti-dup")
+    bank = Bank({"checking-881": 500000, "acme-991": 0, "evil-666": 0})
+    result = Verifier(pub).verify_and_execute(bank, token, _proposed(targets), NOW)
+    assert (result.accepted, result.reason, result.payment) == (
+        False,
+        "denied: ambiguous payment fields",
+        None,
+    )
+    assert bank.get_balance("checking-881") == 500000

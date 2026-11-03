@@ -91,3 +91,58 @@ def test_evaluate_bench_measures_real_path(sample_action, sample_policy, sample_
     assert (r.name, r.samples) == ("gate.policy.evaluate", 50)
     assert r.counters == {"evals": 50}
     assert r.p50_us >= 0.0
+
+
+def test_recipient_bound_to_intent(sample_action, sample_intent):
+    wild = _rule(target="*")
+    evil = dataclasses.replace(
+        sample_action,
+        targets=("amount:USD:20000", "from:checking-881", "ref:A-991", "to:evil-666"),
+    )
+    v, reasons = evaluate(evil, _policy(wild), sample_intent)
+    assert (v, reasons) == (Verdict.NOT_MET, ("recipient differs from intent",))
+    no_payee = dataclasses.replace(
+        sample_action, targets=("amount:USD:20000", "ref:A-991")
+    )
+    v, reasons = evaluate(no_payee, _policy(wild), sample_intent)
+    assert (v, reasons) == (Verdict.NOT_CHECKABLE, ("recipient not stated",))
+
+
+def test_reference_bound_to_intent(sample_action, sample_intent):
+    wild = _rule(target="*")
+    other = dataclasses.replace(
+        sample_action, targets=("amount:USD:20000", "ref:Z-000", "to:acme-991")
+    )
+    v, reasons = evaluate(other, _policy(wild), sample_intent)
+    assert (v, reasons) == (Verdict.NOT_MET, ("reference differs from intent",))
+    no_ref = dataclasses.replace(
+        sample_action, targets=("amount:USD:20000", "to:acme-991")
+    )
+    v, reasons = evaluate(no_ref, _policy(wild), sample_intent)
+    assert (v, reasons) == (Verdict.NOT_CHECKABLE, ("reference not stated",))
+
+
+@pytest.mark.parametrize(
+    ("targets", "reason"),
+    [
+        (
+            ("amount:USD:0", "amount:USD:200000", "ref:A-991", "to:acme-991"),
+            "amount target ambiguous",
+        ),
+        (
+            ("amount:USD:20000", "ref:A-991", "to:acme-991", "to:evil-666"),
+            "recipient target ambiguous",
+        ),
+        (
+            ("amount:USD:20000", "ref:A-991", "ref:B-1", "to:acme-991"),
+            "reference target ambiguous",
+        ),
+    ],
+)
+def test_duplicate_money_targets_not_checkable(
+    sample_action, sample_intent, targets, reason
+):
+    ceiling = _rule(target="*", amount_exact=False, amount_lte_cents=500000)
+    dup = dataclasses.replace(sample_action, targets=targets)
+    v, reasons = evaluate(dup, _policy(ceiling), sample_intent)
+    assert (v, reasons) == (Verdict.NOT_CHECKABLE, (reason,))
