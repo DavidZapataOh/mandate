@@ -52,6 +52,7 @@ module = [
     "gate.test_registry",
     "gate.test_shim",
     "gate.test_vault",
+    "swarm.test_meta_client",
     "mandate.test_sdk",
     "zk.test_circuit_live",
     "zk.test_settle",
