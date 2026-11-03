@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx2
 import openai
-from openai import OpenAI, omit
+from openai import NOT_GIVEN, OpenAI, omit
 
 DEFAULT_BASE_URL = "https://api.meta.ai/v1"
 _COMMIT_DOMAIN = b"mandate/reasoning/v1\n"
@@ -138,6 +138,7 @@ class MetaClient:
         http_client: Optional HTTP client; injectable for tests.
         max_retries: SDK retry budget for transient failures.
         clock: Monotonic clock in seconds; injectable for tests.
+        timeout: Per-request timeout in seconds; None keeps the SDK default.
     """
 
     def __init__(
@@ -147,12 +148,14 @@ class MetaClient:
         http_client: httpx2.Client | None = None,
         max_retries: int = 2,
         clock: Callable[[], float] = time.perf_counter,
+        timeout: float | None = None,
     ) -> None:
         self._sdk = OpenAI(
             api_key=api_key,
             base_url=base_url,
             http_client=http_client,
             max_retries=max_retries,
+            timeout=NOT_GIVEN if timeout is None else timeout,
         )
         self._clock = clock
 
