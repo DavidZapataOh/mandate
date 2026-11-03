@@ -9,6 +9,7 @@ dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16
 
 [project.scripts]
 mandate = "mandate.cli:main"
+mandate-hook = "swarm.hook:cli"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -41,6 +42,7 @@ module = [
     "e2e.test_agent_live",
     "e2e.test_anchor_live",
     "e2e.test_flow_a",
+    "e2e.test_swarm_live",
     "e2e.test_smoke_imports",
     "evidence.test_evidence",
     "evidence.test_tlsn_live",
@@ -59,6 +61,9 @@ module = [
     "swarm.test_agent",
     "swarm.test_anchor",
     "swarm.test_flow",
+    "swarm.test_hook",
+    "swarm.test_hookio",
+    "swarm.test_state",
     "swarm.test_meta_client",
     "mandate.test_sdk",
     "zk.test_circuit_live",
@@ -66,6 +71,12 @@ module = [
 ]
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = ["demo.swarm_repo.*", "payments.*", "test_handler"]
+ignore_errors = true
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["."]
+addopts = "-m 'not live'"
 markers = ["live: tests requiring live external services"]

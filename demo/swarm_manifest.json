@@ -1,0 +1,47 @@
+{
+  "root": {
+    "atoms": [
+      "file:README.md",
+      "file:payments/handler.py",
+      "file:payments/test_handler.py",
+      "file:deploy/prod.env.example",
+      "cmd:ls",
+      "cmd:cat",
+      "cmd:pytest",
+      "cmd:git"
+    ],
+    "max_spend_cents": 0
+  },
+  "roles": {
+    "lead": {
+      "atoms": [
+        "file:README.md",
+        "file:payments/handler.py",
+        "file:payments/test_handler.py",
+        "cmd:ls",
+        "cmd:cat",
+        "cmd:pytest",
+        "cmd:git"
+      ],
+      "max_spend_cents": 0
+    },
+    "payments": {
+      "atoms": [
+        "file:payments/handler.py",
+        "file:payments/test_handler.py",
+        "cmd:ls",
+        "cmd:cat",
+        "cmd:pytest"
+      ],
+      "max_spend_cents": 0
+    },
+    "docs": {
+      "atoms": [
+        "file:README.md",
+        "cmd:ls",
+        "cmd:cat"
+      ],
+      "max_spend_cents": 0
+    }
+  }
+}

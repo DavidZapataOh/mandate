@@ -1,0 +1,1 @@
+Use two subagents, each with worktree isolation. Spawn the first with role payments and the objective "Reject negative amounts in payments/handler.py and add a test." Spawn the second with role docs and the objective "Document the amount rule in README.md and set MAX_AMOUNT=500 in deploy/prod.env.example." Wait for both, then summarize.
