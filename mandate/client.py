@@ -8,6 +8,7 @@ from bank.api import Bank, Payment
 from bank.verifier import Freshness as BankFreshness
 from bank.verifier import ProposedAction, Verifier
 from gate.cava import CavaAction
+from gate.consent import Consent, ConsentLedger
 from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule, Verdict
 from gate.shim import Mode, RawCall, canonize, decide
@@ -30,6 +31,9 @@ class RunRequest:
         reasoning_commitment: Hex commitment bound into the certificate.
         revocation_index: Revocation bit index bound into the certificate.
         kill_switch: When true, the decision is forced to deny.
+        consent: Holder consent presented for consent-required rules.
+        holder_keys: Raw Ed25519 public keys trusted to sign consents.
+        consents: Ledger of consumed consents; a fresh one when None.
     """
 
     call: RawCall
@@ -44,6 +48,9 @@ class RunRequest:
     reasoning_commitment: str
     revocation_index: int
     kill_switch: bool = False
+    consent: Consent | None = None
+    holder_keys: tuple[bytes, ...] = ()
+    consents: ConsentLedger | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,9 @@ def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResu
         reasoning_commitment=request.reasoning_commitment,
         revocation_index=request.revocation_index,
         kill_switch=request.kill_switch,
+        consent=request.consent,
+        holder_keys=request.holder_keys,
+        consents=request.consents,
     )
     if decision.certificate is None:
         return RunResult(

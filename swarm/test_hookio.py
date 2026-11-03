@@ -230,3 +230,116 @@ def test_targets_reject_shell_workdir_escape(workdir):
 def test_targets_shell_workdir_inside_cwd_ok(workdir):
     call = _call("bash", {"command": "ls", "workdir": workdir})
     assert targets_for(call) == ("cmd:ls",)
+
+
+MANDATE_TOOLS = (
+    "mcp__mandate__quote_payment",
+    "mcp__mandate__get_payment_status",
+    "mcp__mandate__confirm_payment",
+    "mcp__mandate__get_receipt",
+)
+
+
+@pytest.mark.parametrize("tool", MANDATE_TOOLS)
+def test_classify_mandate_mcp_tools(tool):
+    assert classify(tool) is Kind.PASS
+    assert targets_for(_call(tool, {"quote_id": "q:000001"})) == ()
+
+
+@pytest.mark.parametrize(
+    "tool",
+    ["mcp__other__pay", "mcp__mandate__transfer", "mcp__mandate_x__get_receipt"],
+)
+def test_classify_other_mcp_tools_denied(tool):
+    assert classify(tool) is Kind.DENY
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git rm .muse/hooks.json",
+        "cat ./.mandate/state.json",
+        "cat .MUSE/hooks.json",
+        "git -C.muse status",
+        "pytest --rootdir=.mandate",
+    ],
+)
+def test_targets_reject_shell_protected_paths(command):
+    with pytest.raises(ScopeError, match="scope: protected path"):
+        targets_for(_call("bash", {"command": command}))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest -c/etc/evil.ini",
+        "gcc -I~/include x.c",
+        "ls x:/etc",
+        "scp host:../secret out",
+    ],
+)
+def test_targets_reject_glued_shell_paths(command):
+    with pytest.raises(ScopeError, match="scope: shell path escapes worktree"):
+        targets_for(_call("bash", {"command": command}))
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input"),
+    [
+        ("read_file", {"file_path": "/etc/passwd"}),
+        ("read_file", {"file_path": 7}),
+        ("grep", {"pattern": "x", "paths": ["src", "/etc"]}),
+        ("grep", {"pattern": "x", "paths": "src"}),
+        ("grep", {"pattern": "x", "dir": "../.."}),
+        ("glob", {"pattern": "/Users/**"}),
+        ("search", {"cwd": "/"}),
+    ],
+)
+def test_targets_reject_pass_tool_path_keys(tool, tool_input):
+    with pytest.raises(ScopeError, match="scope: path escapes worktree"):
+        targets_for(_call(tool, tool_input))
+
+
+def test_targets_grep_pattern_is_not_a_path():
+    assert targets_for(_call("grep", {"pattern": "^/usr", "path": "src"})) == ()
+
+
+@pytest.mark.parametrize("command", ["cat x=y=/etc", "cat a:b:/etc/x", "cat -a=b=/etc"])
+def test_targets_reject_multi_separator_escapes(command):
+    with pytest.raises(ScopeError, match="scope: shell path escapes worktree"):
+        targets_for(_call("bash", {"command": command}))
+
+
+def test_targets_reject_multi_separator_protected():
+    with pytest.raises(ScopeError, match="scope: protected path"):
+        targets_for(_call("bash", {"command": "cat x:y:.muse/z"}))
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input"),
+    [
+        ("read_file", {"filePath": "/etc/passwd"}),
+        ("read_file", {"path": "~/.ssh/id"}),
+        ("read_file", {"path": "~"}),
+        ("grep", {"pattern": "x", "include": "/etc"}),
+        ("grep", {"pattern": "x", "opts": {"deep": ["a", "../b"]}}),
+        ("glob", {"pattern": "{/etc,x}"}),
+        ("glob", {"pattern": "src/{a,b}"}),
+    ],
+)
+def test_targets_reject_unknown_pass_tool_strings(tool, tool_input):
+    with pytest.raises(ScopeError, match="scope: path escapes worktree"):
+        targets_for(_call(tool, tool_input))
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input"),
+    [
+        ("search", {"query": "/etc/passwd"}),
+        ("search", {"pattern": "^/usr", "limit": 5, "flag": True, "x": None}),
+        ("grep", {"pattern": "^/usr", "path": "src", "context": 2}),
+        ("mcp__mandate__get_receipt", {"quote_id": "q:000001"}),
+    ],
+)
+def test_targets_pass_tool_text_and_non_strings_allowed(tool, tool_input):
+    assert targets_for(_call(tool, tool_input)) == ()

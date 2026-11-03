@@ -26,9 +26,15 @@ Each row maps a Meta model to its role, provider, source file and the command th
 | Swarm lead | `muse-wonder-1.0` | Muse Code | `swarm/hook.py`, `demo/swarm_repo/` | `pytest -m live e2e/test_swarm_live.py` |
 | Red-team attacker | `meta-models/muse-spark-open-1026` | Baseten | `swarm/attacker.py`, `swarm/redteam.py` | `pytest -m live e2e/test_redteam_live.py` |
 | Voice intent | `muse-voice-transcribe-1.0` | Meta Model API | `swarm/voice.py` | `pytest -m live e2e/test_voice_live.py` |
+| Mandate MCP desk | `muse-spark-1.3` | Meta Model API, Muse Code | `swarm/server.py`, `swarm/mcp_bridge.py` | `pytest -m live e2e/test_mcp_live.py` |
+| WebMCP approval | glasses assistant | Meta Web App | `webapp/app.js` | `pytest e2e/test_webapp.py` (headless Node and in-browser tests; not run on real glasses) |
 | Intent drafting | `muse-spark-1.3` | Meta Model API | `swarm/intent.py` | `pytest -m live e2e/test_voice_live.py` |
 
 Live tests are opt-in and need `MODEL_API_KEY` or `META_API_KEY`, plus `BASETEN_API_KEY` for the attacker row and a logged-in `muse` CLI for the swarm row.
+
+The Mandate desk (`mandate-desk`) serves quote, status, confirm and receipt tools over MCP. Spark reaches it through an app-side bridge (`swarm/mcp_bridge.py`) because the Meta Responses API has no remote-MCP tool; Muse Code connects directly through `mcpServers`. Confirming a payment needs the holder's signed consent, which the gate verifies and consumes once. WebMCP runs on the glasses only in Developer Mode or rollout, and the glasses assistant can list and show a payment but cannot approve it: only the holder's tap on Approve signs.
+
+To run the desk locally, start `mandate-desk` (after `pip install -e .`). It prints one line, `Pair the holder device: http://127.0.0.1:8765/app/#pair=<token>`. Open that URL once on the approving device: the page registers its holder key with the one-time token and removes it from the address bar. Later visits use `http://127.0.0.1:8765/app/`. The `/api` and `/app` routes accept only `127.0.0.1` and `localhost` as Host; pass `--public-host <name>` to add the name of an HTTPS proxy in front of the desk.
 
 The reasoning anchor (`swarm/anchor.py`, checked by `e2e/test_anchor_live.py`) binds a certificate to the model, response id and encrypted reasoning that Meta returned, so it proves non-substitution after issuance; Meta Model API does not authenticate replayed encrypted reasoning, so it does not prove that Meta re-verified the reasoning. The attacker row counts as open weights only when its recorded provider reads `baseten`; an attacker that fell back to the Meta Model API is labeled `meta-fallback`. The attacker model fills the parameters of six fixed attack templates, and each plan is applied deterministically through the real defense layer it targets.
 

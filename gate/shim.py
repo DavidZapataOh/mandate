@@ -6,8 +6,9 @@ from enum import StrEnum
 
 from gate.cava import CavaAction, Freshness, action_hash
 from gate.certs import DEFAULT_TTL_S, CertClaims, issue_certificate
+from gate.consent import Consent, ConsentLedger, check_consent
 from gate.events import DecisionEvent
-from gate.policy import Intent, Policy, Verdict, evaluate
+from gate.policy import Intent, Policy, Verdict, evaluate, matched_rule
 
 MAPPED_KEYS = ("account", "artifact", "env", "from", "merchant", "ref", "to")
 
@@ -81,6 +82,9 @@ def decide(
     reasoning_commitment: str,
     revocation_index: int,
     kill_switch: bool = False,
+    consent: Consent | None = None,
+    holder_keys: tuple[bytes, ...] = (),
+    consents: ConsentLedger | None = None,
 ) -> Decision:
     """Canonize, evaluate, issue-or-deny; shadow never blocks."""
     start = time.perf_counter()
@@ -92,6 +96,14 @@ def decide(
         verdict, reasons = Verdict.NOT_MET, ("kill-switch: engaged",)
     else:
         verdict, reasons = evaluate(action, policy, intent)
+    rule = matched_rule(action, policy)
+    if verdict is Verdict.MET and rule is not None and rule.consent_required:
+        ledger = consents if consents is not None else ConsentLedger()
+        ok, reason = check_consent(consent, holder_keys, action, now, ledger)
+        if not ok:
+            verdict, reasons = Verdict.NOT_MET, (reason,)
+        elif mode is Mode.ENFORCE and consent is not None:
+            ledger.consume(consent.nonce)
     certificate = None
     cert_jti = None
     if mode is Mode.ENFORCE and verdict is Verdict.MET:

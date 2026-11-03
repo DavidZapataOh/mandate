@@ -5,11 +5,12 @@ description = "Independent authorization and verification layer between AI agent
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16"]
+dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16", "mcp==2.3.0", "uvicorn==0.54.0", "starlette==1.10.0"]
 
 [project.scripts]
 mandate = "mandate.cli:main"
 mandate-hook = "swarm.hook:cli"
+mandate-desk = "swarm.server:cli"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -42,9 +43,12 @@ module = [
     "e2e.test_agent_live",
     "e2e.test_anchor_live",
     "e2e.test_flow_a",
+    "e2e.test_mcp_live",
     "e2e.test_redteam_live",
     "e2e.test_swarm_live",
     "e2e.test_voice_live",
+    "e2e.conftest",
+    "e2e.test_webapp",
     "e2e.test_smoke_imports",
     "evidence.test_evidence",
     "evidence.test_tlsn_live",
@@ -52,6 +56,7 @@ module = [
     "gate.test_broker",
     "gate.test_cava",
     "gate.test_certs",
+    "gate.test_consent",
     "gate.test_mcp_proxy",
     "gate.test_perf",
     "gate.test_policy",
@@ -64,11 +69,14 @@ module = [
     "swarm.test_attacker",
     "swarm.test_anchor",
     "swarm.test_attribution",
+    "swarm.test_desk",
     "swarm.test_flow",
     "swarm.test_hook",
     "swarm.test_hookio",
     "swarm.test_intent",
+    "swarm.test_mcp_bridge",
     "swarm.test_redteam",
+    "swarm.test_server",
     "swarm.test_state",
     "swarm.test_meta_client",
     "swarm.test_voice",

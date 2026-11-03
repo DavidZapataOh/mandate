@@ -15,6 +15,15 @@ _SHELL_FORBIDDEN = frozenset("\n\r\x00<>`$(){}")
 _FILE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
 _SHELL_TOOLS = frozenset({"bash", "shell", "exec_command"})
 _PROTECTED = frozenset({".mandate", ".muse"})
+MANDATE_MCP_TOOLS = frozenset(
+    {
+        "mcp__mandate__quote_payment",
+        "mcp__mandate__get_payment_status",
+        "mcp__mandate__confirm_payment",
+        "mcp__mandate__get_receipt",
+    }
+)
+_PATH_KEYS = ("path", "file_path", "dir", "cwd")
 _PASS_TOOLS = frozenset(
     {
         "read_file",
@@ -122,7 +131,7 @@ def deny_output(reason: str) -> str:
 
 def classify(tool: str) -> Kind:
     """Classify a tool name; anything unknown is denied."""
-    if tool in _PASS_TOOLS:
+    if tool in _PASS_TOOLS or tool in MANDATE_MCP_TOOLS:
         return Kind.PASS
     if tool == "subagent_spawn":
         return Kind.SPAWN
@@ -132,7 +141,7 @@ def classify(tool: str) -> Kind:
 
 
 def _relative(path: str) -> str:
-    if "\x00" in path or posixpath.isabs(path):
+    if "\x00" in path or posixpath.isabs(path) or path.startswith("~"):
         raise ScopeError("scope: path escapes worktree")
     rel = posixpath.normpath(path)
     if rel == ".." or rel.startswith("../"):
@@ -150,11 +159,21 @@ def _file_atom(tool_input: dict[str, Any]) -> str:
     return f"file:{rel}"
 
 
-def _escapes(token: str) -> bool:
-    for part in (token, token.partition("=")[2]):
-        if part.startswith(("/", "~")) or ".." in part.split("/"):
-            return True
-    return False
+def _candidates(token: str) -> list[str]:
+    fragments = re.split(r"[=:]", token)
+    found = [token, *fragments]
+    for part in (token, *fragments):
+        if part.startswith("-") and not part.startswith("--") and len(part) > 2:
+            found.append(part[2:])
+    return found
+
+
+def _escapes(candidate: str) -> bool:
+    return candidate.startswith(("/", "~")) or ".." in candidate.split("/")
+
+
+def _protected(candidate: str) -> bool:
+    return any(seg.casefold() in _PROTECTED for seg in candidate.split("/"))
 
 
 def _check_workdir(workdir: object, cwd: str) -> None:
@@ -179,6 +198,7 @@ def _shell_atoms(tool_input: dict[str, Any], cwd: str) -> tuple[str, ...]:
         raise ScopeError("scope: shell redirection or substitution")
     _check_workdir(tool_input.get("workdir"), cwd)
     atoms: dict[str, None] = {}
+    candidates: list[str] = []
     for segment in _SEGMENTS.split(command):
         if not segment.strip():
             continue
@@ -186,13 +206,48 @@ def _shell_atoms(tool_input: dict[str, Any], cwd: str) -> tuple[str, ...]:
             argv = shlex.split(segment)
         except ValueError:
             raise ScopeError("scope: unparseable shell command") from None
-        if any(_escapes(token) for token in argv):
-            raise ScopeError("scope: shell path escapes worktree")
+        candidates.extend(c for token in argv for c in _candidates(token))
         if argv:
             atoms[f"cmd:{argv[0]}"] = None
+    if any(_escapes(c) for c in candidates):
+        raise ScopeError("scope: shell path escapes worktree")
+    if any(_protected(c) for c in candidates):
+        raise ScopeError("scope: protected path")
     if not atoms:
         raise ScopeError("scope: missing tool target")
     return tuple(atoms)
+
+
+_TEXT_KEYS = {"grep": frozenset({"pattern"}), "search": frozenset({"query", "pattern"})}
+
+
+def _check_strings(value: object) -> None:
+    if isinstance(value, str):
+        _relative(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _check_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            _check_strings(item)
+
+
+def _check_pass_paths(call: ToolCall) -> None:
+    for key in _PATH_KEYS:
+        if key in call.tool_input and not isinstance(call.tool_input[key], str):
+            raise ScopeError("scope: path escapes worktree")
+    if "paths" in call.tool_input:
+        paths = call.tool_input["paths"]
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+            raise ScopeError("scope: path escapes worktree")
+    if call.tool == "glob":
+        pattern = call.tool_input.get("pattern")
+        if isinstance(pattern, str) and ("{" in pattern or "}" in pattern):
+            raise ScopeError("scope: path escapes worktree")
+    skip = _TEXT_KEYS.get(call.tool, frozenset())
+    for key, value in call.tool_input.items():
+        if key not in skip:
+            _check_strings(value)
 
 
 def targets_for(call: ToolCall) -> tuple[str, ...]:
@@ -211,7 +266,6 @@ def targets_for(call: ToolCall) -> tuple[str, ...]:
     kind = classify(call.tool)
     if kind is Kind.DENY:
         raise ScopeError(f"unclassified tool: {call.tool}")
-    path = call.tool_input.get("path")
-    if kind is Kind.PASS and isinstance(path, str):
-        _relative(path)
+    if kind is Kind.PASS:
+        _check_pass_paths(call)
     return ()

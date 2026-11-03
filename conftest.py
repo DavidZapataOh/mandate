@@ -1,10 +1,18 @@
 """Shared pytest fixtures (lives outside packages, never shipped)."""
 
+import itertools
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 
+from bank.api import Bank
+from bank.verifier import Verifier
 from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair
+from gate.consent import Consent, sign_consent
 from gate.policy import Intent, Policy, Rule, Verdict
+from swarm.desk import PaymentDesk
 
 
 @pytest.fixture
@@ -80,3 +88,39 @@ def cert_claims() -> CertClaims:
         evidence_refs=("ev:funds-proof-7f3a",),
         revocation_index=7,
     )
+
+
+DESK_NOW = 1800001000
+
+
+@pytest.fixture
+def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
+    def build(
+        register: bool = True, clock: Callable[[], int] | None = None
+    ) -> tuple[PaymentDesk, bytes | None]:
+        gate_priv, gate_pub = generate_keypair()
+        counter = itertools.count(1)
+        desk = PaymentDesk(
+            source="checking-881",
+            bank=Bank({"checking-881": 50000, "acme-991": 0}),
+            verifier=Verifier(gate_pub),
+            gate_key=gate_priv,
+            clock=clock or (lambda: DESK_NOW),
+            nonces=lambda: f"{next(counter):032x}",
+        )
+        if not register:
+            return desk, None
+        holder_priv, holder_pub = generate_keypair()
+        desk.register_holder(holder_pub)
+        return desk, holder_priv
+
+    return build
+
+
+@pytest.fixture
+def sign_quote() -> Callable[[bytes, dict[str, Any]], bytes]:
+    def sign(holder_priv: bytes, quoted: dict[str, Any]) -> bytes:
+        unsigned = Consent(**quoted["consent"], signature=b"")
+        return sign_consent(holder_priv, unsigned).signature
+
+    return sign

@@ -121,6 +121,10 @@ class Registry:
         self._entries.append(LogEntry(seq=seq, kind=kind, body=body))
         return seq
 
+    def has_room(self) -> bool:
+        """True while another entry fits within the budget."""
+        return len(self._entries) < self._max_entries
+
     def root(self) -> str:
         """Hex Merkle root of the log (EMPTY_ROOT when empty)."""
         if not self._entries:

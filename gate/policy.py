@@ -33,6 +33,7 @@ class Rule:
     amount_exact: bool
     amount_lte_cents: int | None
     approval_required: bool
+    consent_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,8 +67,15 @@ _MONEY_FIELDS = (
 )
 
 
-def _money_fields(targets: tuple[str, ...]) -> dict[str, list[str]]:
-    """One pass over targets; values of each money field, in order."""
+def money_fields(targets: tuple[str, ...]) -> dict[str, list[str]]:
+    """One pass over targets; values of each money field, in order.
+
+    Args:
+        targets: Canonical action targets.
+
+    Returns:
+        Values of the amount, from, to, and ref fields, in target order.
+    """
     amount: list[str] = []
     source: list[str] = []
     to: list[str] = []
@@ -130,7 +138,7 @@ def evaluate(
     if rule is None:
         return (Verdict.NOT_MET, ("no rule matches",))
     if rule.amount_exact or rule.amount_lte_cents is not None:
-        failed = _check_money(_money_fields(action.targets), rule, intent)
+        failed = _check_money(money_fields(action.targets), rule, intent)
         if failed is not None:
             return failed
     return (Verdict.MET, (f"rule {rule.rule_id} satisfied",))

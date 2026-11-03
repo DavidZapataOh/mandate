@@ -121,3 +121,10 @@ def test_registry_accepts_anchor_entries():
     assert verify_inclusion(registry.prove(1), registry.root()) is True
     with pytest.raises(ValueError, match="unknown entry kind"):
         registry.append("bogus", "x")
+
+
+def test_has_room_tracks_budget():
+    reg = Registry(max_entries=1)
+    assert reg.has_room() is True
+    reg.append("execution", "a")
+    assert reg.has_room() is False
