@@ -88,7 +88,7 @@ def test_in_scope_edit_passes(send, journal):
     assert send(EDIT) == (0, "")
     last = journal()[-1]
     assert (last["agent"], last["tool"]) == ("child-1", "edit_file")
-    assert last["event"]["verdict"] == "MET"
+    assert last["event"]["event"]["verdict"] == "MET"
 
 
 def test_out_of_scope_edit_denied(send, journal):
@@ -97,7 +97,7 @@ def test_out_of_scope_edit_denied(send, journal):
     code, out = send(call)
     assert code == 0
     assert _reason(out) == "scope: target outside delegation"
-    assert journal()[-1]["event"]["verdict"] == "NOT_MET"
+    assert journal()[-1]["event"]["event"]["verdict"] == "NOT_MET"
 
 
 def test_unbound_session_denied(send):
@@ -124,7 +124,7 @@ def test_unclassified_tool_not_checkable(send, journal):
     _bound_child(send)
     _, out = send(dict(EDIT, tool_name="web_fetch", tool_input={}))
     assert _reason(out) == "unclassified tool: web_fetch"
-    assert journal()[-1]["event"]["verdict"] == "NOT_CHECKABLE"
+    assert journal()[-1]["event"]["event"]["verdict"] == "NOT_CHECKABLE"
 
 
 def test_malformed_stdin_fails_closed(repo, state_dir):
@@ -139,11 +139,22 @@ def test_no_state_fails_closed(send, state_dir):
     assert _reason(out) == "malformed: no mandate state"
 
 
-def test_journal_event_is_v1_decision(send, journal):
+def test_hook_journal_is_v2(send, journal):
     _bound_child(send)
     send(EDIT, nonce="e" * 32)
-    event = journal()[-1]["event"]
-    assert (event["v"], event["id"], event["policy"]) == (1, "evt:" + "e" * 32, "swarm")
+    line = journal()[-1]
+    assert (line["targets"], line["tool_use_id"]) == (["file:README.md"], "call_1")
+    assert (line["event"]["v"], line["event"]["event"]["id"]) == (2, "evt:" + "e" * 32)
+    assert line["event"]["meta"] == {
+        "provider": "muse-code",
+        "model": "muse-spark-1.3",
+        "response_id": None,
+        "request_id": "call_1",
+        "latency_ms": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "anchor": None,
+    }
 
 
 def test_corrupt_state_denies(send, state_dir):
@@ -226,7 +237,7 @@ def test_planted_worktree_state_is_ignored(send, journal, repo):
     )
     _, out = send(call)
     assert _reason(out) == "scope: target outside delegation"
-    assert journal()[-1]["event"]["verdict"] == "NOT_MET"
+    assert journal()[-1]["event"]["event"]["verdict"] == "NOT_MET"
     assert not (tree / ".mandate" / "journal.jsonl").exists()
 
 
@@ -237,13 +248,13 @@ def test_cwd_outside_repo_denied(send, journal, cwd):
     _bound_child(send)
     _, out = send(dict(EDIT, cwd=cwd))
     assert _reason(out) == "scope: cwd outside governed repo"
-    assert journal()[-1]["event"]["verdict"] == "NOT_MET"
+    assert journal()[-1]["event"]["event"]["verdict"] == "NOT_MET"
 
 
 def test_session_start_outside_repo_ignored(send, journal, state_dir):
     assert send(dict(SESSION_START, cwd="/elsewhere")) == (0, "")
     last = journal()[-1]
-    assert (last["tool"], last["event"]["reason"]) == (
+    assert (last["tool"], last["event"]["event"]["reason"]) == (
         "SessionStart",
         "scope: cwd outside governed repo",
     )
@@ -274,7 +285,7 @@ def test_lead_at_root_is_governed(send, journal):
     assert send(SESSION_START) == (0, "")
     call = dict(EDIT, session_id="lead-1", cwd="/repo")
     assert send(call) == (0, "")
-    assert journal()[-1]["event"]["verdict"] == "MET"
+    assert journal()[-1]["event"]["event"]["verdict"] == "MET"
 
 
 @pytest.mark.parametrize("path", [".mandate/swarm.json", ".muse/hooks.json"])
@@ -358,3 +369,28 @@ def test_cli_with_pinned_dirs_decides(repo, state_dir):
     )
     assert run.returncode == 0
     assert _reason(run.stdout) == "scope: agent has no delegation"
+
+
+def test_deny_survives_attribution_failure(send, monkeypatch):
+    _bound_child(send)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("attribution down")
+
+    monkeypatch.setattr("swarm.hook.from_hook", boom)
+    call = dict(EDIT, tool_input=dict(EDIT["tool_input"], path="deploy.env"))
+    code, out = send(call)
+    assert code == 0
+    assert _reason(out) == "scope: target outside delegation"
+
+
+def test_event_serialization_failure_denies(send, monkeypatch):
+    _bound_child(send)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("serialize down")
+
+    monkeypatch.setattr("swarm.hook.event_v2_json", boom)
+    code, out = send(EDIT)
+    assert code == 0
+    assert _reason(out) == "malformed: mandate error"

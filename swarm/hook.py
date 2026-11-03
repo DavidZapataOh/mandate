@@ -25,6 +25,7 @@ from gate.certs import BitstringRevocation
 from gate.events import DecisionEvent
 from gate.policy import Verdict
 from gate.shim import Mode
+from swarm.attribution import Attribution, event_v2_json, from_hook
 from swarm.hookio import (
     ChildStarted,
     HookEvent,
@@ -88,6 +89,7 @@ class _Ctx:
         verdict: Verdict,
         why: str,
         tool_use_id: str | None = None,
+        meta: Attribution | None = None,
     ) -> None:
         action = CavaAction(
             version="cava/1",
@@ -119,7 +121,7 @@ class _Ctx:
         }
         if tool_use_id is not None:
             record["tool_use_id"] = tool_use_id
-        record["event"] = json.loads(event.to_json())
+        record["event"] = json.loads(event_v2_json(event, meta))
         line = json.dumps(record, separators=(",", ":"))
         with (self.state_dir / "journal.jsonl").open("a") as handle:
             handle.write(line + "\n")
@@ -133,7 +135,13 @@ class _Ctx:
     ) -> tuple[int, str]:
         try:
             self.journal(
-                call.session_id, call.tool, targets, verdict, why, call.tool_use_id
+                call.session_id,
+                call.tool,
+                targets,
+                verdict,
+                why,
+                call.tool_use_id,
+                from_hook(call),
             )
         except Exception:  # noqa: S110
             pass  # a deny must survive a journal failure
@@ -143,7 +151,13 @@ class _Ctx:
         self, call: ToolCall, targets: tuple[str, ...], why: str
     ) -> tuple[int, str]:
         self.journal(
-            call.session_id, call.tool, targets, Verdict.MET, why, call.tool_use_id
+            call.session_id,
+            call.tool,
+            targets,
+            Verdict.MET,
+            why,
+            call.tool_use_id,
+            from_hook(call),
         )
         return 0, ""
 

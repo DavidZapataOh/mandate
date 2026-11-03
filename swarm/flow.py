@@ -8,6 +8,7 @@ from gate.policy import Intent, Policy, Rule
 from gate.shim import Mode
 from mandate.client import RunRequest, RunResult, run_governed
 from swarm.agent import Proposal, Responder, propose_payment, report_outcome
+from swarm.attribution import Attribution, from_trace
 from swarm.meta_client import MetaAPIError
 
 PAYMENTS_POLICY = Policy(
@@ -37,12 +38,14 @@ class BillRun:
         confirmation: The model's reply after seeing the outcome, or None if
             reporting failed.
         report_error: Why reporting failed, or None.
+        attribution: The Meta call behind the proposal, with its anchor.
     """
 
     proposal: Proposal
     result: RunResult
     confirmation: str | None
     report_error: str | None
+    attribution: Attribution
 
 
 def run_bill(
@@ -110,8 +113,9 @@ def run_bill(
         "reason": result.reason,
         "payment": None if result.payment is None else result.payment.payment_id,
     }
+    attribution = from_trace(proposal.trace, proposal.anchor.digest())
     try:
         resp = report_outcome(meta, proposal, outcome)
     except MetaAPIError as exc:
-        return BillRun(proposal, result, None, str(exc))
-    return BillRun(proposal, result, resp.text, None)
+        return BillRun(proposal, result, None, str(exc), attribution)
+    return BillRun(proposal, result, resp.text, None, attribution)

@@ -100,3 +100,13 @@ def test_run_bill_keeps_result_when_confirmation_fails(fake_meta):
     assert run.confirmation is None
     assert run.report_error == "HTTP 503: unavailable"
     assert bank.get_balance("acme-991") == 20000
+
+
+def test_run_bill_attribution(fake_meta):
+    meta = fake_meta([REASONING, tool_call()], [message("Paid.")])
+    run = _run(meta, _bank())
+    assert run.attribution.provider == "meta-model-api"
+    assert run.attribution.response_id == "resp_1"
+    assert run.attribution.anchor == (
+        "ecdf64cc119eedfb70667704cdb4f24c8c26cdfee47d2f628fd095dc2ab139f6"
+    )

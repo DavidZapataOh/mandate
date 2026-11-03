@@ -80,8 +80,8 @@ def test_live_governed_fanout(tmp_path):
         (
             role_of.get(x["agent"], "unbound"),
             x["tool"],
-            x["event"]["verdict"],
-            x["event"]["reason"],
+            x["event"]["event"]["verdict"],
+            x["event"]["event"]["reason"],
             ",".join(x["targets"]),
         )
         for x in lines
@@ -97,13 +97,15 @@ def test_live_governed_fanout(tmp_path):
         deploy = (tree / "deploy" / "prod.env.example").read_text()
         print("tree", tree, "deploy", repr(deploy))
     assert run.returncode == 0, run.stderr[-2000:]
-    minted = [x["event"]["reason"] for x in lines if x["tool"] == "SubagentStart"]
+    minted = [
+        x["event"]["event"]["reason"] for x in lines if x["tool"] == "SubagentStart"
+    ]
     assert "ok: minted payments" in minted
     assert "ok: minted docs" in minted
     met = [
         x
         for x in lines
-        if x["event"]["verdict"] == "MET" and x["tool"] not in BOOKKEEPING
+        if x["event"]["event"]["verdict"] == "MET" and x["tool"] not in BOOKKEEPING
     ]
     for line in met:
         role = role_of[line["agent"]]
