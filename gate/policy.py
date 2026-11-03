@@ -58,43 +58,67 @@ def matched_rule(action: CavaAction, policy: Policy) -> Rule | None:
     return None
 
 
-def _parse_amount(targets: tuple[str, ...]) -> tuple[str, int] | None:
+_MONEY_FIELDS = (
+    ("amount", "amount"),
+    ("from", "source"),
+    ("to", "recipient"),
+    ("ref", "reference"),
+)
+
+
+def _money_fields(targets: tuple[str, ...]) -> dict[str, list[str]]:
+    """One pass over targets; values of each money field, in order."""
+    amount: list[str] = []
+    source: list[str] = []
+    to: list[str] = []
+    ref: list[str] = []
     for target in targets:
         if target.startswith("amount:"):
-            parts = target.split(":")
-            if len(parts) != 3 or not parts[1] or not parts[2].isdigit():
-                return None
-            return (parts[1], int(parts[2]))
-    return None
+            amount.append(target[7:])
+        elif target.startswith("from:"):
+            source.append(target[5:])
+        elif target.startswith("to:"):
+            to.append(target[3:])
+        elif target.startswith("ref:"):
+            ref.append(target[4:])
+    return {"amount": amount, "from": source, "to": to, "ref": ref}
 
 
-def _values(targets: tuple[str, ...], prefix: str) -> list[str]:
-    return [t[len(prefix) :] for t in targets if t.startswith(prefix)]
+def _parse_amount(value: str) -> tuple[str, int] | None:
+    currency, sep, cents = value.partition(":")
+    if not sep or not currency or not cents.isdigit():
+        return None
+    return (currency, int(cents))
 
 
-def _money_ambiguity(targets: tuple[str, ...]) -> str | None:
-    """Reason when a money field appears more than once; executors could
-    read a different copy than the gate checked."""
-    fields = (
-        ("amount:", "amount"),
-        ("from:", "source"),
-        ("to:", "recipient"),
-        ("ref:", "reference"),
-    )
-    for prefix, name in fields:
-        if len(_values(targets, prefix)) > 1:
-            return f"{name} target ambiguous"
-    return None
-
-
-def _bound_to_intent(
-    targets: tuple[str, ...], prefix: str, expected: str, name: str
+def _check_money(
+    fields: dict[str, list[str]], rule: Rule, intent: Intent
 ) -> tuple[Verdict, tuple[str, ...]] | None:
-    found = _values(targets, prefix)
-    if not found:
-        return (Verdict.NOT_CHECKABLE, (f"{name} not stated",))
-    if found[0] != expected:
-        return (Verdict.NOT_MET, (f"{name} differs from intent",))
+    """Money checks; any duplicated field is ambiguous because an executor
+    could read a different copy than the one checked here."""
+    if not fields["amount"]:
+        return (Verdict.NOT_CHECKABLE, ("amount not stated",))
+    for key, name in _MONEY_FIELDS:
+        if len(fields[key]) > 1:
+            return (Verdict.NOT_CHECKABLE, (f"{name} target ambiguous",))
+    parsed = _parse_amount(fields["amount"][0])
+    if parsed is None:
+        return (Verdict.NOT_CHECKABLE, ("amount target malformed",))
+    currency, cents = parsed
+    if currency != intent.currency:
+        return (Verdict.NOT_MET, ("currency mismatch",))
+    if rule.amount_exact and cents != intent.amount_cents:
+        return (Verdict.NOT_MET, ("amount differs from intent",))
+    if rule.amount_lte_cents is not None and cents > rule.amount_lte_cents:
+        return (Verdict.NOT_MET, ("amount exceeds ceiling",))
+    for key, expected, name in (
+        ("to", intent.recipient, "recipient"),
+        ("ref", intent.reference, "reference"),
+    ):
+        if not fields[key]:
+            return (Verdict.NOT_CHECKABLE, (f"{name} not stated",))
+        if fields[key][0] != expected:
+            return (Verdict.NOT_MET, (f"{name} differs from intent",))
     return None
 
 
@@ -106,27 +130,7 @@ def evaluate(
     if rule is None:
         return (Verdict.NOT_MET, ("no rule matches",))
     if rule.amount_exact or rule.amount_lte_cents is not None:
-        found = any(t.startswith("amount:") for t in action.targets)
-        if not found:
-            return (Verdict.NOT_CHECKABLE, ("amount not stated",))
-        ambiguous = _money_ambiguity(action.targets)
-        if ambiguous is not None:
-            return (Verdict.NOT_CHECKABLE, (ambiguous,))
-        parsed = _parse_amount(action.targets)
-        if parsed is None:
-            return (Verdict.NOT_CHECKABLE, ("amount target malformed",))
-        currency, cents = parsed
-        if currency != intent.currency:
-            return (Verdict.NOT_MET, ("currency mismatch",))
-        if rule.amount_exact and cents != intent.amount_cents:
-            return (Verdict.NOT_MET, ("amount differs from intent",))
-        if rule.amount_lte_cents is not None and cents > rule.amount_lte_cents:
-            return (Verdict.NOT_MET, ("amount exceeds ceiling",))
-        for prefix, expected, name in (
-            ("to:", intent.recipient, "recipient"),
-            ("ref:", intent.reference, "reference"),
-        ):
-            bound = _bound_to_intent(action.targets, prefix, expected, name)
-            if bound is not None:
-                return bound
+        failed = _check_money(_money_fields(action.targets), rule, intent)
+        if failed is not None:
+            return failed
     return (Verdict.MET, (f"rule {rule.rule_id} satisfied",))
