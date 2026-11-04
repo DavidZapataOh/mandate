@@ -7,7 +7,9 @@ import pytest
 
 from bank.api import Bank
 from bank.verifier import Verifier
+from gate.cava import CavaAction, Freshness
 from gate.certs import generate_keypair
+from gate.consent import Consent, HolderApproval, with_approval
 from gate.policy import Intent
 from swarm.attacker import AttackerTrace
 from swarm.conftest import ARGS, REASONING, message, tool_call
@@ -19,9 +21,11 @@ from swarm.console_line import (
     console_line_json,
     deploy_line,
     desk_line,
+    forensic_of,
     pay_summary,
     read_console_line,
 )
+from swarm.desk import DESK_POLICY
 from swarm.flow import PAYMENTS_POLICY, run_bill
 from swarm.nimbus import NimbusStep, ProdTarget, run_step
 from swarm.redteam import TEMPLATES, AttackKind, apply_attack, run_campaign
@@ -524,3 +528,37 @@ def test_console_fixtures_are_the_python_goldens(name, golden):
     found = re.search(rf"export const {name} =\n  '([^']*)';\n", source)
     assert found is not None
     assert found.group(1) == golden
+
+
+def test_forensic_consent_is_the_seven_signed_fields():
+    _, gate_pub = generate_keypair()
+    unsigned = Consent(
+        20000, "USD", "acme-991", "A-991", "checking-881", "c0" * 16, 1800001600, b""
+    )
+    approval = HolderApproval(b"\x01" * 64, b"\x93" * 32, b"\x02" * 64)
+    action = CavaAction(
+        version="cava/1",
+        runtime="mcp",
+        executable="bank.pay",
+        operation="transfer",
+        category="payments",
+        targets=("amount:USD:20000", "from:checking-881", "ref:A-991", "to:acme-991"),
+        reversible=False,
+        freshness=Freshness(nonce="f" * 32, timestamp=NOW),
+        evidence_refs=(),
+    )
+    consent = with_approval(unsigned, approval)
+    forensic = forensic_of(
+        action, DESK_POLICY, None, gate_pub, consent=consent, salt=None
+    )
+    assert forensic["consent"] == {
+        "amount_cents": 20000,
+        "currency": "USD",
+        "recipient": "acme-991",
+        "reference": "A-991",
+        "source": "checking-881",
+        "nonce": "c0" * 16,
+        "expires_at": 1800001600,
+    }
+    text = console_line_json(ConsoleLine(1, "desk", None, None, {}, forensic))
+    assert "k5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5M" not in text

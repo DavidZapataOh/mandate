@@ -126,6 +126,7 @@ def decide(
             verdict, reasons = Verdict.NOT_MET, (reason,)
         elif mode is Mode.ENFORCE and consent is not None:
             ledger.consume(consent.nonce)
+            ledger.consume_key(consent.consent_key)
     certificate = None
     cert_jti = None
     if mode is Mode.ENFORCE and verdict is Verdict.MET:

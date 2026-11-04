@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from gate.cava import CavaAction, action_commitment, action_hash, canonical_bytes
@@ -59,6 +59,15 @@ _DESK_STEPS = ("quote", "approve", "confirm")
 _RECORD_KEYS = frozenset(("agent", "tool", "targets", "event", "tool_use_id"))
 _MALFORMED = "console line: malformed"
 _SAFE_INT = 2**53 - 1
+_CONSENT_FIELDS = (
+    "amount_cents",
+    "currency",
+    "recipient",
+    "reference",
+    "source",
+    "nonce",
+    "expires_at",
+)
 _Check = Callable[[object], bool]
 
 
@@ -333,11 +342,8 @@ def forensic_of(
 
 
 def _consent_fields(consent: Consent) -> dict[str, Any]:
-    return {
-        f.name: getattr(consent, f.name)
-        for f in fields(consent)
-        if f.name != "signature"
-    }
+    # Signed fields only: the one-time key and its certificate stay off the wire.
+    return {name: getattr(consent, name) for name in _CONSENT_FIELDS}
 
 
 def _registry_fields(proof: InclusionProof) -> dict[str, Any]:

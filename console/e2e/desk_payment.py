@@ -1,8 +1,9 @@
 """Pays one real desk quote end to end against a running console server.
 
 Usage: desk_payment.py BASE_URL PAIRING_TOKEN. Pairs a fresh holder key, quotes
-through MCP, signs the holder consent and approves, prints `approved`, then
-confirms once a line arrives on stdin and prints the confirm status.
+through MCP, approves the holder consent through a one-time key, prints
+`approved`, then confirms once a line arrives on stdin and prints the confirm
+status.
 """
 
 import asyncio
@@ -16,7 +17,7 @@ from mcp import Client
 from mcp.types import TextContent
 
 from gate.certs import generate_keypair
-from gate.consent import Consent, sign_consent
+from gate.consent import Consent, sign_approval
 
 QUOTE = {
     "to_account": "acme-991",
@@ -47,10 +48,15 @@ async def pay(base: str, pairing: str) -> str:
     async with Client(f"{base}/mcp") as client:
         quoted = await _tool(client, "quote_payment", QUOTE)
         consent = Consent(**quoted["consent"], signature=b"")
-        signature = sign_consent(private, consent).signature
+        approval = sign_approval(private, consent)
         approved = httpx2.post(
             f"{base}/api/approve",
-            json={"quote_id": quoted["quote_id"], "signature": _b64(signature)},
+            json={
+                "quote_id": quoted["quote_id"],
+                "signature": _b64(approval.signature),
+                "consent_key": _b64(approval.consent_key),
+                "key_signature": _b64(approval.key_signature),
+            },
         )
         approved.raise_for_status()
         print("approved", flush=True)

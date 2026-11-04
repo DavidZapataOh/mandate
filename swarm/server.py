@@ -31,6 +31,7 @@ from starlette.responses import (
 from bank.api import Bank
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
+from gate.consent import HolderApproval
 from swarm.console_line import ConsoleLine, console_line_json
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
@@ -57,6 +58,7 @@ from swarm.voice import (
 _MAX_BODY = 4096
 _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
 _BAD_REQUEST = {"error": "bad request"}
+_APPROVAL = ("signature", "consent_key", "key_signature")
 _DEMO_BALANCE_CENTS = 100000
 _LOCAL_HOSTS = ("127.0.0.1", "localhost")
 _KEY_LEN = 32
@@ -220,6 +222,14 @@ def _decode(text: str) -> bytes | None:
         return None
 
 
+def _approval(body: dict[str, Any]) -> HolderApproval | None:
+    """Decode the one-time signature, its key and the holder's certificate."""
+    signature, consent_key, key_signature = (_decode(body[n]) for n in _APPROVAL)
+    if signature is None or consent_key is None or key_signature is None:
+        return None
+    return HolderApproval(signature, consent_key, key_signature)
+
+
 class _Pairing:
     """One-time token that lets exactly one device register as the holder."""
 
@@ -250,7 +260,8 @@ def build_server(
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
-    The tools never approve: only a signature posted to `/api/approve` does.
+    The tools never approve: only a holder approval posted to `/api/approve`
+    does.
     The holder key is registered once, by the device that presents the
     pairing token; the token is spent on first use.
 
@@ -310,11 +321,11 @@ state is returned."""
         return JSONResponse({"pending": desk.pending()})
 
     async def approve(request: Request) -> Response:
-        body = await _fields(request, "quote_id", "signature")
-        signature = _decode(body["signature"]) if body else None
-        if body is None or signature is None:
+        body = await _fields(request, "quote_id", *_APPROVAL)
+        approval = _approval(body) if body else None
+        if body is None or approval is None:
             return _bad_request()
-        return JSONResponse(desk.approve(body["quote_id"], signature))
+        return JSONResponse(desk.approve(body["quote_id"], approval))
 
     async def holder(request: Request) -> Response:
         body = await _fields(request, "public_key", "pairing")

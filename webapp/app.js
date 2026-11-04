@@ -223,6 +223,16 @@ export async function signVoice(keys, quoteId, wav) {
   return toBase64(signature).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+/** Bytes the holder key signs to certify a one-time consent key for one nonce. */
+export function keyBytes(consentKey, nonce) {
+  const sized = consentKey instanceof Uint8Array && consentKey.length === 32;
+  if (!sized || typeof nonce !== "string" || !PRINTABLE.test(nonce)) {
+    throw malformed();
+  }
+  const body = JSON.stringify({ consent_key: toBase64(consentKey), nonce });
+  return new TextEncoder().encode(`consent-key/v1:${body}`);
+}
+
 export function describe(fields) {
   validate(fields);
   const cents = fields.amount_cents;
@@ -279,8 +289,8 @@ export function httpApi(base, fetchFn = fetch) {
     transcribe,
     voiceOn,
     pending: async () => (await call("/api/pending")).pending,
-    approve: (quoteId, signature) =>
-      call("/api/approve", { quote_id: quoteId, signature }),
+    approve: (quoteId, approval) =>
+      call("/api/approve", { quote_id: quoteId, ...approval }),
     registerHolder: (publicKey, pairing) =>
       call("/api/holder", { public_key: publicKey, pairing }),
   };
@@ -309,6 +319,28 @@ export async function holderKey(store) {
   ]);
   await store.save(pair);
   return pair;
+}
+
+const ED25519 = { name: "Ed25519" };
+
+/**
+ * Signs the consent with a key drawn for it alone and certifies that key with
+ * the holder key, so no two receipts carry the same key.
+ */
+export async function oneTimeApproval(holderPrivateKey, bytes, nonce) {
+  const oneTime = await crypto.subtle.generateKey(ED25519, false, ["sign"]);
+  const consentKey = new Uint8Array(
+    await crypto.subtle.exportKey("raw", oneTime.publicKey),
+  );
+  const [signature, keySignature] = await Promise.all([
+    crypto.subtle.sign(ED25519, oneTime.privateKey, bytes),
+    crypto.subtle.sign(ED25519, holderPrivateKey, keyBytes(consentKey, nonce)),
+  ]);
+  return {
+    signature: toBase64(signature),
+    consent_key: toBase64(consentKey),
+    key_signature: toBase64(keySignature),
+  };
 }
 
 export class Approver {
@@ -362,12 +394,12 @@ export class Approver {
     try {
       // Sign what the page rebuilds from the fields it displayed, not a server summary.
       const bytes = consentBytes(shown.consent);
-      const signature = await crypto.subtle.sign(
-        { name: "Ed25519" },
+      const approval = await oneTimeApproval(
         this.#keys.privateKey,
         bytes,
+        shown.consent.nonce,
       );
-      const result = await this.#api.approve(shown.quote_id, toBase64(signature));
+      const result = await this.#api.approve(shown.quote_id, approval);
       if (result.status !== "approved") {
         throw new Error(`approval refused: ${result.reason ?? result.status}`);
       }

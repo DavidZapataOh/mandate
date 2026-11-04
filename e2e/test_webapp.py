@@ -34,3 +34,4 @@ def test_webapp_suite_against_the_desk(running_desk, pairing_token):
     assert "# skipped 0" in run.stdout
     assert desk.status("q:000001")["status"] == "approved"
     assert len(desk.holder_keys) == 1
+    assert desk.confirm("q:000001")["status"] == "confirmed"

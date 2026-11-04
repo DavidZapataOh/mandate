@@ -1,6 +1,5 @@
 """Payment desk: quote, holder approval, gated confirm, receipt."""
 
-import dataclasses
 import json
 import os
 import threading
@@ -12,7 +11,14 @@ from bank.api import Bank
 from bank.verifier import Verifier
 from gate.cava import ACTION_SALT_LEN
 from gate.certs import public_key_of
-from gate.consent import Consent, ConsentLedger, consent_bytes, verify_signature
+from gate.consent import (
+    Consent,
+    ConsentLedger,
+    HolderApproval,
+    consent_bytes,
+    verify_signature,
+    with_approval,
+)
 from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule
 from gate.registry import Registry
@@ -193,17 +199,18 @@ class PaymentDesk:
                 if q.status == "quoted"
             ]
 
-    def approve(self, quote_id: str, signature: bytes) -> dict[str, Any]:
-        """Record the holder's signature over a quote.
+    def approve(self, quote_id: str, approval: HolderApproval) -> dict[str, Any]:
+        """Record the holder's approval of a quote.
 
         Args:
             quote_id: Quote to approve.
-            signature: Ed25519 signature over the quote's consent bytes.
+            approval: A one-time key, its signature over the quote's consent
+                bytes, and the holder key's certificate of that key.
 
         Returns:
             The approved view, the quote's current view when it is no longer
             open, an expired view past its deadline, or a denied dict for a
-            bad signature (the quote stays open).
+            bad signature or a reused key (the quote stays open).
         """
         with self._lock:
             record = self._quotes.get(quote_id)
@@ -216,7 +223,7 @@ class PaymentDesk:
                 view = self._view(quote_id, record)
                 self._emit("approve", view, record.consent)
                 return view
-            signed = dataclasses.replace(record.consent, signature=signature)
+            signed = with_approval(record.consent, approval)
             if not verify_signature(signed, self._holders):
                 denied = {
                     "status": "denied",
@@ -225,6 +232,18 @@ class PaymentDesk:
                 }
                 self._emit("approve", denied, record.consent)
                 return denied
+            # Read-only: the gate stays the authority and consumes at confirm.
+            if (
+                self._ledger.key_used(signed.consent_key)
+                or signed.consent_key in self._holders
+            ):
+                reused = {
+                    "status": "denied",
+                    "reason": "consent: key reused",
+                    "quote_id": quote_id,
+                }
+                self._emit("approve", reused, record.consent)
+                return reused
             record.consent = signed
             record.status = "approved"
             view = self._view(quote_id, record)

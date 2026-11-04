@@ -14,7 +14,7 @@ from bank.api import Bank
 from bank.verifier import Verifier
 from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair
-from gate.consent import Consent, sign_consent
+from gate.consent import Consent, HolderApproval, sign_approval
 from gate.policy import Intent, Policy, Rule, Verdict
 from swarm.console_line import ConsoleLine
 from swarm.desk import PaymentDesk
@@ -128,10 +128,13 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
 
 
 @pytest.fixture
-def sign_quote() -> Callable[[bytes, dict[str, Any]], bytes]:
-    def sign(holder_priv: bytes, quoted: dict[str, Any]) -> bytes:
+def sign_quote() -> Callable[[bytes, dict[str, Any]], HolderApproval]:
+    one_time = itertools.count(0x81)
+
+    def sign(holder_priv: bytes, quoted: dict[str, Any]) -> HolderApproval:
         unsigned = Consent(**quoted["consent"], signature=b"")
-        return sign_consent(holder_priv, unsigned).signature
+        seed = bytes([next(one_time)]) * 32
+        return sign_approval(holder_priv, unsigned, seed)
 
     return sign
 

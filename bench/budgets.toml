@@ -30,3 +30,8 @@ min_decisions_per_s = 2400.0
 p50_us = 413.0
 p95_us = 502.0
 min_decisions_per_s = 2300.0
+
+[paths."gate.consent.check"]
+p50_us = 750.0
+p95_us = 825.0
+min_decisions_per_s = 1340.0

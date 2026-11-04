@@ -3,11 +3,13 @@ import hmac
 import json
 
 from gate.certs import generate_keypair
+from gate.consent import Consent, HolderApproval, sign_approval
 from gate.registry import InclusionProof, Registry, verify_inclusion
 from swarm.console_line import console_line_json
 
 NOW = 1800001000
 SUMMARY = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881"
+ZERO = HolderApproval(b"\x00" * 64, b"\x00" * 32, b"\x00" * 64)
 
 
 def _quote(desk):
@@ -50,7 +52,7 @@ def test_confirm_requires_approval(make_desk):
 def test_bad_signature_keeps_quote_open(make_desk):
     desk, _ = make_desk()
     _quote(desk)
-    out = desk.approve("q:000001", b"\x00" * 64)
+    out = desk.approve("q:000001", ZERO)
     assert (out["status"], out["reason"]) == ("denied", "consent: bad signature")
     assert desk.status("q:000001")["status"] == "quoted"
 
@@ -199,7 +201,7 @@ def _published(make_desk, **kwargs):
 def test_desk_publishes_each_step(make_desk, sign_quote):
     desk, holder, lines = _published(make_desk)
     q = _quote(desk)
-    desk.approve("q:000001", b"\x00" * 64)
+    desk.approve("q:000001", ZERO)
     desk.approve("q:000001", sign_quote(holder, q))
     desk.approve("q:000001", sign_quote(holder, q))
     desk.confirm("q:000001")
@@ -349,3 +351,49 @@ def test_salt_fields_stay_out_of_repr():
     for cls in (Decision, RunResult, StepOutcome, AttackOutcome):
         salt_field = cls.__dataclass_fields__["salt"]
         assert salt_field.repr is False
+
+
+def test_an_approval_for_another_quote_is_refused(make_desk, sign_quote):
+    desk, holder = make_desk()
+    first, second = _quote(desk), _quote(desk)
+    out = desk.approve(second["quote_id"], sign_quote(holder, first))
+    assert (out["status"], out["reason"]) == ("denied", "consent: bad signature")
+    assert desk.status(second["quote_id"])["status"] == "quoted"
+
+
+def test_a_reused_consent_key_pays_only_once(make_desk):
+    desk, holder = make_desk()
+    quotes = [_quote(desk), _quote(desk)]
+    for q in quotes:
+        unsigned = Consent(**q["consent"], signature=b"")
+        desk.approve(q["quote_id"], sign_approval(holder, unsigned, b"\x81" * 32))
+    first, second = (desk.confirm(q["quote_id"]) for q in quotes)
+    assert first["status"] == "confirmed"
+    assert (second["status"], second["reason"]) == ("denied", "consent: key reused")
+    assert desk.bank.get_balance("acme-991") == 20000
+
+
+def test_an_approval_reusing_a_consumed_key_leaves_the_quote_open(make_desk):
+    desk, holder = make_desk()
+    quotes = [_quote(desk), _quote(desk)]
+    first = Consent(**quotes[0]["consent"], signature=b"")
+    desk.approve(quotes[0]["quote_id"], sign_approval(holder, first, b"\x82" * 32))
+    assert desk.confirm(quotes[0]["quote_id"])["status"] == "confirmed"
+    stale = Consent(**quotes[1]["consent"], signature=b"")
+    out = desk.approve(
+        quotes[1]["quote_id"], sign_approval(holder, stale, b"\x82" * 32)
+    )
+    assert (out["status"], out["reason"]) == ("denied", "consent: key reused")
+    assert desk.status(quotes[1]["quote_id"])["status"] == "quoted"
+    fresh = sign_approval(holder, stale, b"\x83" * 32)
+    assert desk.approve(quotes[1]["quote_id"], fresh)["status"] == "approved"
+    assert desk.confirm(quotes[1]["quote_id"])["status"] == "confirmed"
+
+
+def test_an_approval_using_the_paired_key_directly_leaves_the_quote_open(make_desk):
+    desk, holder = make_desk()
+    q = _quote(desk)
+    unsigned = Consent(**q["consent"], signature=b"")
+    out = desk.approve(q["quote_id"], sign_approval(holder, unsigned, holder))
+    assert (out["status"], out["reason"]) == ("denied", "consent: key reused")
+    assert desk.status(q["quote_id"])["status"] == "quoted"

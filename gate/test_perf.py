@@ -17,8 +17,10 @@ from gate.certs import (
     issue_certificate,
     verify_certificate,
 )
+from gate.consent import ConsentLedger, check_consent, sign_consent
 from gate.policy import evaluate
 from gate.shim import Mode, RawCall, decide
+from gate.test_consent import NOW, UNSIGNED, _action
 
 BUDGETS = Path(__file__).resolve().parent.parent / "bench" / "budgets.toml"
 
@@ -45,6 +47,9 @@ def test_perf_within_budgets(
     priv = Ed25519PrivateKey.from_private_bytes(private_key)
     sig = priv.sign(payload.signable_bytes())
     counter = itertools.count()
+    consent = sign_consent(private_key, UNSIGNED)
+    paid = _action()
+    ledger = ConsentLedger()
 
     def _cava():
         action_hash(action)
@@ -84,6 +89,12 @@ def test_perf_within_budgets(
         verify_approval(public_key, payload, sig, action, 1800000100)
         return {"ops": 1}
 
+    def _consent():
+        check_consent(consent, (public_key,), paid, NOW, ledger)
+        return {"ops": 1}
+
+    assert check_consent(consent, (public_key,), paid, NOW, ledger)[0]
+
     results = [
         run_bench("gate.cava.hash", _cava, n=2000, warmup=200),
         run_bench("gate.cava.commit", _commit, n=2000, warmup=200),
@@ -91,6 +102,7 @@ def test_perf_within_budgets(
         run_bench("gate.certs.verify", _certs, n=2000, warmup=200),
         run_bench("gate.shim.decide", _shim, n=2000, warmup=200),
         run_bench("gate.approval.verify", _approval, n=2000, warmup=200),
+        run_bench("gate.consent.check", _consent, n=2000, warmup=200),
     ]
     breaches = check_budgets(results, BUDGETS)
     assert breaches == []

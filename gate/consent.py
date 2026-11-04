@@ -1,5 +1,6 @@
 """Holder consent: signed approval of one exact payment, single use."""
 
+import base64
 import dataclasses
 import json
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from gate.cava import CavaAction
 from gate.policy import money_fields
 
 _PREFIX = b"consent/v1:"
+_KEY_PREFIX = b"consent-key/v1:"
 _SIGNATURE_LEN = 64
 _KEY_LEN = 32
 
@@ -30,7 +32,12 @@ class Consent:
         source: Approved debit account.
         nonce: Unique single-use identifier.
         expires_at: Unix second after which the consent is void.
-        signature: Ed25519 signature over `consent_bytes`; empty when unsigned.
+        signature: Ed25519 signature over consent_bytes by consent_key; empty when
+            unsigned.
+        consent_key: One-time Ed25519 public key drawn for this consent alone;
+            empty when unsigned.
+        key_signature: The holder key's signature over key_bytes, which
+            certifies consent_key for this consent's nonce; empty when unsigned.
     """
 
     amount_cents: int
@@ -41,6 +48,23 @@ class Consent:
     nonce: str
     expires_at: int
     signature: bytes
+    consent_key: bytes = b""
+    key_signature: bytes = b""
+
+
+@dataclass(frozen=True)
+class HolderApproval:
+    """What the holder's device returns for one quote.
+
+    Args:
+        signature: One-time key's Ed25519 signature over `consent_bytes`.
+        consent_key: Raw 32-byte one-time Ed25519 public key.
+        key_signature: Holder key's signature over `key_bytes(consent_key, nonce)`.
+    """
+
+    signature: bytes
+    consent_key: bytes
+    key_signature: bytes
 
 
 def _token(value: object) -> bool:
@@ -87,31 +111,110 @@ def consent_bytes(c: Consent) -> bytes:
     return _PREFIX + encoded.encode("ascii")
 
 
-def sign_consent(private_key: bytes, c: Consent) -> Consent:
-    """Copy of the consent carrying the holder's signature.
+def key_bytes(consent_key: bytes, nonce: str) -> bytes:
+    """Pinned bytes the holder key signs to certify a one-time consent key.
+
+    Only the nonce ties the key to its consent, so a disclosed certificate
+    confirms nothing about the payment fields.
+
+    Args:
+        consent_key: Raw 32-byte one-time Ed25519 public key.
+        nonce: Nonce of the consent the key may sign.
+
+    Returns:
+        `consent-key/v1:` followed by sorted-key compact ASCII JSON.
+
+    Raises:
+        ValueError: If the key or the nonce is malformed.
+    """
+    if (
+        type(consent_key) is not bytes
+        or len(consent_key) != _KEY_LEN
+        or not _token(nonce)
+    ):
+        raise ValueError("consent: malformed")
+    key = base64.b64encode(consent_key).decode("ascii")
+    body = {"consent_key": key, "nonce": nonce}
+    encoded = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return _KEY_PREFIX + encoded.encode("ascii")
+
+
+def sign_approval(
+    private_key: bytes, c: Consent, one_time_seed: bytes | None = None
+) -> HolderApproval:
+    """Approve a consent with a fresh one-time key the holder key certifies.
 
     Args:
         private_key: Raw Ed25519 private key of the holder.
-        c: Consent to sign.
+        c: Consent to approve.
+        one_time_seed: Raw seed of the one-time key; None draws a fresh one.
 
     Returns:
-        The consent with a 64-byte signature.
+        The one-time signature, the one-time public key and its certificate.
 
     Raises:
         ValueError: If the consent is malformed.
     """
-    signature = Ed25519PrivateKey.from_private_bytes(private_key).sign(consent_bytes(c))
-    return dataclasses.replace(c, signature=signature)
+    one_time = (
+        Ed25519PrivateKey.generate()
+        if one_time_seed is None
+        else Ed25519PrivateKey.from_private_bytes(one_time_seed)
+    )
+    consent_key = one_time.public_key().public_bytes_raw()
+    holder = Ed25519PrivateKey.from_private_bytes(private_key)
+    return HolderApproval(
+        signature=one_time.sign(consent_bytes(c)),
+        consent_key=consent_key,
+        key_signature=holder.sign(key_bytes(consent_key, c.nonce)),
+    )
+
+
+def with_approval(c: Consent, approval: HolderApproval) -> Consent:
+    """Copy of the consent carrying the holder's approval.
+
+    Args:
+        c: Consent the approval was made for.
+        approval: Approval returned by the holder's device.
+
+    Returns:
+        The consent with signature, consent key and key signature set.
+    """
+    return dataclasses.replace(
+        c,
+        signature=approval.signature,
+        consent_key=approval.consent_key,
+        key_signature=approval.key_signature,
+    )
+
+
+def sign_consent(
+    private_key: bytes, c: Consent, one_time_seed: bytes | None = None
+) -> Consent:
+    """Copy of the consent approved through a one-time key the holder certifies.
+
+    Args:
+        private_key: Raw Ed25519 private key of the holder.
+        c: Consent to sign.
+        one_time_seed: Raw seed of the one-time key; None draws a fresh one.
+
+    Returns:
+        The consent with signature, consent key and key signature set.
+
+    Raises:
+        ValueError: If the consent is malformed.
+    """
+    return with_approval(c, sign_approval(private_key, c, one_time_seed))
 
 
 class ConsentLedger:
-    """Bounded FIFO record of consumed consent nonces."""
+    """Bounded FIFO record of consumed consent nonces and one-time keys."""
 
     def __init__(self, max_entries: int = 100000) -> None:
         if max_entries < 1:
             raise ValueError("max_entries must be >= 1")
         self._max_entries = max_entries
         self._used: dict[str, None] = {}
+        self._keys: dict[bytes, None] = {}
 
     def used(self, nonce: str) -> bool:
         """True when the nonce was consumed and not yet evicted."""
@@ -123,23 +226,46 @@ class ConsentLedger:
         while len(self._used) > self._max_entries:
             del self._used[next(iter(self._used))]
 
+    def key_used(self, consent_key: bytes) -> bool:
+        """True when the one-time key was consumed and not yet evicted."""
+        return consent_key in self._keys
+
+    def consume_key(self, consent_key: bytes) -> None:
+        """Record the one-time key, evicting the oldest past the bound."""
+        self._keys[consent_key] = None
+        while len(self._keys) > self._max_entries:
+            del self._keys[next(iter(self._keys))]
+
+
+def _sized(value: object, size: int) -> bool:
+    return type(value) is bytes and len(value) == size
+
+
+def _signed(key: bytes, signature: bytes, message: bytes) -> bool:
+    try:
+        Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
+    except (InvalidSignature, ValueError):
+        return False
+    return True
+
 
 def _verifies(c: Consent, message: bytes, holder_keys: tuple[bytes, ...]) -> bool:
-    if type(c.signature) is not bytes or len(c.signature) != _SIGNATURE_LEN:
+    if not (
+        _sized(c.signature, _SIGNATURE_LEN)
+        and _sized(c.consent_key, _KEY_LEN)
+        and _sized(c.key_signature, _SIGNATURE_LEN)
+        and _signed(c.consent_key, c.signature, message)
+    ):
         return False
-    for key in holder_keys:
-        if type(key) is not bytes or len(key) != _KEY_LEN:
-            continue
-        try:
-            Ed25519PublicKey.from_public_bytes(key).verify(c.signature, message)
-        except (InvalidSignature, ValueError):
-            continue
-        return True
-    return False
+    certified = key_bytes(c.consent_key, c.nonce)
+    return any(
+        _sized(key, _KEY_LEN) and _signed(key, c.key_signature, certified)
+        for key in holder_keys
+    )
 
 
 def verify_signature(c: Consent, holder_keys: tuple[bytes, ...]) -> bool:
-    """True when a trusted holder key signed exactly this consent's fields.
+    """True when a trusted holder key certified the key that signed this consent.
 
     Args:
         c: Consent carrying the signature to verify.
@@ -179,7 +305,7 @@ def check_consent(
         holder_keys: Raw Ed25519 public keys trusted to approve.
         action: Canonical action about to run.
         now: Current unix time in seconds.
-        ledger: Record of already consumed nonces.
+        ledger: Record of already consumed nonces and one-time keys.
 
     Returns:
         `(True, "ok: consent")` or `(False, reason)`.
@@ -196,6 +322,9 @@ def check_consent(
         return (False, "consent: bad signature")
     if ledger.used(c.nonce):
         return (False, "consent: already used")
+    # A key seen before, or the holder's own, would link this receipt to others.
+    if ledger.key_used(c.consent_key) or c.consent_key in holder_keys:
+        return (False, "consent: key reused")
     if not _matches(c, action):
         return (False, "consent: action differs")
     return (True, "ok: consent")

@@ -1,16 +1,22 @@
+import base64
 import dataclasses
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from gate.cava import CavaAction, Freshness
-from gate.certs import generate_keypair
+from gate.certs import generate_keypair, public_key_of
 from gate.consent import (
     Consent,
     ConsentLedger,
+    HolderApproval,
     check_consent,
     consent_bytes,
+    key_bytes,
+    sign_approval,
     sign_consent,
     verify_signature,
+    with_approval,
 )
 from gate.policy import Intent, Policy, Rule, Verdict
 from gate.shim import Mode, RawCall, decide
@@ -245,3 +251,172 @@ def test_verify_signature_accepts_only_trusted_holder():
     assert verify_signature(signed, (pub,)) is True
     assert verify_signature(signed, (other,)) is False
     assert verify_signature(unsigned, (pub,)) is False
+
+
+HOLDER_SEED = b"\x02" * 32
+ONE_TIME_SEED = b"\x81" * 32
+CONSENT_KEY = "k9ufLuD3456UL7WUQRkL8gucQ8/MigUaFSSZzzkrejc="
+KEY_GOLDEN = (
+    b'consent-key/v1:{"consent_key":"k9ufLuD3456UL7WUQRkL8gucQ8/MigUaFSSZzzkrejc=",'
+    b'"nonce":"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"}'
+)
+SIGNATURE = (
+    "lAOXEpjjaO0B934n4D4TadgDVoQZwKelSPH/gfcBHN6p0pRps6thEVf5Jv6HjqXBL4GWlrbtyG8g"
+    "2yaZRHJtBQ=="
+)
+KEY_SIGNATURE = (
+    "+X6h/rc1nPB2yzCHOWZQga63XW1nkEgXyPuJ+sBqm5VRdIT1Ic0gveUeWgXdo7h3Lr2DiGASSkxs"
+    "6kctTBbfAA=="
+)
+
+
+def test_key_bytes_golden():
+    assert key_bytes(base64.b64decode(CONSENT_KEY), "c0" * 16) == KEY_GOLDEN
+
+
+@pytest.mark.parametrize(
+    ("key", "nonce"),
+    [
+        (b"\x01" * 31, "c0" * 16),
+        (bytearray(32), "c0" * 16),
+        ("01" * 16, "c0" * 16),
+        (b"\x01" * 32, ""),
+        (b"\x01" * 32, "c0 c0"),
+    ],
+)
+def test_key_bytes_rejects_malformed(key, nonce):
+    with pytest.raises(ValueError, match="consent: malformed"):
+        key_bytes(key, nonce)
+
+
+def test_an_approval_is_a_one_time_key_the_holder_certifies():
+    approval = sign_approval(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    assert approval == HolderApproval(
+        signature=base64.b64decode(SIGNATURE),
+        consent_key=base64.b64decode(CONSENT_KEY),
+        key_signature=base64.b64decode(KEY_SIGNATURE),
+    )
+    signed = with_approval(UNSIGNED, approval)
+    assert (signed.signature, signed.consent_key, signed.key_signature) == (
+        approval.signature,
+        approval.consent_key,
+        approval.key_signature,
+    )
+    assert consent_bytes(signed) == GOLDEN
+
+
+def test_each_approval_draws_its_own_consent_key():
+    first, second = (sign_approval(HOLDER_SEED, UNSIGNED) for _ in range(2))
+    assert first.consent_key != second.consent_key
+    assert public_key_of(HOLDER_SEED) not in (first.consent_key, second.consent_key)
+    assert first.key_signature != second.key_signature
+
+
+def test_ledger_bounds_consent_keys():
+    ledger = ConsentLedger(max_entries=2)
+    for n in (1, 2, 3):
+        ledger.consume_key(bytes([n]) * 32)
+    assert [ledger.key_used(bytes([n]) * 32) for n in (1, 2, 3)] == [
+        False,
+        True,
+        True,
+    ]
+
+
+def test_the_gate_accepts_a_one_time_key_the_holder_certified():
+    signed = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    holder = public_key_of(HOLDER_SEED)
+    assert signed.signature == base64.b64decode(SIGNATURE)
+    assert check_consent(signed, (holder,), _action(), NOW, ConsentLedger()) == (
+        True,
+        "ok: consent",
+    )
+
+
+def test_the_holder_key_signing_the_consent_alone_no_longer_approves():
+    holder = Ed25519PrivateKey.from_private_bytes(HOLDER_SEED)
+    direct = dataclasses.replace(
+        UNSIGNED, signature=holder.sign(consent_bytes(UNSIGNED))
+    )
+    assert check_consent(
+        direct, (public_key_of(HOLDER_SEED),), _action(), NOW, ConsentLedger()
+    ) == (False, "consent: bad signature")
+
+
+def test_each_consent_is_signed_by_its_own_key():
+    priv, pub = generate_keypair()
+    first, second = (sign_consent(priv, UNSIGNED) for _ in range(2))
+    assert first.consent_key != second.consent_key
+    assert verify_signature(first, (pub,)) and verify_signature(second, (pub,))
+
+
+def test_a_key_certified_by_another_holder_is_refused():
+    _, holder = generate_keypair()
+    agent_priv, _ = generate_keypair()
+    forged = sign_consent(agent_priv, UNSIGNED)
+    assert check_consent(forged, (holder,), _action(), NOW, ConsentLedger()) == (
+        False,
+        "consent: bad signature",
+    )
+
+
+def test_a_key_certified_for_another_nonce_is_refused():
+    other = dataclasses.replace(UNSIGNED, nonce="d0" * 16)
+    moved = dataclasses.replace(
+        sign_approval(HOLDER_SEED, other, ONE_TIME_SEED),
+        signature=base64.b64decode(SIGNATURE),
+    )
+    holder = public_key_of(HOLDER_SEED)
+    assert check_consent(
+        with_approval(UNSIGNED, moved), (holder,), _action(), NOW, ConsentLedger()
+    ) == (False, "consent: bad signature")
+
+
+def test_a_consent_signed_by_the_holder_key_itself_is_refused():
+    holder = public_key_of(HOLDER_SEED)
+    signed = sign_consent(HOLDER_SEED, UNSIGNED, HOLDER_SEED)
+    assert signed.consent_key == holder
+    assert check_consent(signed, (holder,), _action(), NOW, ConsentLedger()) == (
+        False,
+        "consent: key reused",
+    )
+
+
+def test_a_consent_key_authorizes_one_payment():
+    gate_priv, _ = generate_keypair()
+    holder = public_key_of(HOLDER_SEED)
+    ledger = ConsentLedger()
+    again = dataclasses.replace(UNSIGNED, nonce="d0" * 16)
+    first = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    second = sign_consent(HOLDER_SEED, again, ONE_TIME_SEED)
+    assert first.consent_key == second.consent_key
+    paid = _decide(gate_priv, first, holder, ledger, "a" * 32)
+    denied = _decide(gate_priv, second, holder, ledger, "b" * 32)
+    assert paid.verdict is Verdict.MET
+    assert (denied.verdict, denied.event.reason, denied.certificate) == (
+        Verdict.NOT_MET,
+        "consent: key reused",
+        None,
+    )
+    assert ledger.key_used(first.consent_key) is True
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"consent_key": b""},
+        {"consent_key": b"\x01" * 31},
+        {"consent_key": CONSENT_KEY},
+        {"key_signature": b""},
+        {"key_signature": b"\x00" * 64},
+        {"signature": b"\x00" * 64},
+    ],
+)
+def test_a_broken_approval_fails_closed(change):
+    signed = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    broken = dataclasses.replace(signed, **change)
+    holder = public_key_of(HOLDER_SEED)
+    assert check_consent(broken, (holder,), _action(), NOW, ConsentLedger()) == (
+        False,
+        "consent: bad signature",
+    )

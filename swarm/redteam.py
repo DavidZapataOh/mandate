@@ -302,8 +302,10 @@ def _forged_run(
     call = replace(_with_arg(legit, "to", to), runtime="mcp")
     consent = Consent(amount, currency, to, ref, source, nonce, now + _CONSENT_TTL, b"")
     if forge == "own_key":
+        # The agent's key certifies the one-time key; the paired key never did.
         consent = sign_consent(generate_keypair()[0], consent)
     else:
+        # The holder's chain covers the real payee; the payee is edited after.
         signed = sign_consent(holder, replace(consent, recipient=args["to"]))
         consent = replace(signed, recipient=to)
     request = replace(

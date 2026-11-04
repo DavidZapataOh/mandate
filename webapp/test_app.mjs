@@ -15,6 +15,8 @@ import {
   heardLine,
   holderKey,
   httpApi,
+  keyBytes,
+  oneTimeApproval,
   pair,
   registerTools,
   signVoice,
@@ -36,6 +38,10 @@ const FIELDS = {
   reference: "A-991",
   source: "checking-881",
 };
+const CONSENT_KEY = "k9ufLuD3456UL7WUQRkL8gucQ8/MigUaFSSZzzkrejc=";
+const KEY_GOLDEN =
+  'consent-key/v1:{"consent_key":"k9ufLuD3456UL7WUQRkL8gucQ8/MigUaFSSZzzkrejc=",' +
+  '"nonce":"c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"}';
 const LINE = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881";
 const ED = { name: "Ed25519" };
 const SIGNAL = { signal: AbortSignal.timeout(10000) };
@@ -55,8 +61,8 @@ function fakeApi(pending) {
   return {
     approvals,
     pending: async () => pending,
-    approve: async (quoteId, signature) => {
-      approvals.push({ quoteId, signature });
+    approve: async (quoteId, approval) => {
+      approvals.push({ quoteId, ...approval });
       return { status: "approved", quote_id: quoteId };
     },
   };
@@ -205,6 +211,17 @@ test("the page writes untrusted text only as text", async () => {
   assert.doesNotMatch(source, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
 });
 
+test("key bytes match the gate golden", () => {
+  const key = new Uint8Array(Buffer.from(CONSENT_KEY, "base64"));
+  assert.equal(new TextDecoder().decode(keyBytes(key, "c0".repeat(16))), KEY_GOLDEN);
+});
+
+test("key bytes reject a short key or a spaced nonce", () => {
+  const key = new Uint8Array(Buffer.from(CONSENT_KEY, "base64"));
+  assert.throws(() => keyBytes(key.slice(1), "c0".repeat(16)), /consent: malformed/);
+  assert.throws(() => keyBytes(key, "c0 c0"), /consent: malformed/);
+});
+
 test("describe matches the desk summary", () => {
   assert.equal(describe(FIELDS), LINE);
 });
@@ -251,11 +268,90 @@ test("page signs bytes it rebuilds from the consent fields", async () => {
   assert.match(text, /evil-666/);
   assert.doesNotMatch(text, /acme-991/);
   await approver.approve();
-  const sig = Buffer.from(api.approvals[0].signature, "base64");
+  const sent = api.approvals[0];
+  const sig = Buffer.from(sent.signature, "base64");
+  const raw = Buffer.from(sent.consent_key, "base64");
+  const consentKey = await crypto.subtle.importKey("raw", raw, ED, true, ["verify"]);
   const verify = (fields) =>
-    crypto.subtle.verify(ED, keys.publicKey, sig, consentBytes(fields));
+    crypto.subtle.verify(ED, consentKey, sig, consentBytes(fields));
   assert.equal(await verify(evil), true);
   assert.equal(await verify(FIELDS), false);
+});
+
+test("each approval signs with a fresh key the holder key certifies", async () => {
+  const keys = await holderKey(memoryStore());
+  const holderRaw = Buffer.from(await crypto.subtle.exportKey("raw", keys.publicKey));
+  const bytes = consentBytes(FIELDS);
+  const first = await oneTimeApproval(keys.privateKey, bytes, FIELDS.nonce);
+  const second = await oneTimeApproval(keys.privateKey, bytes, FIELDS.nonce);
+  assert.notEqual(first.consent_key, second.consent_key);
+  for (const sent of [first, second]) {
+    const raw = Buffer.from(sent.consent_key, "base64");
+    assert.notDeepEqual(raw, holderRaw);
+    const oneTime = await crypto.subtle.importKey("raw", raw, ED, true, ["verify"]);
+    const certified = keyBytes(new Uint8Array(raw), FIELDS.nonce);
+    const keySig = Buffer.from(sent.key_signature, "base64");
+    const sig = Buffer.from(sent.signature, "base64");
+    const holderSigned = crypto.subtle.verify(ED, keys.publicKey, keySig, certified);
+    assert.equal(await holderSigned, true);
+    assert.equal(await crypto.subtle.verify(ED, oneTime, sig, bytes), true);
+    assert.equal(await crypto.subtle.verify(ED, keys.publicKey, sig, bytes), false);
+  }
+});
+
+test("the one-time private key is non-extractable and never kept", async () => {
+  const generated = [];
+  const original = crypto.subtle.generateKey.bind(crypto.subtle);
+  let saves = 0;
+  let saved = null;
+  const store = {
+    load: async () => saved,
+    save: async (pair) => {
+      saves += 1;
+      saved = pair;
+    },
+  };
+  const keys = await holderKey(store);
+  const pending = [{ quote_id: "q:000001", consent: FIELDS }];
+  const api = fakeApi(pending);
+  const approver = new Approver(api, keys, () => {});
+  crypto.subtle.generateKey = async (...args) => {
+    const made = await original(...args);
+    generated.push(made);
+    return made;
+  };
+  try {
+    await approver.review("q:000001");
+    await approver.approve();
+  } finally {
+    crypto.subtle.generateKey = original;
+  }
+  assert.equal(generated.length, 1);
+  assert.equal(generated[0].privateKey.extractable, false);
+  assert.equal(saves, 1);
+  assert.notEqual(saved.privateKey, generated[0].privateKey);
+  for (const value of Object.values(api.approvals[0])) {
+    assert.equal(typeof value, "string");
+  }
+  for (const holder of [approver, ...Object.values(approver)]) {
+    assert.ok(!Object.values(holder ?? {}).includes(generated[0].privateKey));
+  }
+});
+
+test("approve posts the one-time key and its certificate", async () => {
+  const sent = [];
+  const fetchFn = async (url, init) => {
+    sent.push([url, JSON.parse(init.body)]);
+    return { ok: true, json: async () => ({ status: "approved" }) };
+  };
+  const approval = { signature: "S", consent_key: "K", key_signature: "C" };
+  await httpApi("http://desk", fetchFn).approve("q:000001", approval);
+  assert.deepEqual(sent, [
+    [
+      "http://desk/api/approve",
+      { quote_id: "q:000001", signature: "S", consent_key: "K", key_signature: "C" },
+    ],
+  ]);
 });
 
 test("approve with nothing shown is refused", async () => {

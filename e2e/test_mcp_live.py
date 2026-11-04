@@ -41,11 +41,14 @@ async def test_live_spark_quotes_then_holder_approves_then_confirms(
             "confirm_payment", {"quote_id": quote["quote_id"]}
         )
         assert '"quoted"' in early.content[0].text
-        signature = base64.b64encode(sign_quote(holder_priv, quote)).decode()
+        approval = sign_quote(holder_priv, quote)
+        body = {
+            name: base64.b64encode(getattr(approval, name)).decode()
+            for name in ("signature", "consent_key", "key_signature")
+        }
         async with httpx2.AsyncClient(base_url=url) as http:
             approved = await http.post(
-                "/api/approve",
-                json={"quote_id": quote["quote_id"], "signature": signature},
+                "/api/approve", json={"quote_id": quote["quote_id"], **body}
             )
         assert approved.json()["status"] == "approved"
         steps = await run_agent(meta, client, f"Confirm quote {quote['quote_id']}.")

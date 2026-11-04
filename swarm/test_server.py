@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mcp import Client
 
 from gate.certs import generate_keypair
+from gate.consent import HolderApproval
 from swarm import server
 from swarm.hub import EventHub
 from swarm.server import build_server
@@ -50,6 +51,15 @@ def _http(desk):
 
 def _b64(raw):
     return base64.b64encode(raw).decode()
+
+
+def _approval_json(quote_id, approval):
+    return {
+        "quote_id": quote_id,
+        "signature": _b64(approval.signature),
+        "consent_key": _b64(approval.consent_key),
+        "key_signature": _b64(approval.key_signature),
+    }
 
 
 @pytest.mark.anyio
@@ -95,8 +105,10 @@ async def test_confirm_tool_without_approval_moves_nothing(make_desk):
 async def test_pending_and_approve_routes(make_desk, sign_quote):
     desk, holder = make_desk()
     quoted = desk.quote("acme-991", 20000, "USD", "A-991")
-    zero = {"quote_id": "q:000001", "signature": _b64(b"\x00" * 64)}
-    good = {"quote_id": "q:000001", "signature": _b64(sign_quote(holder, quoted))}
+    zero = _approval_json(
+        "q:000001", HolderApproval(b"\x00" * 64, b"\x00" * 32, b"\x00" * 64)
+    )
+    good = _approval_json("q:000001", sign_quote(holder, quoted))
     async with _http(desk) as http:
         pending = (await http.get("/api/pending")).json()
         wrong = await http.post("/api/approve", json=zero)
@@ -181,8 +193,7 @@ async def test_foreign_host_rejected(make_desk, sign_quote, method, path):
     body = {
         "public_key": _b64(key),
         "pairing": PAIR,
-        "quote_id": "q:000001",
-        "signature": _b64(sign_quote(holder, quoted)),
+        **_approval_json("q:000001", sign_quote(holder, quoted)),
     }
     kwargs = {"json": body} if method == "POST" else {}
     async with _http(desk) as http:
@@ -566,3 +577,25 @@ async def test_voice_route_refuses_a_second_upload_before_reading_it(make_desk):
     assert (second.status_code, second.json()) == (409, {"error": "voice busy"})
     assert first[0].status_code == 200
     assert len(seen) == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"consent_key": None, "key_signature": None},
+        {"key_signature": None},
+        {"consent_key": "%%%"},
+    ],
+)
+async def test_approve_needs_the_one_time_key_and_its_certificate(
+    make_desk, sign_quote, change
+):
+    desk, holder = make_desk()
+    quoted = desk.quote("acme-991", 20000, "USD", "A-991")
+    body = {**_approval_json("q:000001", sign_quote(holder, quoted)), **change}
+    sent = {k: v for k, v in body.items() if v is not None}
+    async with _http(desk) as http:
+        resp = await http.post("/api/approve", json=sent)
+    assert (resp.status_code, resp.json()) == (400, {"error": "bad request"})
+    assert desk.status("q:000001")["status"] == "quoted"
