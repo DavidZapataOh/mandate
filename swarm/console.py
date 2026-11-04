@@ -28,7 +28,14 @@ from increase import (
 from opentimestamps.calendar import RemoteCalendar
 
 from bank.api import Bank
-from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
+from bank.card import NO_AGENT_CARD, agent_card
+from bank.credentials import (
+    BANK_KEY_ENV,
+    WEBHOOK_SECRET_ENV,
+    take_bank_key,
+    take_holder_key,
+    take_webhook_secret,
+)
 from bank.events import BankEvent, BankEvents
 from bank.increase import IncreaseRail, sandbox_client
 from bank.rail import SANDBOX, BankRail
@@ -53,6 +60,12 @@ from gate.policy import Intent
 from gate.shim import RawCall
 from gate.state import StateStore, load_gate_key
 from swarm.attacker import AttackerTrace
+from swarm.card import (
+    WEBHOOK_PATH,
+    CardAuthorizer,
+    card_webhook_app,
+    card_webhook_server,
+)
 from swarm.console_line import ConsoleLine, attack_line, bank_line, deploy_line
 from swarm.desk import PaymentDesk
 from swarm.holders import MAX_HOLDERS, fingerprint
@@ -658,7 +671,11 @@ def cli(argv: list[str] | None = None) -> None:
     ``BANK_EVENTS_EVERY_S``. ``--two-step`` (needs ``--rail sandbox``) holds
     each quote at the bank until the certified confirm approves it. With
     ``--ach`` (needs ``--rail sandbox``) the desk pays by ACH transfer, and
-    bank events of its transfers update their lifecycle. Template attacks
+    bank events of its transfers update their lifecycle. With
+    ``--card-webhook-port`` (needs ``--rail sandbox``, not ``--two-step``)
+    the bank's card authorizations are answered on a second app bound to
+    127.0.0.1 alone, signed with ``INCREASE_SANDBOX_WEBHOOK_SECRET``; the
+    secret leaves this process's environment either way. Template attacks
     always run on a simulated bank of their own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
@@ -696,6 +713,16 @@ def cli(argv: list[str] | None = None) -> None:
             "pay each certified payment as an ACH transfer to the payee's "
             "account number; the bank settles or returns it later; "
             "needs --rail sandbox"
+        ),
+    )
+    parser.add_argument(
+        "--card-webhook-port",
+        type=int,
+        metavar="PORT",
+        help=(
+            "answer the bank's card authorizations on "
+            f"127.0.0.1:PORT{WEBHOOK_PATH}; expose that port alone through an "
+            "HTTPS tunnel; needs --rail sandbox and INCREASE_SANDBOX_WEBHOOK_SECRET"
         ),
     )
     parser.add_argument(
@@ -769,6 +796,11 @@ def cli(argv: list[str] | None = None) -> None:
     bank_key = take_bank_key(os.environ)
     # The holder proves in its own process; the value is never read here.
     take_holder_key(os.environ)
+    # Taken whatever the flags, so nothing this process spawns holds it.
+    webhook_secret = take_webhook_secret(os.environ)
+    hook_port: int | None = args.card_webhook_port
+    if hook_port is not None:
+        _card_flags(parser, args, webhook_secret)
     index = args.console_dir / "index.html"
     if not index.is_file():
         parser.exit(2, f"console build missing: {index}\n")
@@ -794,6 +826,7 @@ def cli(argv: list[str] | None = None) -> None:
         )
         rail: BankRail
         client: Increase | None = None
+        account_id: str | None = None
         if sandbox_key is None:
             with _state_errors(parser):
                 rail = Bank(
@@ -807,6 +840,7 @@ def cli(argv: list[str] | None = None) -> None:
                 args.two_step,
                 args.ach,
             )
+            account_id = rail.account_id(args.source)
         notary, zktls = (
             _zktls(parser, rail, args.source) if args.zktls else (None, None)
         )
@@ -836,7 +870,58 @@ def cli(argv: list[str] | None = None) -> None:
             if client is not None and state is not None
             else None
         )
-        _serve(parser, args, book, desk, gate_key, hub, held, anchors, feed)
+        card = None
+        # The flag checks above leave a sandbox client and a state store here.
+        if (
+            hook_port is not None
+            and webhook_secret is not None
+            and client is not None
+            and state is not None
+            and account_id is not None
+        ):
+            card = _card_webhook(
+                parser, client, desk, state, webhook_secret, hook_port, account_id
+            )
+        _serve(parser, args, book, desk, gate_key, hub, held, anchors, feed, card)
+
+
+def _card_flags(
+    parser: argparse.ArgumentParser, args: argparse.Namespace, secret: str | None
+) -> None:
+    if args.rail != "sandbox":
+        parser.exit(2, "--card-webhook-port needs --rail sandbox\n")
+    # A two-step desk refuses every card spend ("card: two-step desk"): the
+    # bank would ask and always hear no, so the start refuses instead.
+    if args.two_step:
+        parser.exit(2, "--card-webhook-port cannot be combined with --two-step\n")
+    if secret is None:
+        parser.exit(2, f"card webhook unavailable: set {WEBHOOK_SECRET_ENV}\n")
+    if args.card_webhook_port == args.port:
+        parser.exit(2, "--card-webhook-port must differ from --port\n")
+
+
+def _card_webhook(
+    parser: argparse.ArgumentParser,
+    client: Increase,
+    desk: PaymentDesk,
+    state: StateStore,
+    secret: str,
+    port: int,
+    account_id: str,
+) -> uvicorn.Server:
+    try:
+        card_id = agent_card(client, account_id)
+    except (AuthenticationError, PermissionDeniedError):
+        parser.exit(2, "bank rail unavailable: the sandbox refused the key\n")
+    except IncreaseError:
+        parser.exit(2, "bank rail unavailable: the sandbox is unreachable\n")
+    if card_id is None:
+        parser.exit(2, NO_AGENT_CARD)
+    # A refused bind would end the server's thread unseen, so it is named here.
+    if not _port_free(f"127.0.0.1:{port}"):
+        parser.exit(2, f"card webhook unavailable: 127.0.0.1:{port} is in use\n")
+    authorizer = CardAuthorizer(client, desk, card_id, account_id, state)
+    return card_webhook_server(card_webhook_app(client, authorizer, secret), port)
 
 
 def _desk(
@@ -876,6 +961,7 @@ def _serve(
     held: ExitStack,
     anchors: PublicAnchors | None,
     feed: BankEvents | None,
+    card: uvicorn.Server | None = None,
 ) -> None:
     intake, agent = _spark(os.environ, book)
     tokens = tuple(secrets.token_urlsafe(16) for _ in range(args.holders))
@@ -918,6 +1004,11 @@ def _serve(
         anchoring = anchor_every(anchors, ANCHOR_EVERY_S, stop_anchoring)
         # Unwound before the store closes, like the reconcile loop.
         held.callback(_end_loop, stop_anchoring, anchoring, _ANCHOR_JOIN_S)
+    if card is not None:
+        answering = threading.Thread(target=card.run, name="card-webhook", daemon=True)
+        answering.start()
+        # Unwound before the store closes: an answer in flight ends first.
+        held.callback(_end_card_webhook, card, answering)
     if args.journal is not None:
         # A daemon thread: the process ends with the server.
         JournalTail(args.journal, hub).start()
@@ -925,6 +1016,9 @@ def _serve(
     for token in tokens:
         print(f"Pair the holder device: {base}/app/#pair={token}", flush=True)
     print(f"Console: {base}/console/", flush=True)
+    if card is not None:
+        hook = f"http://127.0.0.1:{card.config.port}{WEBHOOK_PATH}"
+        print(f"Card authorizations: {hook}", flush=True)
     for holder_id, key in desk.paired_holders():
         print(f"Holder {holder_id}: device {fingerprint(key)}", flush=True)
     console_server(app, args.host, args.port, hub, held.close).run()
@@ -935,3 +1029,8 @@ def _end_loop(
 ) -> None:
     stop.set()
     loop.join(wait_s)
+
+
+def _end_card_webhook(server: uvicorn.Server, thread: threading.Thread) -> None:
+    server.should_exit = True
+    thread.join(RECONCILE_EVERY_S)

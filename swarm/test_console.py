@@ -20,15 +20,18 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bank.api import Bank, RailError
 from bank.conftest import (
+    CARD_ACCOUNT_ID,
     SENTINEL_KEY,
+    WEBHOOK_SECRET,
     Cassette,
     RecordingRail,
     event_body,
     events_page,
     named_accounts,
+    page,
     recorded,
 )
-from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
+from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV, WEBHOOK_SECRET_ENV
 from bank.events import BankEvents
 from bank.reconcile import AchState
 from bank.verifier import Verifier
@@ -39,6 +42,7 @@ from gate.certs import generate_keypair, public_key_of
 from gate.conftest import RecordedCalendars, RecordedHeaders, recorded_aggregators
 from gate.state import StateStore
 from swarm import console
+from swarm.card import WEBHOOK_PATH, card_webhook_app, card_webhook_server
 from swarm.conftest import message
 from swarm.console import AttackRunner, DeployRunner
 from swarm.console_line import ConsoleLine, console_line_json, read_console_line
@@ -1421,3 +1425,136 @@ def test_a_failed_lifecycle_read_never_stops_the_feed(state_store, tmp_path, cap
     assert hub.last_seq == 1
     assert "ach lifecycle failed (RailError)" in caplog.text
     desk_store.close()
+
+
+PORT = ("--card-webhook-port", "18781")
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (PORT, "--card-webhook-port needs --rail sandbox\n"),
+        (
+            ("--rail", "sandbox", "--two-step", *PORT),
+            "--card-webhook-port cannot be combined with --two-step\n",
+        ),
+        (
+            ("--rail", "sandbox", *PORT),
+            "card webhook unavailable: set INCREASE_SANDBOX_WEBHOOK_SECRET\n",
+        ),
+    ],
+)
+def test_cli_card_webhook_refuses_what_it_cannot_serve(
+    monkeypatch, capsys, dist, argv, message
+):
+    monkeypatch.delenv(WEBHOOK_SECRET_ENV, raising=False)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), *argv)
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err.endswith(message)
+
+
+def test_cli_takes_the_webhook_secret_out_of_its_environment(monkeypatch, capsys, dist):
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, "s1")
+    _run_cli(monkeypatch, capsys, "--console-dir", str(dist))
+    assert WEBHOOK_SECRET_ENV not in os.environ
+
+
+@pytest.mark.anyio
+async def test_the_card_webhook_listens_on_loopback_only(make_desk, state_store):
+    desk, _ = make_desk(state=state_store)
+    cassette = Cassette()
+    authorizer = console.CardAuthorizer(
+        cassette.client(), desk, "card_agent", CARD_ACCOUNT_ID, state_store
+    )
+    app = card_webhook_app(cassette.client(), authorizer, WEBHOOK_SECRET)
+    assert card_webhook_server(app, 18782).config.host == "127.0.0.1"
+    async with _asgi(app) as http:
+        console_page = await http.get("/console/")
+        lines = await http.get("/api/lines")
+        unsigned = await http.post(WEBHOOK_PATH, content=b"{}")
+    assert (console_page.status_code, lines.status_code) == (404, 404)
+    assert unsigned.status_code == 401
+
+
+def _card_world(monkeypatch, *answers):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    cassette = Cassette(named_accounts("checking-881", "acme-991"), *answers)
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    return cassette
+
+
+def test_cli_card_webhook_needs_the_agent_card(monkeypatch, capsys, dist, tmp_path):
+    _card_world(monkeypatch, page())
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"), "--rail", "sandbox", *PORT,
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "agent card missing: run mandate-bank-setup --card-webhook-url <url>\n"
+    )
+    assert WEBHOOK_SECRET_ENV not in os.environ
+
+
+def test_cli_card_webhook_needs_its_own_port(monkeypatch, capsys, dist, tmp_path):
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+            "--card-webhook-port", "18780",
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err.endswith(
+        "--card-webhook-port must differ from --port\n"
+    )
+
+
+def _free_port():
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def test_cli_serves_the_card_webhook_beside_the_console(
+    monkeypatch, capsys, dist, tmp_path
+):
+    agent = dict(recorded("card")["body"], id="card_agent")
+    agent["description"] = "mandate-agent-card"
+    cassette = _card_world(
+        monkeypatch, page(agent), "account_transfers_none", NO_ACH, events_page()
+    )
+    port = _free_port()
+
+    async def serving(app, printed):
+        async with httpx.AsyncClient(trust_env=False) as http:
+            for _ in range(500):
+                try:
+                    answer = await http.post(
+                        f"http://127.0.0.1:{port}{WEBHOOK_PATH}", content=b"{}"
+                    )
+                except httpx.ConnectError:
+                    await anyio.sleep(0.01)
+                    continue
+                return printed, answer.status_code
+        return printed, None
+
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+        "--card-webhook-port", str(port), serving=serving,
+    )  # fmt: skip
+    printed, status = seen["served"]
+    hook = f"Card authorizations: http://127.0.0.1:{port}/increase/card-authorizations"
+    assert hook in printed
+    assert status == 401
+    listed = cassette.requests[1]
+    assert (listed.url.path, listed.url.params["account_id"]) == (
+        "/cards",
+        "account_checking-881",
+    )
+    alive = [t for t in threading.enumerate() if t.name == "card-webhook"]
+    assert not any(t.is_alive() for t in alive)
+    assert WEBHOOK_SECRET_ENV not in os.environ

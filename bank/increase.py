@@ -22,7 +22,12 @@ from increase import (
 from increase.types import AccountTransfer, ACHTransfer
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
-from bank.credentials import BANK_KEY_ENV, take_bank_key
+from bank.credentials import (
+    BANK_KEY_ENV,
+    WEBHOOK_SECRET_ENV,
+    take_bank_key,
+    take_webhook_secret,
+)
 from bank.rail import NO_TRANSFER, SANDBOX
 from bank.reconcile import (
     CANCELED,
@@ -435,7 +440,7 @@ class IncreaseRail:
         self, exc: APIStatusError, request: PaymentRequest, idempotency_key: str
     ) -> Exception | None:
         """The error a definite refusal of a create maps to; None otherwise."""
-        if not _refusal(exc):
+        if not refusal(exc):
             return None
         if isinstance(exc, IdempotencyKeyAlreadyUsedError):
             return ReplayError(idempotency_key)
@@ -933,7 +938,7 @@ def _active_numbers(
     return found
 
 
-def _refusal(exc: APIStatusError) -> bool:
+def refusal(exc: APIStatusError) -> bool:
     """Tell whether a status error is the bank definitely refusing the call.
 
     Only a 4xx whose body parsed into an error says nothing was made; a 3xx,
@@ -1021,6 +1026,9 @@ def setup_cli(argv: list[str] | None = None) -> None:
 
     With ``--ach`` it also opens the payee's account number, so a console
     started with ``--ach`` can pay it by ACH transfer.
+    With ``--card-webhook-url`` it also opens the agent card on the payer and
+    points the one real-time card subscription at that HTTPS URL, signed with
+    the secret it takes from ``INCREASE_SANDBOX_WEBHOOK_SECRET``.
 
     Args:
         argv: Command-line arguments; ``sys.argv[1:]`` when None.
@@ -1035,10 +1043,26 @@ def setup_cli(argv: list[str] | None = None) -> None:
         action="store_true",
         help="also open an account number for the payee to receive ACH transfers",
     )
+    parser.add_argument(
+        "--card-webhook-url",
+        help=(
+            "also open the agent card and send its card authorizations to this "
+            "HTTPS URL (a tunnel to mandate-console --card-webhook-port); needs "
+            f"{WEBHOOK_SECRET_ENV}"
+        ),
+    )
     args = parser.parse_args(argv)
+    hook_url: str | None = args.card_webhook_url
+    if hook_url is not None and not hook_url.startswith("https://"):
+        sys.stderr.write("card webhook URL must be https\n")
+        raise SystemExit(2)
     key = take_bank_key(os.environ)
+    secret = take_webhook_secret(os.environ)
     if key is None:
         sys.stderr.write(f"bank rail unavailable: set {BANK_KEY_ENV}\n")
+        raise SystemExit(2)
+    if hook_url is not None and secret is None:
+        sys.stderr.write(f"card webhook unavailable: set {WEBHOOK_SECRET_ENV}\n")
         raise SystemExit(2)
     client = sandbox_client(key)
     payer = DEMO_ACCOUNTS[0]
@@ -1047,6 +1071,13 @@ def setup_cli(argv: list[str] | None = None) -> None:
         accounts = ensure_accounts(client, DEMO_ACCOUNTS, payer, args.fund_cents)
         if args.ach:
             ensure_account_number(client, accounts[payee], payee)
+        card_id = None
+        if hook_url is not None and secret is not None:
+            # Imported here: bank.card builds on this module.
+            from bank.card import ensure_card, ensure_card_subscription
+
+            card_id = ensure_card(client, accounts[payer], payer)
+            ensure_card_subscription(client, hook_url, secret)
     except (AuthenticationError, PermissionDeniedError):
         sys.stderr.write("bank rail unavailable: the sandbox refused the key\n")
         raise SystemExit(2) from None
@@ -1059,3 +1090,6 @@ def setup_cli(argv: list[str] | None = None) -> None:
     print(f"{payer} available: {available} cents")
     if args.ach:
         print(f"ACH payee ready: {payee}")
+    if card_id is not None:
+        print(f"Agent card ready: {card_id} on {payer}")
+        print(f"Card authorizations go to {hook_url}")

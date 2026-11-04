@@ -10,6 +10,10 @@ SIMULATED = "simulated"
 SANDBOX = "sandbox"
 # What `release` reports when the bank holds no transfer under the key.
 NO_TRANSFER = "none"
+# Journal rail label of a card decision, which no account-transfer lookup settles.
+CARD_JOURNAL = "card"
+# A bank real-time decision id, as the webhook names it and the bank reads it.
+CARD_DECISION = re.compile(r"(?:sandbox_)?real_time_decision_[A-Za-z0-9]{1,64}")
 
 _KEY_PREFIX = "mandate-cert-"
 # Printable ASCII only, and short enough that the prefixed key stays within

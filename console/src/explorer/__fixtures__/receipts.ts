@@ -1,5 +1,6 @@
 import auditor from "./auditor.json" with { type: "json" };
 import golden from "./receipt.json" with { type: "json" };
+import cardGolden from "./receipt-card.json" with { type: "json" };
 import sandboxGolden from "./receipt-sandbox.json" with { type: "json" };
 import zktlsGolden from "./receipt-zktls.json" with { type: "json" };
 import { ascii, fromBase64Url, toBase64 } from "../bytes";
@@ -15,6 +16,8 @@ export const FIXTURE_SIGNATURE =
 export const RECEIPT = JSON.stringify(golden);
 /** A holder copy of a payment the sandbox rail moved (an Increase transfer id). */
 export const SANDBOX_RECEIPT = JSON.stringify(sandboxGolden);
+/** A holder copy of a card authorization Mandate approved (an Increase decision id). */
+export const CARD_RECEIPT = JSON.stringify(cardGolden);
 /** A holder copy of a sandbox payment whose intent's funds a zkTLS balance proof showed. */
 export const RECEIPT_ZKTLS = JSON.stringify(zktlsGolden);
 /** A holder copy of a sandbox payment whose intent's funds only the cooperative statement shows (the sandbox golden). */

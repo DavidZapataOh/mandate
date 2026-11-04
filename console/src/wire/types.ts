@@ -25,7 +25,7 @@ export interface Attribution {
 }
 
 export interface DeskSubject {
-  step: "intent" | "quote" | "approve" | "confirm" | "settle";
+  step: "intent" | "quote" | "approve" | "confirm" | "settle" | "card";
   quote_id: string | null;
   status: string;
   summary: string;

@@ -3,9 +3,11 @@ import pytest
 from bank.credentials import (
     BANK_KEY_ENV,
     HOLDER_KEY_ENV,
+    WEBHOOK_SECRET_ENV,
     credential_exposed,
     take_bank_key,
     take_holder_key,
+    take_webhook_secret,
     without_bank_key,
 )
 
@@ -27,7 +29,13 @@ def test_agent_environment_never_carries_the_key():
     assert env[BANK_KEY_ENV] == "k1"
 
 
-BANK_KEYS = ("INCREASE_SANDBOX_API_KEY", "INCREASE_HOLDER_API_KEY", "INCREASE_API_KEY")
+BANK_KEYS = (
+    "INCREASE_SANDBOX_API_KEY",
+    "INCREASE_HOLDER_API_KEY",
+    "INCREASE_API_KEY",
+    "INCREASE_SANDBOX_WEBHOOK_SECRET",
+    "INCREASE_WEBHOOK_SECRET",
+)
 
 
 def test_agent_environment_carries_no_increase_key_of_any_name():
@@ -53,3 +61,14 @@ def test_either_key_exposes_an_environment():
     assert credential_exposed({HOLDER_KEY_ENV: ""})
     assert credential_exposed({BANK_KEY_ENV: "k"})
     assert not credential_exposed({"PATH": "/bin"})
+
+
+def test_the_webhook_secret_leaves_the_environment_and_counts_as_a_key():
+    env = {WEBHOOK_SECRET_ENV: "s1", "PATH": "/bin"}
+    assert credential_exposed(env) is True
+    assert take_webhook_secret(env) == "s1"
+    assert env == {"PATH": "/bin"}
+    assert take_webhook_secret({WEBHOOK_SECRET_ENV: ""}) is None
+    both = {WEBHOOK_SECRET_ENV: "s1", "INCREASE_WEBHOOK_SECRET": "s2", "PATH": "/b"}
+    assert take_webhook_secret(both) == "s1"
+    assert both == {"PATH": "/b"}

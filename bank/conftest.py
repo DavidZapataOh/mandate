@@ -1,7 +1,12 @@
 """Test-only rails and recorded bank answers for the verifier and the desk."""
 
+import base64
+import copy
 import dataclasses
+import hashlib
+import hmac
 import json
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -408,3 +413,95 @@ def ach_settled(**change: Any) -> dict[str, Any]:
 def ach_returned(**change: Any) -> dict[str, Any]:
     """The settled ACH transfer once the bank returned it as R01."""
     return ach_settled(**{"status": "returned", "return": ACH_RETURN, **change})
+
+
+WEBHOOK_SECRET = "mandate_test_webhook_secret_5b8e"  # noqa: S105
+DECISION_ID = "real_time_decision_j76n2e810ezcg3zh5qtn"
+
+
+def webhook_event(
+    decision_id: str = DECISION_ID,
+    category: str = "real_time_decision.card_authorization_requested",
+    object_type: str = "real_time_decision",
+) -> bytes:
+    """A bank event body, compact JSON in the bank's key order."""
+    event = {
+        "id": "event_001",
+        "type": "event",
+        "category": category,
+        "associated_object_type": object_type,
+        "associated_object_id": decision_id,
+        "created_at": "2020-01-31T23:59:59Z",
+    }
+    return json.dumps(event, separators=(",", ":")).encode("utf-8")
+
+
+def sign_webhook(
+    body: bytes | str,
+    msg_id: str = "msg_1",
+    timestamp: int | None = None,
+    secret: str = WEBHOOK_SECRET,
+) -> dict[str, str]:
+    """Sign a body as Standard Webhooks does, independently of the library.
+
+    Args:
+        body: The body to sign; bytes that are not UTF-8 are signed as their
+            replacement-decoded text, so they can still carry a signature.
+        msg_id: The ``webhook-id`` header.
+        timestamp: Unix seconds for ``webhook-timestamp``; None means now.
+        secret: The shared secret, used as its UTF-8 bytes.
+
+    Returns:
+        The three signature headers.
+    """
+    text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+    stamp = str(int(time.time()) if timestamp is None else timestamp)
+    signed = f"{msg_id}.{stamp}.{text}".encode()
+    digest = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).digest()
+    return {
+        "webhook-id": msg_id,
+        "webhook-timestamp": stamp,
+        "webhook-signature": f"v1,{base64.b64encode(digest).decode('ascii')}",
+    }
+
+
+AGENT_CARD_ID = "card_agent"
+CARD_ACCOUNT_ID = "account_checking-881"
+
+
+def decision_body(
+    status: str = "pending",
+    decision: str | None = None,
+    timeout_at: str = "2027-01-15T08:16:44Z",
+    **card: Any,
+) -> dict[str, Any]:
+    """The recorded pending decision, as the agent card buying 200.00 at acme-991.
+
+    Args:
+        status: The decision's status.
+        decision: The card authorization's answer, None while pending.
+        timeout_at: The bank's deadline for the answer.
+        **card: Card authorization fields to change last.
+    """
+    body: dict[str, Any] = copy.deepcopy(recorded("real_time_decision_pending")["body"])
+    body.update(id=DECISION_ID, status=status, timeout_at=timeout_at)
+    body["card_authorization"].update(
+        account_id=CARD_ACCOUNT_ID,
+        card_id=AGENT_CARD_ID,
+        settlement_amount=20000,
+        presentment_amount=20000,
+        settlement_currency="USD",
+        presentment_currency="USD",
+        merchant_acceptor_id="acme-991",
+        merchant_descriptor="ACME 991",
+        direction="settlement",
+        processing_category="purchase",
+        decision=decision,
+    )
+    body["card_authorization"].update(card)
+    return body
+
+
+def page(*items: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+    """Answer a list request with one page holding these items."""
+    return 200, {"data": list(items), "next_cursor": None}

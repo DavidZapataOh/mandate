@@ -9,8 +9,8 @@ export type Pasted =
   | { kind: "line"; seq: number; paymentId: string | null }
   | { kind: "unknown"; reason: string };
 
-// A desk payment id, or the bank's transfer id when a sandbox rail paid it.
-const PAYMENT = /^(?:pay:[0-9]{6,}|(?:sandbox_)?(?:account|ach)_transfer_[A-Za-z0-9]{1,64})$/;
+// A desk payment id, the bank's transfer id when a sandbox rail paid it, or the bank's decision id when a card did.
+const PAYMENT = /^(?:pay:[0-9]{6,}|(?:sandbox_)?(?:account|ach)_transfer_[A-Za-z0-9]{1,64}|(?:sandbox_)?real_time_decision_[A-Za-z0-9]{1,64})$/;
 // A receipt hash or a certified action hash; the server looks up nothing shorter.
 const HASH = /^[0-9a-fA-F]{64}$/;
 const COMPACT_JWS = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;

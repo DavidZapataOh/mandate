@@ -20,6 +20,7 @@ from swarm.console_line import (
     bank_line,
     bill_line,
     campaign_lines,
+    card_summary,
     console_line_json,
     deploy_line,
     desk_line,
@@ -522,6 +523,31 @@ def test_attack_line_forged_approval_shows_the_consent_it_refused():
     assert line.forensic["cert_claims"] is None
 
 
+GOLDEN_CARD = (
+    '{"v":3,"seq":12,"source":"desk","event":null,"meta":null,"subj'
+    'ect":{"step":"card","quote_id":"q:000001","status":"approved",'
+    '"summary":"Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-9'
+    '91) from checking-881","payment_id":"real_time_decision_j76n2e'
+    '810ezcg3zh5qtn","reason":"ok: executed"},"forensic":null}'
+)
+
+
+def test_a_card_line_is_the_golden():
+    line = desk_line(
+        "card",
+        {
+            "status": "approved",
+            "quote_id": "q:000001",
+            "payment_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+            "reason": "ok: executed",
+        },
+        card_summary(
+            20000, "USD", "acme-991", "MANDATE_FIXTURE ACME 991", "checking-881"
+        ),
+    )
+    assert console_line_json(dataclasses.replace(line, seq=12)) == GOLDEN_CARD
+
+
 FIXTURES = Path(__file__).resolve().parent.parent / "console/src/wire/__fixtures__"
 
 
@@ -531,6 +557,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "console/src/wire/__fixtures
         ("CONFIRM", GOLDEN_CONFIRM),
         ("ATTACK", GOLDEN_ATTACK),
         ("DEPLOY", GOLDEN_DEPLOY),
+        ("CARD", GOLDEN_CARD),
     ],
 )
 def test_console_fixtures_are_the_python_goldens(name, golden):
@@ -721,3 +748,16 @@ def test_settle_lines_are_the_goldens(seq, status, reason, golden):
 )
 def test_console_settle_fixtures_are_the_python_goldens(name, golden):
     test_console_fixtures_are_the_python_goldens(name, golden)
+
+
+def test_card_summary_names_amount_merchant_and_account():
+    assert card_summary(20000, "USD", "acme-991", "ACME 991", "checking-881") == (
+        "Card 200.00 USD at ACME 991 (acme-991) from checking-881"
+    )
+
+
+def test_a_card_step_is_a_desk_line():
+    view = {"status": "declined", "quote_id": None, "payment_id": "d", "reason": "r"}
+    line = dataclasses.replace(desk_line("card", view, "s"), seq=1)
+    assert line.subject["step"] == "card"
+    assert read_console_line(console_line_json(line)).subject == line.subject

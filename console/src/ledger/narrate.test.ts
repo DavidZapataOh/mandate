@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ATTACK, CONFIRM, patch, RETURNED, SETTLED } from "../wire/__fixtures__/lines";
+import { ATTACK, CARD, CONFIRM, patch, RETURNED, SETTLED } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { formatLatency } from "../shared/format";
 import { forensicText, gameText } from "./narrate";
@@ -137,5 +137,17 @@ describe("settle lines", () => {
     expect(gameText(parseLine(RETURNED))).toBe(
       "Returned by the bank: Pay 200.00 USD to acme-991 (ref A-991) from checking-881 · ach_transfer_t1 · bank: returned R01 insufficient_fund (SIMULATED RETURN)",
     );
+  });
+});
+
+describe("card answers", () => {
+  const card = (status: string, reason: string) => parseLine(patch(CARD, {}, { status, reason }));
+  it.each([
+    ["approved", "ok: executed", "Card approved by Mandate: Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-991) from checking-881 · real_time_decision_j76n2e810ezcg3zh5qtn"],
+    ["declined", "card: no approved quote", "Card declined by Mandate: card: no approved quote · real_time_decision_j76n2e810ezcg3zh5qtn"],
+    ["not_answered", "card: deadline passed", "Card not answered by Mandate; the bank decides: card: deadline passed · real_time_decision_j76n2e810ezcg3zh5qtn"],
+    ["unknown", "bank: outcome unknown", "Card outcome unknown: bank: outcome unknown · real_time_decision_j76n2e810ezcg3zh5qtn"],
+  ])("says what Mandate answered (%s)", (status, reason, text) => {
+    expect(gameText(card(status, reason))).toBe(text);
   });
 });

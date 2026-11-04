@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ATTACK, BANK, CONFIRM, HOSTILE, patch, RETURNED, SETTLED } from "./__fixtures__/lines";
+import { ATTACK, BANK, CARD, CONFIRM, HOSTILE, patch, RETURNED, SETTLED } from "./__fixtures__/lines";
 import { parseHello, parseLine, WireError } from "./parse";
 
 describe("parseLine", () => {
@@ -140,5 +140,16 @@ describe("settle lines", () => {
   it("refuses an unknown step", () => {
     const subject = { ...JSON.parse(SETTLED).subject, step: "settled" };
     expect(() => parseLine(patch(SETTLED, { subject }))).toThrow("wire: malformed line");
+  });
+});
+
+describe("card lines", () => {
+  it("reads a card answer as a desk line", () => {
+    const line = parseLine(CARD);
+    expect(line.source === "desk" && line.subject.step).toBe("card");
+  });
+
+  it("refuses a desk step it does not know", () => {
+    expect(() => parseLine(patch(CARD, {}, { step: "refund" }))).toThrow("wire: malformed line");
   });
 });

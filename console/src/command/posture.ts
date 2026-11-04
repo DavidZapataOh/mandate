@@ -160,6 +160,8 @@ export function layerOf(line: ConsoleLine): string {
           return "desk";
         case "settle":
           return "bank";
+        case "card":
+          return "desk";
         default: {
           const unreachable: never = line.subject.step;
           return unreachable;

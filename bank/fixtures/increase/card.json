@@ -1,0 +1,30 @@
+{
+  "body": {
+    "account_id": "account_in71c4amph0vgo2qllky",
+    "authorization_controls": null,
+    "billing_address": {
+      "city": null,
+      "line1": null,
+      "line2": null,
+      "postal_code": null,
+      "state": null
+    },
+    "bin": "40000000",
+    "cardholder_name": null,
+    "created_at": "2026-11-04T09:00:00Z",
+    "description": "mandate-capture-card",
+    "digital_wallet": null,
+    "entity_id": null,
+    "expiration_month": 11,
+    "expiration_year": 2029,
+    "id": "card_oubs0hwk5rn6knuecxg2",
+    "idempotency_key": "mandate-capture-card",
+    "last4": "5249",
+    "renewals": [],
+    "replacement_for": null,
+    "status": "active",
+    "type": "card"
+  },
+  "replayed": null,
+  "status": 200
+}

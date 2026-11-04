@@ -2,8 +2,10 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 import pytest
@@ -16,7 +18,7 @@ from increase import (
 from bank.ach import simulate
 from bank.api import PaymentRequest
 from bank.conftest import DOC_EVENT, FIXTURES
-from bank.credentials import BANK_KEY_ENV
+from bank.credentials import BANK_KEY_ENV, WEBHOOK_SECRET_ENV
 from bank.events import BankEvents
 from bank.increase import (
     IncreaseRail,
@@ -592,3 +594,162 @@ def test_an_ach_payment_settles_is_returned_and_the_registry_says_so(tmp_path):
     assert desk.lifecycle(pid)["label"] == "SIMULATED RETURN"
     assert desk.reconcile().resolved == ()
     store.close()
+
+
+CARD_CATEGORY = "real_time_decision.card_authorization_requested"
+CAPTURE_PORT = 8788
+
+
+def _card_env():
+    secret = os.environ.get(WEBHOOK_SECRET_ENV)
+    url = os.environ.get("MANDATE_CARD_WEBHOOK_URL")
+    if not secret or not url:
+        pytest.skip("live: set the webhook secret and MANDATE_CARD_WEBHOOK_URL")
+    return secret, url
+
+
+def _point_subscription(client, url, secret):
+    for sub in client.event_subscriptions.list():
+        cats = [c.event_category for c in sub.selected_event_categories or []]
+        if sub.status == "active" and CARD_CATEGORY in cats:
+            client.event_subscriptions.update(sub.id, status="deleted")
+    return client.event_subscriptions.create(
+        url=url,
+        selected_event_categories=[{"event_category": CARD_CATEGORY}],
+        shared_secret=secret,
+        idempotency_key=f"mandate-capture-rtd-{secrets.token_hex(8)}",
+    )
+
+
+@pytest.mark.live
+def test_capture_card_authorization():
+    key = _key()
+    secret, url = _card_env()
+    recorder = _Recorder()
+    http = httpx.Client(event_hooks={"response": [recorder]})
+    client = sandbox_client(key, http, max_retries=0)
+    answering = sandbox_client(key, max_retries=0)
+    accounts = ensure_accounts(client, CAPTURE, CAPTURE[0], 100000)
+    saved = {}
+
+    def keep(name):
+        saved[name] = recorder.last
+
+    card = client.cards.create(
+        account_id=accounts[CAPTURE[0]],
+        description="mandate-capture-card",
+        idempotency_key="mandate-capture-card",
+    )
+    keep("card")
+    subscription = _point_subscription(client, url, secret)
+    keep("event_subscription")
+    plan = iter(["approve", "decline", "silent", "late"])
+    heard = []
+    answered_late = threading.Event()
+
+    class Receiver(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["content-length"]))
+            event = answering.events.unwrap(
+                body.decode(), headers=dict(self.headers), key=secret.encode()
+            )
+            decision_id = event.associated_object_id
+            read = answering.real_time_decisions.with_raw_response.retrieve(decision_id)
+            heard.append({"event": json.loads(body), "pending": read.json()})
+            step = next(plan)
+            if step == "silent":
+                time.sleep(5)
+            elif step == "late":
+                # An approve that reaches the bank after its own deadline.
+                due = datetime.fromisoformat(read.json()["timeout_at"])
+                time.sleep(max(0.0, (due - datetime.now(UTC)).total_seconds()) + 1)
+                try:
+                    late = answering.real_time_decisions.with_raw_response.action(
+                        decision_id,
+                        card_authorization={"decision": "approve"},
+                        idempotency_key=f"mandate-capture-{decision_id}",
+                    )
+                    heard[-1]["late"] = (late.status_code, late.json())
+                except APIStatusError as exc:
+                    heard[-1]["late"] = (exc.status_code, None)
+                answered_late.set()
+            else:
+                answer = {"decision": step}
+                if step == "decline":
+                    answer["decline"] = {"reason": "transaction_never_allowed"}
+                done = answering.real_time_decisions.with_raw_response.action(
+                    decision_id,
+                    card_authorization=answer,
+                    idempotency_key=f"mandate-capture-{decision_id}",
+                )
+                heard[-1]["answered"] = done.json()
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", CAPTURE_PORT), Receiver)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    charge = {
+        "amount": 100,
+        "card_id": card.id,
+        "merchant_acceptor_id": "acme-991",
+        "merchant_descriptor": "ACME 991",
+    }
+    try:
+        approved = client.simulations.card_authorizations.create(**charge)
+        keep("card_authorization_simulation")
+        declined = client.simulations.card_authorizations.create(**charge)
+        keep("card_authorization_declined")
+        silent = client.simulations.card_authorizations.create(**charge)
+        after = client.real_time_decisions.retrieve(
+            heard[2]["event"]["associated_object_id"]
+        )
+        keep("real_time_decision_timed_out")
+        late = client.simulations.card_authorizations.create(**charge)
+        # The bank gives up before the late approve is sent; wait for it.
+        assert answered_late.wait(10)
+        late_after = client.real_time_decisions.retrieve(
+            heard[3]["event"]["associated_object_id"]
+        )
+    finally:
+        server.shutdown()
+        client.event_subscriptions.update(subscription.id, status="deleted")
+    # The simulation answers only after the bank heard Mandate (or timed out).
+    assert approved.pending_transaction is not None
+    reasons = [
+        r.declined_transaction.source.card_decline.reason for r in (declined, silent)
+    ]
+    assert reasons == ["webhook_declined", "webhook_timed_out"]
+    assert after.status == "timed_out"
+    # A late approve is refused by the bank, so a slow answer never pays.
+    late_status, late_body = heard[3]["late"]
+    assert late_status >= 400 or late_body["status"] == "timed_out"
+    assert late.declined_transaction is not None
+    assert late.declined_transaction.source.card_decline.reason == "webhook_timed_out"
+    assert late_after.status == "timed_out"
+    first = heard[0]["pending"]
+    assert first["status"] == "pending"
+    assert first["card_authorization"]["merchant_acceptor_id"] == "acme-991"
+    window = datetime.fromisoformat(first["timeout_at"]) - datetime.fromisoformat(
+        first["created_at"]
+    )
+    assert window.total_seconds() <= 4.0
+    assert heard[0]["answered"]["card_authorization"]["decision"] == "approve"
+    assert heard[1]["answered"]["card_authorization"]["decision"] == "decline"
+    for name, part, field in (
+        ("real_time_decision_pending", 0, "pending"),
+        ("real_time_decision_approved", 0, "answered"),
+        ("real_time_decision_declined", 1, "answered"),
+        ("card_webhook_event", 0, "event"),
+    ):
+        saved[name] = {"status": 200, "replayed": None, "body": heard[part][field]}
+    for name, record in saved.items():
+        text = json.dumps(record, indent=2, sort_keys=True) + "\n"
+        assert key not in text and secret not in text
+        if os.environ.get("MANDATE_CAPTURE") == "1":
+            (FIXTURES / f"{name}.json").write_text(text)
+        else:
+            body = json.loads((FIXTURES / f"{name}.json").read_text())["body"]
+            assert set(record["body"]) == set(body), name

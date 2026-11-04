@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { concat, fromBase64, fromHex, toBase64 } from "./bytes";
 import {
   AUDITOR,
+  CARD_RECEIPT,
   CONSENT,
   CONSENT_KEY,
   forge,
@@ -776,5 +777,30 @@ describe("ACH bank transfer step", () => {
         "SANDBOX ACH transfer ach_transfer_t1 at increase, requested under this certificate and returned by the bank before this receipt was sealed: the money moved and came back, so this payment paid nothing; the bank lifecycle below the steps says why",
     });
     expect(verdictOf(r).label).toBe("VERIFIED");
+  });
+});
+
+describe("card authorization at the bank step", () => {
+  it("passes a decision Mandate approved under this certificate", async () => {
+    const results = await verifyReceipt(JSON.parse(CARD_RECEIPT), TRUST);
+    expect(results.map((r) => r.status)).toEqual(STEPS.map((s) => (s === "Public anchor" ? "unchecked" : "pass")));
+    expect(results.find((r) => r.step === "Bank transfer")?.detail).toBe(
+      "SANDBOX card authorization real_time_decision_j76n2e810ezcg3zh5qtn at increase, approved under this certificate; the gate signs this claim, and the merchant settles the card payment later",
+    );
+  });
+
+  it.each([
+    [{ status: "complete" }, "Bank reports the card authorization complete, not approved"],
+    [{ status: "declined" }, "Bank reports the card authorization declined, not approved"],
+  ])("a decision %j that is not approved fails", async (change, detail) => {
+    expect(await failed(await resign(bank(change), CARD_RECEIPT))).toEqual({ step: "Bank transfer", status: "fail", detail });
+  });
+
+  it("an account transfer still needs complete, not approved", async () => {
+    expect(await failed(await resign(bank({ status: "approved" }), SANDBOX_RECEIPT))).toEqual({
+      step: "Bank transfer",
+      status: "fail",
+      detail: "Bank reports the transfer approved, not complete",
+    });
   });
 });

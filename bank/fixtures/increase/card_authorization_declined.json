@@ -1,0 +1,90 @@
+{
+  "body": {
+    "declined_transaction": {
+      "account_id": "account_in71c4amph0vgo2qllky",
+      "amount": 100,
+      "created_at": "2026-11-04T09:00:00Z",
+      "currency": "USD",
+      "description": "AMAZON.COM",
+      "id": "declined_transaction_k1r8zmvc2uh6d0pq4eqx",
+      "route_id": "card_oubs0hwk5rn6knuecxg2",
+      "route_type": "card",
+      "source": {
+        "card_decline": {
+          "actioner": "increase",
+          "additional_amounts": {
+            "clinic": null,
+            "dental": null,
+            "original": null,
+            "prescription": null,
+            "surcharge": null,
+            "total_cumulative": null,
+            "total_healthcare": null,
+            "transit": null,
+            "unknown": null,
+            "vision": null
+          },
+          "amount": 100,
+          "card_payment_id": "card_payment_lc6bqjrvyo85a6ncwx92",
+          "currency": "USD",
+          "declined_transaction_id": "declined_transaction_k1r8zmvc2uh6d0pq4eqx",
+          "digital_wallet_token_id": null,
+          "direction": "settlement",
+          "id": "card_decline_h3s9wnf6a2tcz4ue8gxl",
+          "incremented_card_authorization_id": null,
+          "merchant_acceptor_id": "5665270011000168",
+          "merchant_category_code": "5942",
+          "merchant_city": "New York",
+          "merchant_country": "US",
+          "merchant_descriptor": "AMAZON.COM",
+          "merchant_postal_code": "10045",
+          "merchant_state": "NY",
+          "network_details": {
+            "category": "visa",
+            "pulse": null,
+            "visa": {
+              "electronic_commerce_indicator": "secure_electronic_commerce",
+              "point_of_service_entry_mode": "manual",
+              "stand_in_processing_reason": null,
+              "terminal_entry_capability": null
+            }
+          },
+          "network_identifiers": {
+            "authorization_identification_response": null,
+            "retrieval_reference_number": "785867080153",
+            "trace_number": "487941",
+            "transaction_id": "627199945183184"
+          },
+          "network_risk_score": null,
+          "physical_card_id": null,
+          "presentment_amount": 100,
+          "presentment_currency": "USD",
+          "processing_category": "purchase",
+          "real_time_decision_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+          "real_time_decision_reason": null,
+          "reason": "webhook_declined",
+          "scheme_fees": [],
+          "terminal_id": "42981",
+          "verification": {
+            "card_verification_code": {
+              "result": "match"
+            },
+            "cardholder_address": {
+              "actual_line1": null,
+              "actual_postal_code": null,
+              "provided_line1": null,
+              "provided_postal_code": null,
+              "result": "not_checked"
+            }
+          }
+        },
+        "category": "card_decline"
+      },
+      "type": "declined_transaction"
+    },
+    "pending_transaction": null,
+    "type": "inbound_card_authorization_simulation_result"
+  },
+  "replayed": null,
+  "status": 200
+}

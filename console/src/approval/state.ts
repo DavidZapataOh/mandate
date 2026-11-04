@@ -35,6 +35,8 @@ function deskOf(line: ConsoleLine): DeskLine | null {
 function phaseFor(step: DeskSubject["step"], status: string): Phase | null {
   // The bank's later word on a paid quote never reopens or re-closes its approval.
   if (step === "settle") return null;
+  // A card answer never moves a quote's approval: the confirm it rides on, when sealed, is its own line.
+  if (step === "card") return null;
   if (step === "quote") return status === "quoted" ? "waiting" : null;
   if (step === "approve") {
     if (status === "approved") return "approved";

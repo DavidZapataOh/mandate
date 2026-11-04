@@ -15,6 +15,13 @@ export function reasonOf(line: ConsoleLine): string {
 function deskText(line: Extract<ConsoleLine, { source: "desk" }>): string {
   const s = line.subject;
   const reason = reasonOf(line);
+  if (s.step === "card") {
+    // What Mandate answered the bank's question; the confirm it rides on, if any, is its own line.
+    if (s.status === "approved") return `Card approved by Mandate: ${s.summary} · ${s.payment_id}`;
+    if (s.status === "declined") return `Card declined by Mandate: ${reason} · ${s.payment_id}`;
+    if (s.status === "not_answered") return `Card not answered by Mandate; the bank decides: ${reason} · ${s.payment_id}`;
+    return `Card outcome unknown: ${reason} · ${s.payment_id}`;
+  }
   if (s.step === "intent") {
     if (s.status === "signed") return `Holder signed intent: ${s.summary}`;
     if (s.status === "proven") return `Bank balance proven (zkTLS): ${s.summary}`;

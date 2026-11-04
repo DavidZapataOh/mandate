@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { HOSTILE, RETURNED, SETTLED } from "../wire/__fixtures__/lines";
+import { CARD, HOSTILE, patch, RETURNED, SETTLED } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { attack, bill, confirmed, desk, gateEvent, hook, NARRATIVE, SPARK_META, SUMMARY } from "./__fixtures__/cases";
 import { cueFor } from "./cues";
@@ -120,4 +120,10 @@ test("never animates a settle line", () => {
   expect([settled.outcome, settled.seal, settled.route]).toEqual(["note", null, "none"]);
   expect(returned.bubble.startsWith("SIMULATED RETURN · Pay 200.00 USD")).toBe(true);
   expect(returned.outcome).toBe("note");
+});
+
+test("shows a card answer as a note, never a holder approval", () => {
+  const cue = cueFor(parseLine(CARD));
+  expect([cue.outcome, cue.seal, cue.bubble.startsWith("Card approved: Card 200.00 USD")]).toEqual(["note", null, true]);
+  expect(cueFor(parseLine(patch(CARD, {}, { status: "not_answered" }))).bubble.startsWith("Card not answered: ")).toBe(true);
 });

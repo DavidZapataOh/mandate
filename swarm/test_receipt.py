@@ -5,7 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from bank.conftest import RecordingRail
+from bank.card import CardDecisionRail, read_authorization
+from bank.conftest import (
+    AGENT_CARD_ID,
+    CARD_ACCOUNT_ID,
+    DECISION_ID,
+    Cassette,
+    RecordingRail,
+    decision_body,
+)
 from bank.reconcile import AchState
 from gate.cava import CavaAction, Freshness, action_commitment
 from gate.certs import public_key_of, read_claims
@@ -27,6 +35,7 @@ FIXTURES = Path(__file__).resolve().parent.parent / "console/src/explorer/__fixt
 GOLDEN = FIXTURES / "receipt.json"
 AUDITOR = FIXTURES / "auditor.json"
 SANDBOX_GOLDEN = FIXTURES / "receipt-sandbox.json"
+CARD_GOLDEN = FIXTURES / "receipt-card.json"
 GATE = b"\x01" * 32
 HOLDER = b"\x02" * 32
 NOW = 1800001000
@@ -82,8 +91,9 @@ def test_sandbox_desk_receipt_is_the_sandbox_golden(make_desk, sign_quote):
     assert json.loads(text)["payment_id"] == "account_transfer_t1"
 
 
-def test_golden_verifies_with_the_python_verifiers():
-    r = json.loads(GOLDEN.read_text())
+@pytest.mark.parametrize("golden", [GOLDEN, CARD_GOLDEN], ids=["account", "card"])
+def test_golden_verifies_with_the_python_verifiers(golden):
+    r = json.loads(golden.read_text())
     gate_pub = public_key_of(GATE)
     claims, reason = read_claims(r["certificate"], gate_pub)
     disclosed, sd_reason = process(r["sd"], gate_pub, RECEIPT_TYP)
@@ -334,3 +344,43 @@ def test_ach_desk_receipt_and_lifecycle_are_the_goldens(
         if os.environ.get("MANDATE_GOLDEN") == "1":
             path.write_text(text)
         assert text == path.read_text()
+
+
+def test_card_desk_receipt_is_the_card_golden(make_desk, sign_quote, state_store):
+    desk, _ = make_desk(
+        gate_key=GATE,
+        holder_key=HOLDER,
+        intents=(DEMO_INTENT,),
+        bank=RecordingRail(balance=50000),
+        bank_key=b"\x07" * 32,
+        state=state_store,
+    )
+    q = desk.quote("acme-991", 20000, "USD", "A-991", "i:000001")
+    desk.approve(q["quote_id"], sign_quote(HOLDER, q))
+    reader = Cassette((200, decision_body())).client()
+    auth = read_authorization(reader.real_time_decisions.retrieve(DECISION_ID))
+    approve = Cassette((200, decision_body("responded", "approve"))).client()
+    rail = CardDecisionRail(
+        approve,
+        auth,
+        "checking-881",
+        CARD_ACCOUNT_ID,
+        NOW + 4.0,
+        lambda: float(NOW),
+        card_id=AGENT_CARD_ID,
+    )
+    done = desk.authorize_card(q["quote_id"], rail, 3.0)
+    text = json.dumps(desk.proof_receipt(done["payment_id"]), separators=(",", ":"))
+    if os.environ.get("MANDATE_GOLDEN") == "1":
+        CARD_GOLDEN.write_text(text + "\n")
+    assert text + "\n" == CARD_GOLDEN.read_text()
+    payload = json.loads(text)["sd"].split("~")[0].split(".")[1]
+    padded = payload + "=" * (-len(payload) % 4)
+    bank = json.loads(base64.urlsafe_b64decode(padded))["bank"]
+    assert bank == {
+        "rail": "sandbox",
+        "provider": "increase",
+        "transfer_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+        "status": "approved",
+        "idempotency_key": "mandate-cert-00000000000000000000000000000002",
+    }

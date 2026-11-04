@@ -3,10 +3,18 @@
 from collections.abc import Mapping, MutableMapping
 
 BANK_KEY_ENV = "INCREASE_SANDBOX_API_KEY"
-# Every name an Increase key goes by: the verifier's, the holder's read key,
-# and the one the SDK itself reads. No agent process may hold any of them.
+# Every name an Increase credential goes by: the verifier's key, the holder's
+# read key, the key the SDK itself reads, the webhook secret, and the secret
+# the SDK itself reads. No agent process may hold any of them.
 HOLDER_KEY_ENV = "INCREASE_HOLDER_API_KEY"
-BANK_KEY_NAMES = (BANK_KEY_ENV, HOLDER_KEY_ENV, "INCREASE_API_KEY")
+WEBHOOK_SECRET_ENV = "INCREASE_SANDBOX_WEBHOOK_SECRET"  # noqa: S105
+BANK_KEY_NAMES = (
+    BANK_KEY_ENV,
+    HOLDER_KEY_ENV,
+    "INCREASE_API_KEY",
+    WEBHOOK_SECRET_ENV,
+    "INCREASE_WEBHOOK_SECRET",
+)
 
 
 def take_bank_key(env: MutableMapping[str, str]) -> str | None:
@@ -31,6 +39,21 @@ def take_holder_key(env: MutableMapping[str, str]) -> str | None:
         The key, or None when it is missing or empty.
     """
     return env.pop(HOLDER_KEY_ENV, None) or None
+
+
+def take_webhook_secret(env: MutableMapping[str, str]) -> str | None:
+    """Remove the secret the bank signs its webhooks with and return it.
+
+    The name the SDK reads by default is removed too, so no child inherits it.
+
+    Args:
+        env: Environment to take the secret from, usually ``os.environ``.
+
+    Returns:
+        The pinned name's secret, or None when it is missing or empty.
+    """
+    env.pop("INCREASE_WEBHOOK_SECRET", None)
+    return env.pop(WEBHOOK_SECRET_ENV, None) or None
 
 
 def credential_exposed(env: Mapping[str, str]) -> bool:

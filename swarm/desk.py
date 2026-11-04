@@ -14,6 +14,8 @@ from typing import Any, TypeVar, cast
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
 from bank.rail import (
+    CARD_DECISION,
+    CARD_JOURNAL,
     NO_TRANSFER,
     SANDBOX,
     AchRail,
@@ -102,6 +104,10 @@ _ROUND_FAILED = "reconcile: failed"
 _STATE_DOWN = "state: unavailable"
 _BANK_DOWN = "bank: unavailable"
 _HELD = "intent: held at the bank"
+_CARD_TWO_STEP = "card: two-step desk"
+_CARD_BUSY = "card: desk busy"
+_CARD_NO_QUOTE = "card: no approved quote"
+_CARD_HELD = "card: held at the bank"
 # Hold refusals after which the bank holds nothing under the key.
 _NOTHING_HELD = (
     _BANK_DOWN,
@@ -801,6 +807,10 @@ class PaymentDesk:
             try:
                 bank = _jws_payload(receipt["sd"].split("~")[0]).get("bank")
                 if bank is None or bank.get("rail") != rail:
+                    continue
+                # An approved card purchase is no account transfer: the
+                # transfer listing can never name it.
+                if CARD_DECISION.fullmatch(str(bank.get("transfer_id"))):
                     continue
                 entry = LogEntry(**receipt["registry"]["entry"])
                 jti = _jws_payload(receipt["certificate"])["jti"]
@@ -1784,35 +1794,216 @@ class PaymentDesk:
             The stored result; later calls return it unchanged.
         """
         with self._lock:
+            return self._confirm_locked(quote_id)
+
+    def _confirm_locked(
+        self,
+        quote_id: str,
+        rail: BankRail | None = None,
+        journal_rail: str | None = None,
+        in_time: Callable[[], bool] | None = None,
+    ) -> dict[str, Any]:
+        """The confirm, under the desk lock, on ``rail`` (the desk's own if None).
+
+        ``journal_rail`` labels the write-ahead journal; it decides which
+        reconciler may later settle an unknown outcome. ``in_time`` is asked
+        just before the gate; False leaves the quote approved and unsealed.
+        """
+        record = self._quotes.get(quote_id)
+        if record is None:
+            return _unknown(quote_id)
+        if record.status != "approved":
+            return self._view(quote_id, record)
+        iid = record.intent_id
+        bound = None if iid is None else self._intents[iid]
+        holder = record.holder
+        holder_key = None if holder is None else self._holders.key_of(holder)
+        refusal = None
+        if self._require_intent and bound is None:
+            refusal = "intent: missing"
+        elif bound is not None and bound.payment_id is not None:
+            refusal = "intent: already used"
+        elif holder_key is None:
+            refusal = _UNPAIRED
+        elif bound is not None and bound.unsettled is not None:
+            refusal = "intent: unsettled"
+        elif bound is not None and _proof_expired(bound, self._clock()):
+            refusal = "zktls: proof expired"
+        if not self.registry.has_room():
+            return {
+                "status": "denied",
+                "reason": "registry: full",
+                "quote_id": quote_id,
+            }
+        if refusal is not None or holder_key is None:
+            return self._refuse(quote_id, record, refusal or _UNPAIRED)
+        return self._execute(
+            quote_id,
+            record,
+            bound,
+            holder_key,
+            rail=rail,
+            journal_rail=journal_rail,
+            in_time=in_time,
+        )
+
+    def card_quote(
+        self,
+        merchant: str,
+        amount_cents: int,
+        currency: str,
+        *,
+        wait_s: float | None = None,
+    ) -> str | None:
+        """The approved quote a card authorization would spend, if any.
+
+        Args:
+            merchant: The authorization's merchant acceptor id.
+            amount_cents: Its settlement amount in integer cents.
+            currency: Its settlement currency.
+            wait_s: The longest the desk lock is waited for; None waits.
+
+        Returns:
+            The lowest-numbered quote the holder approved, still within its
+            consent's deadline, bound to an intent, debiting this desk's
+            account and naming exactly this payee, amount and currency; None
+            when there is none.
+
+        Raises:
+            TimeoutError: ``card: desk busy`` when the lock is not free within
+                ``wait_s``.
+        """
+        timeout = -1.0 if wait_s is None else max(wait_s, 0.0)
+        if not self._lock.acquire(timeout=timeout):
+            raise TimeoutError(_CARD_BUSY)
+        try:
+            now = self._clock()
+            for quote_id, record in sorted(
+                self._quotes.items(), key=lambda item: item[1].number
+            ):
+                c = record.consent
+                if (
+                    record.status == "approved"
+                    and now <= c.expires_at
+                    and record.intent_id is not None
+                    and (c.recipient, c.amount_cents, c.currency, c.source)
+                    == (merchant, amount_cents, currency, self._source)
+                ):
+                    return quote_id
+            return None
+        finally:
+            self._lock.release()
+
+    def authorize_card(
+        self,
+        quote_id: str,
+        rail: BankRail,
+        wait_s: float,
+        *,
+        time_left: Callable[[], float] | None = None,
+        gate_s: float = 0.0,
+    ) -> dict[str, Any]:
+        """Spend an approved quote on a card authorization, through the confirm.
+
+        The quote pays once: whichever of this and ``confirm`` runs first
+        closes it. A later ``confirm`` returns the stored result; a later
+        card authorization is refused. The write-ahead journal
+        is labelled ``card``, so no transfer lookup ever settles an unknown
+        card outcome: its intent stays unsettled until the owner settles it.
+
+        Args:
+            quote_id: The quote ``card_quote`` found.
+            rail: The card decision's rail; executing it approves the purchase.
+            wait_s: The longest the desk lock is waited for.
+            time_left: Seconds the rail still allows an approve to start;
+                None never runs short.
+            gate_s: The least of ``time_left`` the gate run must be given.
+                Checked once the lock is held and again just before the
+                gate spends the holder's approval; when short, the result
+                is ``card: desk busy`` and the quote stays approved.
+
+        Returns:
+            The confirm's result, or a denied view naming ``card: two-step
+            desk``, ``card: desk busy``, ``card: no approved quote`` (the
+            quote is unknown or no longer approved) or ``card: held at the
+            bank`` that leaves the quote untouched and seals nothing.
+
+        Raises:
+            ValueError: If the desk keeps no durable store.
+        """
+        refused = {
+            "status": "denied",
+            "quote_id": quote_id,
+            "reason": _CARD_TWO_STEP,
+            "payment_id": None,
+        }
+        # The quote's hold would stay pending at the bank once a card spent it.
+        if self._two_step:
+            return refused
+        if self._state is None:
+            raise ValueError("card authorizations need a durable desk")
+        if not self._lock.acquire(timeout=max(wait_s, 0.0)):
+            return dict(refused, reason=_CARD_BUSY)
+        try:
             record = self._quotes.get(quote_id)
-            if record is None:
-                return _unknown(quote_id)
-            if record.status != "approved":
-                return self._view(quote_id, record)
+            # A quote another answer already closed is never this decision's
+            # spend: its stored result belongs to that other answer.
+            if record is None or record.status != "approved":
+                return dict(refused, reason=_CARD_NO_QUOTE)
             iid = record.intent_id
-            bound = None if iid is None else self._intents[iid]
-            holder = record.holder
-            holder_key = None if holder is None else self._holders.key_of(holder)
-            refusal = None
-            if self._require_intent and bound is None:
-                refusal = "intent: missing"
-            elif bound is not None and bound.payment_id is not None:
-                refusal = "intent: already used"
-            elif holder_key is None:
-                refusal = _UNPAIRED
-            elif bound is not None and bound.unsettled is not None:
-                refusal = "intent: unsettled"
-            elif bound is not None and _proof_expired(bound, self._clock()):
-                refusal = "zktls: proof expired"
-            if not self.registry.has_room():
-                return {
-                    "status": "denied",
-                    "reason": "registry: full",
-                    "quote_id": quote_id,
-                }
-            if refusal is not None or holder_key is None:
-                return self._refuse(quote_id, record, refusal or _UNPAIRED)
-            return self._execute(quote_id, record, bound, holder_key)
+            # Defense in depth: a hold kept from an earlier two-step run may
+            # still complete for this intent.
+            if quote_id in self._holds or (
+                iid is not None
+                and any(h["intent_id"] == iid for h in self._holds.values())
+            ):
+                return dict(refused, reason=_CARD_HELD)
+
+            def in_time() -> bool:
+                return time_left is None or time_left() >= gate_s
+
+            if not in_time():
+                return dict(refused, reason=_CARD_BUSY)
+            return self._confirm_locked(
+                quote_id, rail=rail, journal_rail=CARD_JOURNAL, in_time=in_time
+            )
+        finally:
+            self._lock.release()
+
+    def record_card(
+        self,
+        decision_id: str,
+        status: str,
+        reason: str,
+        quote_id: str | None,
+        sealed: bool,
+        summary: str,
+    ) -> None:
+        """Publish Mandate's answer to one card authorization, and seal a refusal.
+
+        Args:
+            decision_id: The bank's real-time decision id.
+            status: ``approved``, ``declined``, ``not_answered`` or ``unknown``.
+            reason: Why.
+            quote_id: The quote the authorization matched, or None.
+            sealed: Whether a confirm already sealed this answer.
+            summary: The authorization's sentence (``card_summary``).
+        """
+        view: dict[str, Any] = {
+            "status": status,
+            "quote_id": quote_id,
+            "payment_id": decision_id,
+            "reason": reason,
+        }
+        with self._lock:
+            if not sealed and self.registry.has_room():
+                body = _result_body(view)
+
+                def work() -> None:
+                    self._append("denial", body)
+
+                self._durably(work)
+            self._line("card", view, summary)
 
     def status(self, quote_id: str) -> dict[str, Any]:
         """Latest view of a quote."""
@@ -2045,7 +2236,7 @@ class PaymentDesk:
         return dict(result)
 
     def _journal(
-        self, quote_id: str, record: _Quote, holder_key: bytes
+        self, quote_id: str, record: _Quote, holder_key: bytes, rail_label: str
     ) -> Callable[[str, CavaAction, bytes], None]:
         """Write-ahead record of an issued certificate, on disk before the bank."""
         state = self._state
@@ -2066,7 +2257,7 @@ class PaymentDesk:
                 "idempotency_key": idempotency_key(claims["jti"]),
                 "expires_at": claims["exp"],
                 # Only the bank that was called can say what it holds.
-                "rail": self.bank.rail,
+                "rail": rail_label,
             }
             state.put_record("pending", quote_id, _dumps(entry))
 
@@ -2078,6 +2269,10 @@ class PaymentDesk:
         record: _Quote,
         bound: _Intent | None,
         holder_key: bytes,
+        *,
+        rail: BankRail | None = None,
+        journal_rail: str | None = None,
+        in_time: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         c = record.consent
         now = self._clock()
@@ -2119,14 +2314,28 @@ class PaymentDesk:
             holder_keys=(holder_key,),
             consents=self._ledger,
         )
+        # The last moment the holder's approval is still unspent: the gate
+        # consumes it whatever the bank later answers.
+        if in_time is not None and not in_time():
+            return {
+                "status": "denied",
+                "quote_id": quote_id,
+                "reason": _CARD_BUSY,
+                "payment_id": None,
+            }
         # The verifier runs outside any store transaction, so the certificate
         # id it spends is on disk before the bank is called.
         try:
             outcome = run_governed(
                 request,
-                self.bank,
+                self.bank if rail is None else rail,
                 self._verifier,
-                self._journal(quote_id, record, holder_key),
+                self._journal(
+                    quote_id,
+                    record,
+                    holder_key,
+                    self.bank.rail if journal_rail is None else journal_rail,
+                ),
             )
         except Exception as exc:
             # Only the type: a message could carry consent fields or keys.
@@ -2160,7 +2369,8 @@ class PaymentDesk:
             seq, seal = self._append(kind, body)
             proof = self.registry.prove(seq)
             receipt = None
-            if payment_id is not None and outcome.payment is not None:
+            # Only the desk's own rail pays by ACH; a card approval never does.
+            if payment_id is not None and outcome.payment is not None and rail is None:
                 ach = self._ach_record(
                     outcome.payment,
                     quote_id,

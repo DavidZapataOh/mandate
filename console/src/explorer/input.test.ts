@@ -10,6 +10,12 @@ describe("classify", () => {
   it("reads a bank transfer id as a payment id", () => {
     expect(classify("account_transfer_7k9qe1ysdgqztnt63l7n")).toEqual({ kind: "payment", id: "account_transfer_7k9qe1ysdgqztnt63l7n" });
   });
+  it("reads a bank decision id as a payment id", () => {
+    for (const id of ["real_time_decision_j76n2e810ezcg3zh5qtn", "sandbox_real_time_decision_j76n2e810ezcg3zh5qtn"]) {
+      expect(classify(id)).toEqual({ kind: "payment", id });
+    }
+    expect(classify("real_time_decision_").kind).toBe("unknown");
+  });
   it("reads a sandbox bank transfer id as a payment id", () => {
     expect(classify("sandbox_account_transfer_astdbpezq3uovbhia1nb")).toEqual({
       kind: "payment", id: "sandbox_account_transfer_astdbpezq3uovbhia1nb",

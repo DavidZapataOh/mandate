@@ -116,6 +116,8 @@ const short = (value: unknown) => `${shown(value).slice(0, 12)}…`;
 // The only bank a sandbox claim may name, and the shape of the transfer ids it issues.
 const SANDBOX_PROVIDER = "increase";
 const INCREASE_TRANSFER = /^(?:sandbox_)?(?:account|ach)_transfer_[A-Za-z0-9]{1,64}$/;
+// A card spend seals the bank's real-time decision id: the bank asked, Mandate approved, the merchant settles later.
+const INCREASE_DECISION = /^(?:sandbox_)?real_time_decision_[A-Za-z0-9]{1,64}$/;
 // An ACH transfer settles or is returned days after the bank accepts it, so acceptance is all a receipt can seal.
 const ACH_TRANSFER = /^(?:sandbox_)?ach_transfer_[A-Za-z0-9]{1,64}$/;
 const ACH_ACCEPTED: readonly string[] = ["pending_submission", "submitted"];
@@ -410,9 +412,15 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
     }
     if (bank.rail === "sandbox") {
       if (bank.provider !== SANDBOX_PROVIDER) throw new Fail(`Sandbox transfer names provider ${shown(bank.provider)}, not ${SANDBOX_PROVIDER}`);
-      if (!INCREASE_TRANSFER.test(bank.transfer_id)) throw new Fail(`Bank transfer ${shown(bank.transfer_id)} is not an Increase transfer id`);
+      if (!INCREASE_TRANSFER.test(bank.transfer_id) && !INCREASE_DECISION.test(bank.transfer_id)) {
+        throw new Fail(`Bank transfer ${shown(bank.transfer_id)} is not an Increase transfer id`);
+      }
     }
     if (bank.transfer_id !== r.payment_id) throw new Fail(`Bank transfer ${bank.transfer_id} is not the sealed payment ${r.payment_id}`);
+    if (bank.rail === "sandbox" && INCREASE_DECISION.test(bank.transfer_id)) {
+      if (bank.status !== "approved") throw new Fail(`Bank reports the card authorization ${bank.status}, not approved`);
+      return `SANDBOX card authorization ${bank.transfer_id} at ${SANDBOX_PROVIDER}, approved under this certificate; the gate signs this claim, and the merchant settles the card payment later`;
+    }
     if (bank.rail === "sandbox" && isAchTransfer(bank.transfer_id)) {
       // A lost answer reconciled after the return seals the bank's own status; the payment moved, came back and paid nothing.
       if (bank.status === ACH_RETURNED) {
