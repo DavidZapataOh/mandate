@@ -13,8 +13,12 @@ from types import FrameType
 from typing import Any
 
 import uvicorn
+from increase import AuthenticationError, IncreaseError, PermissionDeniedError
 
 from bank.api import Bank
+from bank.credentials import BANK_KEY_ENV, take_bank_key
+from bank.increase import IncreaseRail, sandbox_client
+from bank.rail import BankRail
 from bank.verifier import Verifier
 from gate.certs import generate_keypair, public_key_of
 from gate.policy import Intent
@@ -269,11 +273,30 @@ def _spark(
     return intake, meta
 
 
+def _sandbox(
+    parser: argparse.ArgumentParser, key: str | None, names: tuple[str, ...]
+) -> IncreaseRail:
+    if key is None:
+        parser.exit(2, f"bank rail unavailable: set {BANK_KEY_ENV}\n")
+    try:
+        rail = IncreaseRail.connect(sandbox_client(key))
+    except (AuthenticationError, PermissionDeniedError):
+        parser.exit(2, "bank rail unavailable: the sandbox refused the key\n")
+    except IncreaseError:
+        parser.exit(2, "bank rail unavailable: the sandbox is unreachable\n")
+    if not rail.holds(names):
+        parser.exit(2, "bank accounts missing: run mandate-bank-setup\n")
+    return rail
+
+
 def cli(argv: list[str] | None = None) -> None:
     """Console entry point for `mandate-console`.
 
     Serves the payment desk, the template attack route and the built console,
-    and prints the pairing URL followed by the console URL.
+    and prints the pairing URL followed by the console URL. With
+    ``--rail sandbox`` the desk pays through the Increase sandbox; the bank key
+    leaves this process's environment either way, so nothing it spawns holds it.
+    Template attacks always run on a simulated bank.
     """
     parser = argparse.ArgumentParser(
         prog="mandate-console", description="Serve the Mandate live console."
@@ -281,6 +304,12 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--source", default="checking-881")
+    parser.add_argument(
+        "--rail",
+        choices=("simulated", "sandbox"),
+        default="simulated",
+        help="bank the desk pays through; sandbox needs INCREASE_SANDBOX_API_KEY",
+    )
     parser.add_argument("--journal", type=Path, help="hook journal to follow")
     parser.add_argument("--record", type=Path, help="append every line as JSONL")
     parser.add_argument(
@@ -313,12 +342,19 @@ def cli(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    bank_key = take_bank_key(os.environ)
     index = args.console_dir / "index.html"
     if not index.is_file():
         parser.exit(2, f"console build missing: {index}\n")
     book = _payee_book(args.payees)
     if book is None:
         parser.exit(2, f"payee book unreadable: {args.payees}\n")
+    simulated = Bank({args.source: _DEMO_BALANCE_CENTS, "acme-991": 0})
+    rail: BankRail = (
+        simulated
+        if args.rail == "simulated"
+        else _sandbox(parser, bank_key, (args.source, "acme-991"))
+    )
     intake, agent = _spark(os.environ, book)
     hub = EventHub()
     if args.record is not None:
@@ -327,14 +363,16 @@ def cli(argv: list[str] | None = None) -> None:
     gate_key, gate_pub = generate_keypair()
     desk = PaymentDesk(
         source=args.source,
-        bank=Bank({args.source: _DEMO_BALANCE_CENTS, "acme-991": 0}),
+        bank=rail,
         verifier=Verifier(gate_pub),
         gate_key=gate_key,
         clock=_now,
         nonces=_nonce,
         publish=hub.publish,
     )
-    runner = AttackRunner(desk, gate_key, hub, _now, counted_nonces("atk"))
+    runner = AttackRunner(
+        desk, gate_key, hub, _now, counted_nonces("atk"), bank=simulated
+    )
     deploys = DeployRunner(gate_key, hub, _now, counted_nonces("dep"))
     allowed = (*_LOCAL_HOSTS, *args.public_host)
     app = build_server(

@@ -12,6 +12,7 @@ read as authority.
 import argparse
 import fcntl
 import json
+import os
 import posixpath
 import secrets
 import sys
@@ -19,6 +20,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from bank.credentials import BANK_KEY_ENV
 from gate.broker import action_within_scope, verify_chain
 from gate.cava import CavaAction, Freshness, action_hash
 from gate.certs import BitstringRevocation
@@ -239,7 +241,12 @@ def _fail(stdout_reason: str, pre_tool: bool) -> tuple[int, str]:
 
 
 def main(
-    stdin: str, now: int, nonce: str, state_dir: Path, root: Path
+    stdin: str,
+    now: int,
+    nonce: str,
+    state_dir: Path,
+    root: Path,
+    exposed: bool = False,
 ) -> tuple[int, str]:
     """Decide one hook invocation; returns (exit code, stdout).
 
@@ -251,6 +258,8 @@ def main(
             the lock; it must live outside the governed repo.
         root: The governed repo root; event cwds must be it or a worktree under
             `.muse/worktrees/`.
+        exposed: Whether the hook's environment holds the bank key; the agent
+            that spawned the hook then holds it too, so every call is refused.
     """
     started = time.perf_counter()
     if not stdin.strip():
@@ -262,6 +271,8 @@ def main(
     pre_tool = (
         isinstance(payload, dict) and payload.get("hook_event_name") == "PreToolUse"
     )
+    if exposed:
+        return _fail("denied: bank credential in agent environment", pre_tool)
     try:
         return _decide(payload, pre_tool, now, nonce, started, state_dir, root)
     except Exception:
@@ -346,7 +357,14 @@ def cli() -> None:
     try:
         text = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         state_dir, root = _pinned(sys.argv[1:])
-        code, out = main(text, int(time.time()), secrets.token_hex(16), state_dir, root)
+        code, out = main(
+            text,
+            int(time.time()),
+            secrets.token_hex(16),
+            state_dir,
+            root,
+            exposed=BANK_KEY_ENV in os.environ,
+        )
     except BaseException:  # noqa: BLE001
         code, out = 0, deny_output("malformed: mandate error")
     if out:

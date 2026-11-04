@@ -1,9 +1,12 @@
 import json
+import os
 import subprocess
 from collections import Counter
 from pathlib import Path
 
 import pytest
+
+from bank.credentials import without_bank_key
 
 DEMO = Path(__file__).resolve().parent.parent / "demo"
 MANIFEST = DEMO / "swarm_manifest.json"
@@ -27,6 +30,7 @@ def test_live_governed_fanout(governed_repo):
             PROMPT.read_text(),
         ],
         cwd=repo,
+        env=without_bank_key(os.environ),
         capture_output=True,
         text=True,
         timeout=900,

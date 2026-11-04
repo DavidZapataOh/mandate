@@ -8,6 +8,7 @@ import httpx2
 import pytest
 from mcp import Client
 
+from bank.credentials import without_bank_key
 from gate.certs import generate_keypair
 from swarm.conftest import DEMO_INTENT
 from swarm.handoff import QUOTE_REQUEST, AgentHandoff
@@ -93,6 +94,7 @@ def test_live_muse_code_quotes_through_mcp(running_desk, governed_repo):
             MUSE_PROMPT,
         ],
         cwd=repo,
+        env=without_bank_key(os.environ),
         capture_output=True,
         text=True,
         timeout=600,

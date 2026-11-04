@@ -1,17 +1,20 @@
 import base64
 import itertools
 import json
+import os
 import re
 import signal
 import socket
 import threading
 import time
 
+import httpx
 import pytest
 import uvicorn
 
 from bank.api import Bank
-from bank.conftest import RecordingRail
+from bank.conftest import SENTINEL_KEY, Cassette, RecordingRail, named_accounts
+from bank.credentials import BANK_KEY_ENV
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from swarm import console
@@ -536,3 +539,79 @@ def test_attacks_need_a_simulated_bank_beside_a_sandbox_desk():
     assert line.subject["blocked"] is True
     assert sim.get_balance("acme-991") == 20000
     assert rail.calls == []
+
+
+def test_cli_sandbox_rail_needs_the_key(monkeypatch, capsys, dist):
+    monkeypatch.delenv(BANK_KEY_ENV, raising=False)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "bank rail unavailable: set INCREASE_SANDBOX_API_KEY\n"
+    )
+
+
+def test_cli_sandbox_rail_needs_the_demo_accounts(monkeypatch, capsys, dist):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    cassette = Cassette("accounts_list")
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "bank accounts missing: run mandate-bank-setup\n"
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        (401, {"type": "invalid_api_key_error", "status": 401}),
+        (403, {"type": "environment_mismatch_error", "status": 403}),
+    ],
+)
+def test_cli_sandbox_rail_refused_key(monkeypatch, capsys, dist, refusal):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    cassette = Cassette(refusal)
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+    assert stopped.value.code == 2
+    err = capsys.readouterr().err
+    assert err == "bank rail unavailable: the sandbox refused the key\n"
+    assert BANK_KEY_ENV not in os.environ
+
+
+@pytest.mark.parametrize(
+    "failure", [httpx.ConnectError("down"), httpx.ReadTimeout("slow")]
+)
+def test_cli_sandbox_rail_unreachable(monkeypatch, capsys, dist, failure):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    cassette = Cassette(failure)
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+    assert stopped.value.code == 2
+    err = capsys.readouterr().err
+    assert err == "bank rail unavailable: the sandbox is unreachable\n"
+
+
+@pytest.mark.anyio
+async def test_cli_sandbox_console_keeps_attacks_simulated(monkeypatch, capsys, dist):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    keys = []
+    cassette = Cassette(named_accounts("checking-881", "acme-991"))
+
+    def client(key):
+        keys.append(key)
+        return cassette.client()
+
+    monkeypatch.setattr(console, "sandbox_client", client)
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox"
+    )
+    assert keys == [SENTINEL_KEY]
+    assert BANK_KEY_ENV not in os.environ
+    async with _asgi(seen["app"]) as http:
+        attack = await http.post("/api/attack", json={"kind": "replay"})
+    bank = read_console_line(attack.text).forensic["bank"]
+    assert (bank["rail"], bank["transfer_id"]) == ("simulated", "pay:000001")
+    assert [r.url.path for r in cassette.requests] == ["/accounts"]

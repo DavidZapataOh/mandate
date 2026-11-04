@@ -1,10 +1,12 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from bank.credentials import BANK_KEY_ENV
 from swarm.console_line import read_console_line
 from swarm.hook import main
 from swarm.hookio import ChildStarted
@@ -411,3 +413,23 @@ def test_journal_reads_as_console_lines(send, state_dir):
     }
     assert (line.event["id"], line.event["verdict"]) == ("evt:" + "e" * 32, "MET")
     assert line.meta["provider"] == "muse-code"
+
+
+def test_an_agent_holding_the_bank_key_is_refused(repo, state_dir, send):
+    _bound_child(send)
+    payload = json.dumps(dict(EDIT, cwd=str(repo)))
+    code, out = main(payload, NOW, "n" * 32, state_dir, repo, exposed=True)
+    assert (code, _reason(out)) == (0, "denied: bank credential in agent environment")
+
+
+def test_cli_refuses_when_the_bank_key_is_in_its_environment(repo, state_dir):
+    run = subprocess.run(  # noqa: S603
+        [str(HOOK), "--state-dir", str(state_dir), "--root", str(repo)],
+        input=json.dumps(dict(EDIT, cwd=str(repo))),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, BANK_KEY_ENV: "sandbox_key_SENTINEL_7f3a9c"},
+    )
+    assert run.returncode == 0
+    assert _reason(run.stdout) == "denied: bank credential in agent environment"
