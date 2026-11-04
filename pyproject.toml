@@ -13,6 +13,7 @@ mandate-hook = "swarm.hook:cli"
 mandate-desk = "swarm.server:cli"
 mandate-console = "swarm.console:cli"
 mandate-bank-setup = "bank.increase:setup_cli"
+mandate-holder-proof = "swarm.holder_proof:cli"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -88,6 +89,8 @@ module = [
     "swarm.test_console_line",
     "swarm.test_desk",
     "swarm.test_desk_zktls",
+    "swarm.test_holder_proof",
+    "swarm.test_server_zktls",
     "swarm.test_flow",
     "swarm.test_hook",
     "swarm.test_nimbus",

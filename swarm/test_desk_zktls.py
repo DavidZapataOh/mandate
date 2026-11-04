@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -240,3 +241,82 @@ def test_desk_cooperative_receipt_is_the_golden(zk_desk, sign_quote):
     if os.environ.get("MANDATE_GOLDEN") == "1":
         GOLDEN_COOP.write_text(text)
     assert text == GOLDEN_COOP.read_text()
+
+
+class _HeldSetup(BankProofSetup):
+    """Verifies through the fake binary, but only once the test releases it."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        object.__setattr__(self, "started", threading.Event())
+        object.__setattr__(self, "release", threading.Event())
+
+    def verify(self, presentation, account, nonce, now):
+        self.started.set()
+        assert self.release.wait(5)
+        return super().verify(presentation, account, nonce, now)
+
+
+def _held_proof(make_desk, tmp_path):
+    setup = _HeldSetup(
+        fake_verifier(tmp_path, increase_disclosed()),
+        "127.0.0.1:7047",
+        NOTARY,
+        {"checking-881": ACCT},
+    )
+    desk, holder = make_desk(
+        clock=lambda: NOW,
+        bank=RecordingRail(balance=50000),
+        intents=(DEMO_INTENT,),
+        zktls=setup,
+    )
+    answer = {}
+    proving = threading.Thread(
+        target=lambda: answer.update(desk.record_funds_proof("i:000001", PROOF))
+    )
+    proving.start()
+    assert setup.started.wait(5)
+    return desk, holder, setup, proving, answer
+
+
+def _within(action, seconds=2):
+    done = {}
+    worker = threading.Thread(target=lambda: done.update(value=action()))
+    worker.start()
+    worker.join(seconds)
+    assert "value" in done, "the desk was locked while the verifier ran"
+    return done["value"]
+
+
+def test_desk_actions_proceed_while_the_verifier_runs(make_desk, tmp_path):
+    desk, _, setup, proving, answer = _held_proof(make_desk, tmp_path)
+    try:
+        quoted = _within(
+            lambda: desk.quote("acme-991", 20000, "USD", "A-991", intent_id="i:000001")
+        )
+        assert quoted["status"] == "quoted"
+        assert _within(lambda: desk.funds_challenge("i:000001"))["status"] == "open"
+    finally:
+        setup.release.set()
+        proving.join(5)
+    assert answer["status"] == "proven"
+    assert desk.intent_receipt("i:000001")["evidence_ref"] == ZK_REF
+
+
+def test_a_proof_for_an_intent_paid_meanwhile_is_refused(
+    make_desk, tmp_path, sign_quote
+):
+    desk, holder, setup, proving, answer = _held_proof(make_desk, tmp_path)
+    try:
+        paid = _pay(desk, holder, sign_quote)
+    finally:
+        setup.release.set()
+        proving.join(5)
+    assert answer == {
+        "status": "denied",
+        "intent_id": "i:000001",
+        "reason": "zktls: challenge changed",
+    }
+    certified = _signed(desk, paid)["cava"]["evidence_refs"][2]
+    assert certified.startswith("ev:cooperative-signed:")
+    assert desk.intent_receipt("i:000001")["evidence_ref"] == certified

@@ -16,6 +16,8 @@ from bank.api import Bank
 from bank.conftest import SENTINEL_KEY, Cassette, RecordingRail, named_accounts
 from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
 from bank.verifier import Verifier
+from evidence.conftest import fake_binary
+from evidence.zktls import ZKTLS_BIN_ENV
 from gate.certs import generate_keypair
 from swarm import console
 from swarm.conftest import message
@@ -621,3 +623,78 @@ def test_cli_drops_the_holder_key(monkeypatch, capsys, dist):
     monkeypatch.setenv(HOLDER_KEY_ENV, "holder_key_SENTINEL_51c2")
     _run_cli(monkeypatch, capsys, "--console-dir", str(dist))
     assert HOLDER_KEY_ENV not in os.environ
+
+
+FAKE_NOTARY = (
+    "import json, sys, time\n"
+    "from cryptography.hazmat.primitives import serialization as s\n"
+    "from cryptography.hazmat.primitives.asymmetric import ec\n"
+    "path = sys.argv[sys.argv.index('--key-file') + 1]\n"
+    "k = ec.derive_private_key(int(open(path).read(), 16), ec.SECP256K1())\n"
+    "pub = k.public_key().public_bytes(\n"
+    "    s.Encoding.X962, s.PublicFormat.CompressedPoint)\n"
+    "print(json.dumps({'listening': sys.argv[3], 'notary_key': pub.hex()}),\n"
+    "      flush=True)\n"
+    "time.sleep(30)"
+)
+
+
+def _sandbox(monkeypatch):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    cassette = Cassette(named_accounts("checking-881", "acme-991"))
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+
+
+def test_cli_zktls_needs_the_sandbox_rail(monkeypatch, capsys, dist):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--zktls")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "zktls needs --rail sandbox\n"
+
+
+def test_cli_zktls_needs_the_binary(monkeypatch, capsys, dist):
+    _sandbox(monkeypatch)
+    monkeypatch.delenv(ZKTLS_BIN_ENV, raising=False)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+            "--zktls",
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "zktls unavailable: set MANDATE_ZKTLS_BIN to a built mandate-zktls\n"
+    )
+
+
+@pytest.mark.anyio
+async def test_cli_sandbox_zktls_wires_the_notary(monkeypatch, capsys, dist, tmp_path):
+    _sandbox(monkeypatch)
+    monkeypatch.setenv(ZKTLS_BIN_ENV, fake_binary(tmp_path, FAKE_NOTARY))
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+        "--zktls",
+    )  # fmt: skip
+    async with _asgi(seen["app"]) as http:
+        answer = await http.post(
+            "/api/intent/funds-challenge", json={"intent_id": "i:000009"}
+        )
+    assert answer.json() == {"status": "unknown", "intent_id": "i:000009"}
+
+
+def test_cli_zktls_refuses_a_busy_notary_port(monkeypatch, capsys, dist, tmp_path):
+    _sandbox(monkeypatch)
+    monkeypatch.setenv(ZKTLS_BIN_ENV, fake_binary(tmp_path, FAKE_NOTARY))
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        busy = f"127.0.0.1:{held.getsockname()[1]}"
+        monkeypatch.setattr(console, "NOTARY_LISTEN", busy)
+        with pytest.raises(SystemExit) as stopped:
+            _run_cli(
+                monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+                "--zktls",
+            )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        f"zktls unavailable: notary: {busy} is already in use\n"
+    )

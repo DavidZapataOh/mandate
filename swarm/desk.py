@@ -15,7 +15,7 @@ from bank.rail import SANDBOX, BankRail, idempotency_key
 from bank.verifier import Verifier, action_commitment
 from evidence.cooperative import sign_state
 from evidence.seams import opaque_cooperative_ref, opaque_intent_ref
-from evidence.zktls import BANK_HOST, BankProofSetup, ZktlsError
+from evidence.zktls import BANK_HOST, BalanceProof, BankProofSetup, ZktlsError
 from gate.cava import ACTION_SALT_LEN
 from gate.certs import generate_keypair, public_key_of
 from gate.consent import (
@@ -312,32 +312,47 @@ class PaymentDesk:
         """
         with self._lock:
             found = self._intents.get(intent_id)
-            if self._zktls is None:
-                view = _denied_proof(intent_id, "zktls: not configured")
+            zktls = self._zktls
+            if zktls is None:
+                refusal: str | None = "zktls: not configured"
             elif found is None:
                 return {"status": "unknown", "intent_id": intent_id}
             else:
-                view = self._prove_funds(intent_id, found, self._zktls, presentation)
-            summary = "" if found is None else self._summary(found.intent)
-            self._line("intent", view, summary)
-            return view
-
-    def _prove_funds(
-        self,
-        intent_id: str,
-        found: _Intent,
-        zktls: BankProofSetup,
-        presentation: bytes,
-    ) -> dict[str, Any]:
-        if found.payment_id is not None:
-            return _denied_proof(intent_id, "intent: already used")
-        # A transfer may already carry the current reference in its certificate.
-        if found.unsettled is not None:
-            return _denied_proof(intent_id, "intent: unsettled")
+                refusal = _proof_refusal(found)
+            if refusal is not None or zktls is None or found is None:
+                view = _denied_proof(intent_id, refusal or "zktls: not configured")
+                return self._proof_line(found, view)
+            snapshot = (found.hash, found.funds_ref)
+        # The verifier child runs for up to its timeout; the desk stays open
+        # meanwhile and the intent is checked again before anything is kept.
         try:
             proof = zktls.verify(presentation, self._source, found.hash, self._clock())
         except ZktlsError as exc:
-            return _denied_proof(intent_id, str(exc))
+            with self._lock:
+                return self._proof_line(found, _denied_proof(intent_id, str(exc)))
+        with self._lock:
+            unchanged = (
+                self._intents.get(intent_id) is found
+                and _proof_refusal(found) is None
+                and (found.hash, found.funds_ref) == snapshot
+            )
+            view = (
+                self._keep_proof(intent_id, found, proof)
+                if unchanged
+                else _denied_proof(intent_id, "zktls: challenge changed")
+            )
+            return self._proof_line(found, view)
+
+    def _proof_line(
+        self, found: _Intent | None, view: dict[str, Any]
+    ) -> dict[str, Any]:
+        summary = "" if found is None else self._summary(found.intent)
+        self._line("intent", view, summary)
+        return view
+
+    def _keep_proof(
+        self, intent_id: str, found: _Intent, proof: BalanceProof
+    ) -> dict[str, Any]:
         if proof.available_balance < found.intent.amount_cents:
             return _denied_proof(intent_id, "zktls: insufficient funds")
         found.funds_ref = proof.evidence_ref
@@ -973,6 +988,15 @@ def _funds_view(bound: _Intent | None) -> dict[str, Any] | None:
 
 def _unavailable(intent_id: str, reason: str) -> dict[str, Any]:
     return {"status": "unavailable", "intent_id": intent_id, "reason": reason}
+
+
+def _proof_refusal(found: _Intent) -> str | None:
+    if found.payment_id is not None:
+        return "intent: already used"
+    # A transfer may already carry the current reference in its certificate.
+    if found.unsettled is not None:
+        return "intent: unsettled"
+    return None
 
 
 def _denied_proof(intent_id: str, reason: str) -> dict[str, Any]:

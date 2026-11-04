@@ -5,6 +5,7 @@ import itertools
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 from collections.abc import Callable
@@ -20,6 +21,14 @@ from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
 from bank.increase import IncreaseRail, sandbox_client
 from bank.rail import BankRail
 from bank.verifier import Verifier
+from evidence.notary import (
+    NOTARY_LISTEN,
+    Notary,
+    NotaryError,
+    new_notary_key,
+    start_notary,
+)
+from evidence.zktls import ZKTLS_BIN_ENV, BankProofSetup, find_verifier
 from gate.certs import generate_keypair, public_key_of
 from gate.policy import Intent
 from gate.shim import RawCall
@@ -289,6 +298,41 @@ def _sandbox(
     return rail
 
 
+def _port_free(listen: str) -> bool:
+    host, _, port = listen.rpartition(":")
+    with socket.socket() as probe:
+        try:
+            probe.bind((host, int(port)))
+        except OSError:
+            return False
+    return True
+
+
+def _zktls(
+    parser: argparse.ArgumentParser, rail: BankRail, source: str
+) -> tuple[Notary, BankProofSetup]:
+    if not isinstance(rail, IncreaseRail):
+        parser.exit(2, "zktls needs --rail sandbox\n")
+    binary = find_verifier(os.environ)
+    if binary is None:
+        parser.exit(
+            2, f"zktls unavailable: set {ZKTLS_BIN_ENV} to a built mandate-zktls\n"
+        )
+    # The child cannot report a refused bind, so a busy port is named here.
+    if not _port_free(NOTARY_LISTEN):
+        parser.exit(
+            2, f"zktls unavailable: notary: {NOTARY_LISTEN} is already in use\n"
+        )
+    try:
+        notary = start_notary(binary, new_notary_key(), NOTARY_LISTEN)
+    except NotaryError as exc:
+        parser.exit(2, f"zktls unavailable: {exc}\n")
+    setup = BankProofSetup(
+        binary, notary.address, notary.public_key, {source: rail.account_id(source)}
+    )
+    return notary, setup
+
+
 def cli(argv: list[str] | None = None) -> None:
     """Console entry point for `mandate-console`.
 
@@ -309,6 +353,14 @@ def cli(argv: list[str] | None = None) -> None:
         choices=("simulated", "sandbox"),
         default="simulated",
         help="bank the desk pays through; sandbox needs INCREASE_SANDBOX_API_KEY",
+    )
+    parser.add_argument(
+        "--zktls",
+        action="store_true",
+        help=(
+            "start Mandate's notary so the holder can prove the sandbox balance; "
+            "needs --rail sandbox and MANDATE_ZKTLS_BIN"
+        ),
     )
     parser.add_argument("--journal", type=Path, help="hook journal to follow")
     parser.add_argument("--record", type=Path, help="append every line as JSONL")
@@ -357,6 +409,21 @@ def cli(argv: list[str] | None = None) -> None:
         if args.rail == "simulated"
         else _sandbox(parser, bank_key, (args.source, "acme-991"))
     )
+    notary, zktls = _zktls(parser, rail, args.source) if args.zktls else (None, None)
+    try:
+        _serve(args, book, simulated, rail, zktls)
+    finally:
+        if notary is not None:
+            notary.stop()
+
+
+def _serve(
+    args: argparse.Namespace,
+    book: PayeeBook,
+    simulated: Bank,
+    rail: BankRail,
+    zktls: BankProofSetup | None,
+) -> None:
     intake, agent = _spark(os.environ, book)
     hub = EventHub()
     if args.record is not None:
@@ -371,6 +438,7 @@ def cli(argv: list[str] | None = None) -> None:
         clock=_now,
         nonces=_nonce,
         publish=hub.publish,
+        zktls=zktls,
     )
     runner = AttackRunner(
         desk, gate_key, hub, _now, counted_nonces("atk"), bank=simulated

@@ -66,6 +66,7 @@ from swarm.voice import (
 )
 
 _MAX_BODY = 4096
+_MAX_PROOF_BODY = 98_304
 _MAX_TEXT = 500
 _DEVICE_SIG_HEADER = "x-mandate-device-sig"
 _DRAFT_DOMAIN = "mandate/intent-draft/v1"
@@ -75,6 +76,7 @@ _INTENT_KEYS = frozenset({"amount_cents", "currency", "recipient", "reference"})
 _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
 _BAD_REQUEST = {"error": "bad request"}
 _APPROVAL = ("signature", "consent_key", "key_signature")
+_PROOF_FIELDS = ("intent_id", "presentation")
 _DEMO_BALANCE_CENTS = 100000
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
@@ -455,6 +457,33 @@ state is returned."""
             return _bad_request()
         return JSONResponse(desk.record_intent(intent, signature))
 
+    async def funds_challenge(request: Request) -> Response:
+        body = await _fields(request, "intent_id")
+        if body is None:
+            return _bad_request()
+        return JSONResponse(desk.funds_challenge(body["intent_id"]))
+
+    proving = {"proof": False}
+
+    async def funds_proof(request: Request) -> Response:
+        if not _same_site(request, "application/json"):
+            return _bad_request()
+        # One verifier child at a time, claimed before the body is buffered.
+        with _one_at_a_time(proving, "proof") as free:
+            if not free:
+                return JSONResponse({"error": "proof busy"}, status_code=409)
+            raw = await _capped_body(request, _MAX_PROOF_BODY)
+            body = None if raw is None else _parse_fields(raw, _PROOF_FIELDS)
+            presentation = _decode(body["presentation"]) if body else None
+            if body is None or presentation is None:
+                return _bad_request()
+            # The verifier runs for up to its timeout; keep the loop serving.
+            return JSONResponse(
+                await anyio.to_thread.run_sync(
+                    desk.record_funds_proof, body["intent_id"], presentation
+                )
+            )
+
     handoff = None if agent is None else AgentHandoff(agent, srv, desk)
 
     async def agent_start(request: Request) -> Response:
@@ -733,6 +762,8 @@ state is returned."""
         ("/api/receipt/{payment_id}", "GET", receipt),
         ("/api/voice", "POST", voice_text),
         ("/api/intent", "POST", sign_intent),
+        ("/api/intent/funds-challenge", "POST", funds_challenge),
+        ("/api/intent/funds-proof", "POST", funds_proof),
         ("/api/intent/draft", "POST", draft_text),
         ("/api/intent/voice", "POST", draft_voice),
         ("/api/agent/start", "POST", agent_start),
