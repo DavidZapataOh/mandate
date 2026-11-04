@@ -1,0 +1,36 @@
+:root {
+  color-scheme: dark;
+  scrollbar-color: var(--muted) var(--ink);
+  accent-color: var(--bone);
+}
+html,
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--bone);
+  caret-color: var(--bone);
+  font: 400 16px/1.5 "Inter", sans-serif;
+}
+::selection {
+  background: var(--bone);
+  color: var(--ink);
+}
+:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+code,
+pre,
+kbd,
+samp,
+input,
+textarea {
+  font-family: "JetBrains Mono", monospace;
+}

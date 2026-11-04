@@ -1,22 +1,13 @@
 :root {
-  --ink: #0b0d10;
-  --bone: #f6f4ee;
-  --verify: #1fd598;
-  --alert: #ff5c5c;
-  --muted: #8a8f98;
-  /* The booth plate's face, so the seal reads as painted on it. */
-  --booth-face: #eff2e7;
-  --rule: rgb(246 244 238 / 0.14);
-  --frame: rgb(246 244 238 / 0.42);
-  --wash: rgb(246 244 238 / 0.035);
-  --band: rgb(246 244 238 / 0.075);
+  /* Named so the build keeps the keyword instead of a zero-alpha black. */
+  --clear: transparent;
+  --frame: color-mix(in srgb, var(--bone) 42%, transparent);
+  --wash: color-mix(in srgb, var(--bone) 3.5%, transparent);
+  --band: color-mix(in srgb, var(--bone) 7.5%, transparent);
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --sans: "Inter", system-ui, sans-serif;
   --gutter: clamp(16px, 5vw, 72px);
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  color-scheme: dark;
-  scrollbar-color: var(--muted) var(--ink);
-  caret-color: var(--bone);
 }
 
 *,
@@ -25,27 +16,11 @@
   box-sizing: border-box;
 }
 
-html,
 body {
-  margin: 0;
-  background: var(--ink);
-  color: var(--bone);
-  font-family: var(--sans);
-}
-
-body {
+  /* The page was laid out on the face's own line height, not the brand default. */
+  line-height: normal;
   min-height: 100vh;
   overflow-x: hidden;
-}
-
-::selection {
-  background: var(--bone);
-  color: var(--ink);
-}
-
-:focus-visible {
-  outline: 2px solid var(--bone);
-  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
@@ -202,7 +177,7 @@ body:has(#verdict[data-verdict="verified"]) .seal .seam {
   min-height: 50px;
   padding: 6px var(--gutter) 6px calc(var(--gutter) - 3px);
   border-top: 1px solid var(--frame);
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--hairline);
   background: var(--band);
   font: 400 17px/1.2 var(--mono);
 }
@@ -226,15 +201,15 @@ body:has(#verdict[data-verdict="verified"]) .seal .seam {
   width: 13ch;
   min-width: 0;
   padding: 2px 0;
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--clear);
+  background: none;
   color: var(--bone);
   font: 700 18px/1.2 var(--mono);
   text-overflow: ellipsis;
 }
 
 #gate-key:hover {
-  border-color: var(--rule);
+  border-color: var(--hairline);
 }
 
 /* A key is compared character by character: editing shows all of it. */
@@ -296,7 +271,7 @@ main {
   padding: 0;
   border: 0;
   resize: none;
-  background: transparent;
+  background: none;
   color: var(--bone);
   font: 700 16px/24px var(--mono);
   letter-spacing: -0.02em;
@@ -316,7 +291,7 @@ main {
 }
 
 #verify {
-  background: transparent;
+  background: none;
   width: 102px;
   height: 36px;
   padding: 0;
@@ -663,7 +638,7 @@ main {
 }
 
 .actions button {
-  background: transparent;
+  background: none;
   height: 38px;
   padding: 0 8px;
   font-size: clamp(15px, 1.18vw, 17px);
@@ -671,12 +646,12 @@ main {
 }
 
 #present {
-  border-color: transparent;
-  background: rgb(138 143 152 / 0.6);
+  border-color: var(--clear);
+  background: color-mix(in srgb, var(--muted) 60%, transparent);
 }
 
 #present:hover {
-  background: rgb(138 143 152 / 0.8);
+  background: color-mix(in srgb, var(--muted) 80%, transparent);
 }
 
 .output {

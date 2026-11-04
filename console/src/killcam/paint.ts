@@ -1,3 +1,4 @@
+import { COLORS } from "virtual:brand";
 import { type SealPose } from "../booth/pose";
 import { paintSeal, sealFit } from "../booth/canvas-seal";
 import { cueFor } from "../scene/cues";
@@ -39,7 +40,7 @@ export function paintBooth(canvas: HTMLCanvasElement, line: ConsoleLine, pose: S
   const sctx = seal.getContext("2d");
   if (wctx === null || sctx === null) return;
   ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = "#0B0D10";
+  ctx.fillStyle = COLORS.ink;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (loaded !== null) {
     blit(wctx, still.ops, loaded);

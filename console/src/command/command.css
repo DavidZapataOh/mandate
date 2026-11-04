@@ -1,20 +1,10 @@
 :root {
-  --ink: #0b0d10;
-  --bone: #f6f4ee;
-  --verify: #1fd598;
-  --alert: #ff5c5c;
-  --muted: #8a8f98;
-  --hairline: 1px solid rgb(246 244 238 / 0.14);
-  /* A row or strip one step off the ground, still reading as Ink. */
-  --raised: #16181c;
-  /* The register's header band. Bone on it is 5.1:1. */
-  --band: #5c5e62;
+  /* Named so the build keeps the keyword instead of a zero-alpha black. */
+  --clear: transparent;
   --mono: "JetBrains Mono", ui-monospace, monospace;
   --sans: "Inter", system-ui, sans-serif;
   --gutter: clamp(16px, 2.92vw, 48px);
   --snap: cubic-bezier(0.16, 1, 0.3, 1);
-  color-scheme: dark;
-  scrollbar-color: var(--muted) var(--ink);
 }
 
 *,
@@ -29,20 +19,7 @@
 
 html,
 body {
-  margin: 0;
-  background: var(--ink);
-  color: var(--bone);
   font: 400 15px/1.4 var(--sans);
-}
-
-::selection {
-  background: var(--bone);
-  color: var(--ink);
-}
-
-:focus-visible {
-  outline: 2px solid var(--bone);
-  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {
@@ -129,7 +106,7 @@ p {
 #export-json {
   height: 44px;
   padding: 0 22px;
-  border: 1px solid rgb(246 244 238 / 0.55);
+  border: 1px solid color-mix(in srgb, var(--bone) 55%, transparent);
   border-radius: 4px;
   background: var(--ink);
   font: 700 16px/1 var(--sans);
@@ -209,7 +186,7 @@ main {
   grid-template-columns: repeat(9, minmax(0, 1fr));
   margin-top: 13px;
   padding-bottom: 2px;
-  border-bottom: var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 
 #tiles article {
@@ -221,7 +198,7 @@ main {
 }
 
 #tiles article + article {
-  border-left: var(--hairline);
+  border-left: 1px solid var(--hairline);
 }
 
 #tiles h3 {
@@ -268,7 +245,7 @@ main {
 /* A value that says the window has none reads as a sentence, a step below the numbers. */
 #tiles [data-none="true"] .value,
 #tiles [data-metric][data-none="true"] .value {
-  color: rgb(246 244 238 / 0.82);
+  color: color-mix(in srgb, var(--bone) 82%, transparent);
   font: 400 15px/1.3 var(--mono);
   letter-spacing: -0.02em;
   white-space: normal;
@@ -305,7 +282,7 @@ summary {
   align-items: center;
   gap: 6px;
   width: max-content;
-  color: rgb(246 244 238 / 0.82);
+  color: color-mix(in srgb, var(--bone) 82%, transparent);
   font: 400 15px/1.2 var(--sans);
   cursor: pointer;
   list-style: none;
@@ -336,7 +313,7 @@ details > .definition {
   left: 0;
   width: min(320px, 80vw);
   padding: 12px 14px;
-  border: 1px solid rgb(246 244 238 / 0.4);
+  border: 1px solid color-mix(in srgb, var(--bone) 40%, transparent);
   background: var(--ink);
   color: var(--bone);
   font: 400 14px/1.45 var(--sans);
@@ -433,7 +410,7 @@ button.drill:hover {
 
 /* More rows below: the foot fades until the register is scrolled to its end. */
 .register[data-at-end="false"] {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent);
+  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 48px), transparent);
 }
 
 .register table,
@@ -453,7 +430,7 @@ button.drill:hover {
   top: 0;
   height: 37px;
   padding: 0 10px;
-  background: var(--band);
+  background: var(--register-band);
   font: 700 12.5px/1.1 var(--sans);
   white-space: nowrap;
   text-align: left;
@@ -488,12 +465,12 @@ button.drill:hover {
 .register tr[data-control^="NIST"] + tr[data-control^="NIST"] > td:first-child,
 .register tr[data-control^="ISO"] + tr[data-control^="ISO"] > td:first-child,
 .register tr[data-control^="EU"] + tr[data-control^="EU"] > td:first-child {
-  color: transparent;
+  color: var(--clear);
 }
 
 .register tr[data-control^="NIST"] + tr[data-control^="ISO"],
 .register tr[data-control^="ISO"] + tr[data-control^="EU"] {
-  border-top: 1px solid rgb(246 244 238 / 0.4);
+  border-top: 1px solid color-mix(in srgb, var(--bone) 40%, transparent);
 }
 
 .register tbody th {
@@ -514,7 +491,7 @@ button.drill:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin-top: 13px;
-  border-top: var(--hairline);
+  border-top: 1px solid var(--hairline);
 }
 
 #attacks {
@@ -523,7 +500,7 @@ button.drill:hover {
 
 #layers {
   padding-left: 33px;
-  border-left: var(--hairline);
+  border-left: 1px solid var(--hairline);
 }
 
 #attacks,
@@ -601,7 +578,7 @@ button.drill:hover {
 /* Stopped at, and the attack kinds behind a layer, are words, not numbers. */
 #attacks tbody td:nth-child(6),
 #layers tbody td:nth-child(3) {
-  color: rgb(246 244 238 / 0.8);
+  color: color-mix(in srgb, var(--bone) 80%, transparent);
   font: 400 12.5px/1.2 var(--sans);
 }
 
@@ -619,7 +596,7 @@ button.drill:hover {
 }
 
 #attacks tfoot tr {
-  border-top: 1px solid rgb(246 244 238 / 0.4);
+  border-top: 1px solid color-mix(in srgb, var(--bone) 40%, transparent);
 }
 
 #attacks tfoot th,
@@ -650,7 +627,7 @@ button.drill:hover {
 #drill {
   margin-top: 40px;
   padding-top: 24px;
-  border-top: var(--hairline);
+  border-top: 1px solid var(--hairline);
   transition: opacity 180ms var(--snap);
 }
 
@@ -676,11 +653,11 @@ button.drill:hover {
   margin: 16px 0 0;
   padding: 0;
   list-style: none;
-  border-bottom: var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 
 #drill li {
-  border-top: var(--hairline);
+  border-top: 1px solid var(--hairline);
 }
 
 #drill li > button {
@@ -698,7 +675,7 @@ button.drill:hover {
 }
 
 #drill li > button:active {
-  background: rgb(246 244 238 / 0.06);
+  background: color-mix(in srgb, var(--bone) 6%, transparent);
 }
 
 #drill li:not(:has(button)) {
@@ -727,7 +704,7 @@ button.drill:hover {
   width: min(560px, 100%);
   padding: 24px;
   overflow-y: auto;
-  border-left: var(--hairline);
+  border-left: 1px solid var(--hairline);
   background: var(--ink);
   color: var(--bone);
   transition:
@@ -762,7 +739,7 @@ button.drill:hover {
 
 #forensic button {
   padding: 4px 8px;
-  border: var(--hairline);
+  border: 1px solid var(--hairline);
   background: var(--ink);
   font: 400 14px/1.2 var(--mono);
 }
@@ -906,7 +883,7 @@ button.drill:hover {
 
   #tiles article:nth-child(2n) {
     padding-left: 12px;
-    border-left: var(--hairline);
+    border-left: 1px solid var(--hairline);
   }
 
   #tiles article:nth-child(n) details > .definition {

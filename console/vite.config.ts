@@ -1,8 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { brandTokens } from "./tools/tokens.ts";
 
 export default defineConfig({
   base: "/console/",
+  plugins: [brandTokens(fileURLToPath(new URL("..", import.meta.url)))],
   build: {
     rolldownOptions: {
       input: {

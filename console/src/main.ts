@@ -1,3 +1,4 @@
+import "./shared/brand";
 import { httpDesk } from "./approval/api";
 import { mountApproval } from "./approval/panel";
 import { mountAttackPanel } from "./attacks/panel";

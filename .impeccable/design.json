@@ -405,7 +405,7 @@
     "motion": [
       {
         "name": "snap",
-        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "value": "120ms cubic-bezier(0.16, 1, 0.3, 1)",
         "purpose": "The seam snap: fast in, dead stop, no overshoot."
       },
       {
@@ -425,17 +425,17 @@
       },
       {
         "name": "walk",
-        "value": "96 native px/s, 120ms frames",
+        "value": "120ms frames, 96 native px/s",
         "purpose": "Requests walking to the booth; the world's own drift."
       },
       {
         "name": "ambient",
-        "value": "140-400ms frame cycles",
+        "value": "140ms to 400ms frame cycles",
         "purpose": "Office and clerks idling."
       },
       {
         "name": "proof-surfaces",
-        "value": "none",
+        "value": "0ms",
         "purpose": "Ledger, counters and top bar never animate."
       },
       {

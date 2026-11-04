@@ -8,6 +8,9 @@ colors:
   alert: "#FF5C5C"
   muted: "#8A8F98"
   booth-face: "#EFF2E7"
+  hairline: "rgb(246 244 238 / 0.14)"
+  raised: "#16181C"
+  register-band: "#5C5E62"
   world-0: "#070E10"
   world-1: "#081514"
   world-2: "#0E1D1B"
@@ -25,9 +28,6 @@ colors:
   world-14: "#5F5E2B"
   world-15: "#989C4E"
 typography:
-  wordmark:
-    fontFamily: "Mandate lockup (SVG)"
-    fontSize: "48px"
   counters:
     fontFamily: "JetBrains Mono, ui-monospace, monospace"
     fontSize: "20px"
@@ -162,6 +162,9 @@ The UI is two neutrals and two signals. The world below it is a separate, closed
 - **Bone** (`bone`): primary text, the pressed button's rule, focus rings, selection and the 14% hairline (`rgb(246 244 238 / 0.14)`).
 - **Muted Steel** (`muted`): secondary text. Used for row times, unstruck hashes, unpressed mode buttons, held and noted verdicts, separators and the scrollbar thumb. It is 6:1 on Ink.
 - **Booth Face** (`booth-face`): sampled from the booth plate, so the seal reads as painted on the booth rather than placed over it.
+- **Hairline** (`hairline`): Bone at 14%, every one-pixel rule and frame.
+- **Raised** (`raised`): one step off Ink, for Command's provenance strip and raised rows. It still reads as Ink.
+- **Register Band** (`register-band`): the header band of Command's register. Bone on it is 5.1:1.
 
 ### World palette
 - **World 0–15** (`world-0` … `world-15`): the only colours a plate or frame may contain. Every generated raster is snapped to them by block majority before it ships. They are near-black greens through pale mint, two olive-golds for the bank desk, and a warm off-white that the booth face shares.

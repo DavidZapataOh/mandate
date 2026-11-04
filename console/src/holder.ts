@@ -1,8 +1,5 @@
+import "./shared/brand";
 import "./intent/holder.css";
-import "@fontsource/jetbrains-mono/latin-600.css";
-import "@fontsource/jetbrains-mono/latin-400.css";
-import "@fontsource/jetbrains-mono/latin-500.css";
-import "@fontsource/jetbrains-mono/latin-700.css";
 import { holderKey, indexedDbStore, pairHolder } from "./holder/keys";
 import { httpIntentApi } from "./intent/api";
 import { toBase64 } from "./intent/bytes";

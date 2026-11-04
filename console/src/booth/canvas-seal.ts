@@ -1,10 +1,7 @@
+import { COLORS } from "virtual:brand";
 import type { SealInput } from "../scene/cues";
 import type { SealEngine } from "./booth";
 import { type SealPose, sealPose } from "./pose";
-
-const INK = "#0B0D10";
-const VERIFY = "#1FD598";
-const ALERT = "#FF5C5C";
 
 const TOP = [32, 32, 224, 32, 224, 128, 128, 128, 128, 108, 32, 108] as const;
 const BOTTOM = [32, 224, 224, 224, 224, 148, 128, 148, 128, 128, 32, 128] as const;
@@ -40,11 +37,11 @@ function poly(ctx: CanvasRenderingContext2D, pts: readonly number[], dx: number,
 /** Draw one seal pose into a 256 canvas. */
 export function paintSeal(ctx: CanvasRenderingContext2D, pose: SealPose): void {
   ctx.clearRect(0, 0, 256, 256);
-  ctx.fillStyle = INK;
+  ctx.fillStyle = COLORS.ink;
   poly(ctx, TOP, pose.shakeX, -pose.gap);
   poly(ctx, BOTTOM, pose.shakeX, pose.gap);
   if (pose.seam === "none") return;
-  ctx.fillStyle = pose.seam === "verify" ? VERIFY : ALERT;
+  ctx.fillStyle = pose.seam === "verify" ? COLORS.verify : COLORS.alert;
   ctx.fillRect(32, 118, 192, 20);
 }
 
