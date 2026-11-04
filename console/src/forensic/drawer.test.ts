@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LineStore } from "../store/store";
-import { ATTACK, CONFIRM, HOSTILE } from "../wire/__fixtures__/lines";
+import { ATTACK, CONFIRM, HOSTILE, SANDBOX_CONFIRM } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { closeForensic, forensicFetcher, openForensic, renderForensic } from "./drawer";
 
@@ -30,6 +30,7 @@ describe("renderForensic", () => {
       "Holder consent",
       "Registry proof",
       "Anchor",
+      "Bank transfer",
       "Attribution",
       "Subject",
     ]);
@@ -56,6 +57,7 @@ describe("renderForensic", () => {
     expect(block("Holder consent")).toBe("No consent presented");
     expect(block("Registry proof")).toBe("Not in the registry");
     expect(block("Attribution")).toBe("No model call");
+    expect(block("Bank transfer")).toBe("No money moved");
   });
 
   it("names the layer when nothing reached the gate, as text", () => {
@@ -114,5 +116,16 @@ describe("closeForensic", () => {
     closeForensic(aside);
     expect(aside.hidden).toBe(true);
     expect(aside.childElementCount).toBe(0);
+  });
+
+  it("names the rail and the bank's own transfer id", () => {
+    renderForensic(aside, parseLine(SANDBOX_CONFIRM));
+    expect(JSON.parse(block("Bank transfer"))).toEqual({
+      rail: "sandbox",
+      provider: "increase",
+      transfer_id: "sandbox_account_transfer_MANDATE_FIXTURE",
+      status: "complete",
+      idempotency_key: "mandate-cert-00000000000000000000000000000002",
+    });
   });
 });

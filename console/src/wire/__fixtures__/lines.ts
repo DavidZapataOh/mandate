@@ -61,3 +61,22 @@ export const HOSTILE_QUOTE = patch(
 /** The certified Nimbus release, byte for byte the Python golden deploy line. */
 export const DEPLOY =
   '{"v":3,"seq":9,"source":"deploy","event":{"v":1,"id":"evt:dep00000000000000000000000000009","ts":1800001000,"mode":"ENFORCE","verdict":"MET","action":"1be9ccd395f38aeb073d15560b4bdc8bc07326b8457578c8d5db799b92ccaa01","policy":"nimbus","cert":"dep00000000000000000000000000009","reason":"rule release-api-v2 satisfied","lat_us":18.0},"meta":null,"subject":{"step":"release","agent":"nimbus-deploy","summary":"MANDATE_FIXTURE Deploy api-v2 to prod-eu","layer":"gate","reason":"ok: released","blocked":false},"forensic":{"cava":{"category":"deploy","evidence_refs":[],"executable":"nimbus","freshness":{"nonce":"dep00000000000000000000000000009","timestamp":1800001000},"operation":"deploy","reversible":false,"runtime":"muse-code","targets":["artifact:api-v2","env:prod-eu"],"version":"cava/1"},"action_hash":"1be9ccd395f38aeb073d15560b4bdc8bc07326b8457578c8d5db799b92ccaa01","policy":{"policy_id":"nimbus","rule_id":"release-api-v2"},"cert_claims":{"action_hash":"1be9ccd395f38aeb073d15560b4bdc8bc07326b8457578c8d5db799b92ccaa01","policy_id":"nimbus","policy_version":1,"verdict":"MET","freshness_nonce":"dep00000000000000000000000000009","scope":"nimbus:prod-eu","reasoning_commitment":"0000000000000000000000000000000000000000000000000000000000000000","evidence_refs":[],"revocation_index":0},"consent":null,"registry":null,"anchor":null,"bank":null}}';
+
+/** A desk payment the Increase sandbox moved (shape of a real sandbox confirm). */
+export const SANDBOX_CONFIRM = patch(
+  CONFIRM,
+  {
+    seq: 10,
+    forensic: {
+      ...JSON.parse(CONFIRM).forensic,
+      bank: {
+        rail: "sandbox",
+        provider: "increase",
+        transfer_id: "sandbox_account_transfer_MANDATE_FIXTURE",
+        status: "complete",
+        idempotency_key: "mandate-cert-00000000000000000000000000000002",
+      },
+    },
+  },
+  { payment_id: "sandbox_account_transfer_MANDATE_FIXTURE" },
+);

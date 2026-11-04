@@ -107,7 +107,8 @@ button {
 #stream-state,
 .bar [role="group"] button,
 #attacks-toggle,
-.origin {
+.origin,
+.rail {
   margin: 0;
   padding: 4px 8px;
   border: var(--hairline);
@@ -371,7 +372,8 @@ main {
   background: rgb(246 244 238 / 0.06);
 }
 
-#ledger .origin {
+#ledger .origin,
+#ledger .rail {
   margin-right: 12px;
   padding: 0 6px;
   font-size: 14px;
@@ -1184,7 +1186,7 @@ button.scenario .badge {
   }
 
   /* Two lines per row: time, hash and verdict first; the actor and its sentence under them.
-     The origin stays in the row's spoken name; the actor already reads template or model. */
+     The origin and the rail stay in the row's spoken name; the actor already reads template or model. */
   #ledger button {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr) max-content max-content max-content;
@@ -1192,7 +1194,8 @@ button.scenario .badge {
     padding-block: 4px;
   }
 
-  #ledger .origin {
+  #ledger .origin,
+  #ledger .rail {
     display: none;
   }
 

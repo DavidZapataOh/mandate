@@ -1,4 +1,5 @@
 import type { LineStore } from "../store/store";
+import { RAIL_LABEL, railOf } from "../wire/rail";
 import type { ConsoleLine } from "../wire/types";
 import { cellsOf, forensicText, gameText, type Mode } from "./narrate";
 
@@ -39,6 +40,12 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
     const origin = line.source === "deploy" ? "SCENARIO" : line.subject.origin.toUpperCase();
     button.append(cell("span", "origin", origin));
     name.push(origin);
+  }
+  const rail = railOf(line);
+  if (rail !== null) {
+    button.dataset.rail = rail;
+    button.append(cell("span", "rail", RAIL_LABEL[rail]), " ");
+    name.push(RAIL_LABEL[rail]);
   }
   // Spoken name carries its own separators so it never depends on stylesheet spacing.
   name.push(cells.time, cells.actor, sentence, `hash ${cells.hash}${cells.struck ? " struck" : ""}`, cells.verdict);

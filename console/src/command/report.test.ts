@@ -35,6 +35,7 @@ describe("reportMarkdown", () => {
     for (const want of [
       "| Actions decided | 7 |",
       "| Moved by attacks | 0.00 |",
+      "| Payments by rail | SIMULATED 2 |",
       "| Holder consent on certified payments | 1 of 2 · 50.0% |",
       "| Gate decision time | p50 61µs · p95 90µs (5 samples) |",
       "| Decisions naming their model call | 4 of 7 · 57.1% |",
@@ -184,7 +185,11 @@ describe("metricValue", () => {
   it("renders each tile", () => {
     const p = computePosture(window);
     expect(TILES.map((k) => metricValue(k, p))).toEqual([
-      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%",
+      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2",
     ]);
+  });
+
+  it("says so when no verified payment names a rail", () => {
+    expect(metricValue("rails", computePosture([]))).toBe("no verified payments in this window");
   });
 });

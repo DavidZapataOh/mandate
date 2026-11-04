@@ -1,5 +1,5 @@
 // Test data only; the bundle gate fails the build if this marker ships.
-import { ATTACK, CONFIRM, DEPLOY, patch } from "../../wire/__fixtures__/lines";
+import { ATTACK, CONFIRM, DEPLOY, patch, SANDBOX_CONFIRM } from "../../wire/__fixtures__/lines";
 import { parseLine } from "../../wire/parse";
 import type { Attribution, ConsoleLine } from "../../wire/types";
 
@@ -83,6 +83,16 @@ export const HQ: readonly string[] = [
 
 /** A stale migration the gate let through. */
 export const DEPLOY_BREACH = step(17, "stale_migration", "gate", "ok: released", false);
+
+/** A payment the sandbox bank moved, verified. */
+export const SANDBOX_PAY = patch(SANDBOX_CONFIRM, { seq: 18 });
+
+/** A sandbox payment the desk refused: no transfer, no bank record. */
+export const SANDBOX_REFUSED = patch(
+  CONFIRM,
+  { seq: 19, forensic: { ...confirm.forensic, bank: null } },
+  { status: "denied", payment_id: null, reason: "denied: insufficient funds" },
+);
 
 export function lines(texts: readonly string[]): ConsoleLine[] {
   return texts.map(parseLine);

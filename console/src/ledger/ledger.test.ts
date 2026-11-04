@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { LineStore } from "../store/store";
-import { ATTACK, CONFIRM, HOSTILE_QUOTE, patch } from "../wire/__fixtures__/lines";
+import { ATTACK, CONFIRM, HOSTILE_QUOTE, patch, SANDBOX_CONFIRM } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { LEDGER_ROWS, mountLedger } from "./ledger";
 
@@ -76,5 +76,17 @@ describe("mountLedger", () => {
     const buttons = list.querySelectorAll("button");
     expect(buttons).toHaveLength(LEDGER_ROWS);
     expect(buttons[0]!.dataset.seq).toBe(String(LEDGER_ROWS + 5));
+  });
+
+  it("labels every payment with the rail that moved it", () => {
+    mountLedger(list, store, () => {});
+    for (const text of [CONFIRM, ATTACK, SANDBOX_CONFIRM]) store.add(parseLine(text));
+    const buttons = [...list.querySelectorAll("button")];
+    expect(buttons.map((b) => b.querySelector(".rail")?.textContent ?? null)).toEqual([
+      "SANDBOX",
+      null,
+      "SIMULATED",
+    ]);
+    expect(buttons.map((b) => b.dataset["rail"] ?? null)).toEqual(["sandbox", null, "simulated"]);
   });
 });

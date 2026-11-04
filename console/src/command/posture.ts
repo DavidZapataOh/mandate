@@ -1,5 +1,8 @@
 import { cueFor, type Outcome } from "../scene/cues";
+import { railOf } from "../wire/rail";
 import type { ConsoleLine } from "../wire/types";
+
+export { railOf };
 
 /** Attack kinds in display order; kinds outside this list follow in order of first appearance. */
 export const ATTACK_KINDS: readonly string[] = [
@@ -60,10 +63,12 @@ export interface Posture {
     readonly attributed: Count;
     readonly byProvider: readonly { readonly provider: string; readonly count: number }[];
   };
+  /** Verified payments that carry a bank record, grouped by the rail named there. */
+  readonly rails: readonly { readonly rail: string; readonly count: number; readonly seqs: readonly number[] }[];
 }
 
 export type MetricKey =
-  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers";
+  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails";
 
 export const LABELS: Readonly<Record<MetricKey, string>> = {
   decided: "Actions decided",
@@ -77,6 +82,7 @@ export const LABELS: Readonly<Record<MetricKey, string>> = {
   attribution: "Decisions naming their model call",
   attacks: "Attacks by kind",
   layers: "Denials by layer",
+  rails: "Payments by rail",
 };
 
 export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
@@ -102,6 +108,8 @@ export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
     "One row per attack kind; attack lines only (Nimbus scenario steps count in the posture and the layers, not here). Attempts: attack lines of that kind. Blocked: the layer returned its pinned denial and zero cents moved. Stopped at: the layer that refused it.",
   layers:
     "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
+  rails:
+    "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED).",
 };
 
 const ATTACK_LAYERS: Readonly<Record<string, string>> = {
@@ -145,6 +153,12 @@ export function layerOf(line: ConsoleLine): string {
       return unreachable;
     }
   }
+}
+
+/** "SANDBOX 1 · SIMULATED 2", or a plain statement when no verified payment names a rail. */
+export function railsText(p: Posture): string {
+  if (p.rails.length === 0) return "no verified payments in this window";
+  return p.rails.map((r) => `${r.rail.toUpperCase()} ${r.count}`).join(" · ");
 }
 
 /** Nearest-rank percentile of an ascending list; null when it is empty. */
@@ -226,6 +240,7 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
   const withConsent = bucket();
   const attributed = bucket();
   const providers = new Map<string, number>();
+  const rails = new Map<string, number[]>();
   const latencies: { us: number; seq: number }[] = [];
   const attacks = new Map<string, AttackAcc>(
     ATTACK_KINDS.map((kind) => [kind, { kind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] }]),
@@ -245,7 +260,11 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
         providers.set(line.meta.provider, (providers.get(line.meta.provider) ?? 0) + 1);
       }
     }
-    if (outcome === "pass") push(verified, line.seq);
+    if (outcome === "pass") {
+      push(verified, line.seq);
+      const rail = railOf(line);
+      if (rail !== null) rails.set(rail, [...(rails.get(rail) ?? []), line.seq]);
+    }
     if (outcome === "deny") push(denied, line.seq);
     if (outcome === "breach") push(line.source === "attack" ? breaches : stepsRan, line.seq);
 
@@ -311,5 +330,8 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([provider, count]) => ({ provider, count })),
     },
+    rails: [...rails.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([rail, seqs]) => ({ rail, count: seqs.length, seqs })),
   };
 }

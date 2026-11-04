@@ -30,6 +30,7 @@ function blocks(line: ConsoleLine): [string, string][] {
     ["Holder consent", f.consent ? show(f.consent) : "No consent presented"],
     ["Registry proof", f.registry ? show(f.registry) : "Not in the registry"],
     ["Anchor", f.anchor ?? "No anchor"],
+    ["Bank transfer", f.bank ? show(f.bank) : "No money moved"],
     ...tail,
   ];
 }

@@ -19,6 +19,7 @@ describe("evidenceText", () => {
     ["attacks", "3 of 3 attacks blocked · 0.00 moved"],
     ["consent", "certified payments with holder consent: 1 of 2 · 50.0%"],
     ["attribution", "decisions naming their model call: 4 of 7 · 57.1%"],
+    ["rails", "verified payments by rail: SIMULATED 2"],
     ["registry", "registry root 70566024e09c9a9e over 1 entry (server)"],
     ["policies", "policies served: desk v1, payments v1, nimbus v1"],
   ])("%s reads %s", (key, want) => {

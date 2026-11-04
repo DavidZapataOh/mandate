@@ -59,8 +59,9 @@ describe("mountCommand", () => {
     expect(text('[data-metric="decided"] .value')).toBe("7");
     expect(text('[data-metric="moved"] .value')).toBe("0.00");
     expect(text('[data-metric="consent"] .value')).toBe("1 of 2 · 50.0%");
+    expect(text('[data-metric="rails"] .value')).toBe("SIMULATED 2");
     expect(text('[data-metric="latency"] .value')).toBe("p50 61µs · p95 90µs (5 samples)");
-    for (const key of ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution"] as const) {
+    for (const key of ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails"] as const) {
       expect(text(`[data-metric="${key}"] .definition`)).toBe(DEFINITIONS[key]);
     }
   });

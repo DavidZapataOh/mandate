@@ -1,10 +1,10 @@
-import { counted, formatCents, formatShare, type Posture } from "./posture";
+import { counted, formatCents, formatShare, type Posture, railsText } from "./posture";
 import type { Provenance } from "./provenance";
 
 export type Framework = "NIST AI RMF 1.0" | "ISO/IEC 42001:2023" | "EU AI Act";
 
 export type EvidenceKey =
-  | "policies" | "consent" | "decided" | "attacks" | "denied" | "breaches" | "registry" | "verified" | "attribution";
+  | "policies" | "consent" | "decided" | "attacks" | "denied" | "breaches" | "registry" | "verified" | "attribution" | "rails";
 
 export interface Control {
   readonly framework: Framework;
@@ -180,6 +180,8 @@ export function evidenceText(key: EvidenceKey, p: Posture, prov: Provenance): st
       return `certified payments with holder consent: ${formatShare(p.consent.withConsent.count, p.consent.certified.count)}`;
     case "attribution":
       return `decisions naming their model call: ${formatShare(p.attribution.attributed.count, p.decided.count)}`;
+    case "rails":
+      return `verified payments by rail: ${railsText(p)}`;
     case "registry":
       return prov.registry === null
         ? "no registry root in this window"

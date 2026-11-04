@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attackLine, BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
+import { attackLine, BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, SANDBOX_PAY, SANDBOX_REFUSED, WINDOW } from "./__fixtures__/window";
 import { computePosture, counted, DEFINITIONS, formatCents, formatShare, LAYERS, layerOf, nearestRank } from "./posture";
 
 const none = { count: 0, seqs: [] };
@@ -43,7 +43,17 @@ describe("computePosture", () => {
           { provider: "muse-code", count: 2 },
         ],
       },
+      rails: [{ rail: "simulated", count: 2, seqs: [3, 9] }],
     });
+  });
+
+  it("groups verified payments by the rail that moved them", () => {
+    const p = computePosture(lines([...WINDOW, SANDBOX_PAY, SANDBOX_REFUSED]));
+    expect(p.rails).toEqual([
+      { rail: "sandbox", count: 1, seqs: [18] },
+      { rail: "simulated", count: 2, seqs: [3, 9] },
+    ]);
+    expect(computePosture([]).rails).toEqual([]);
   });
 
   it("an empty window has no window bounds, no samples and no shares", () => {

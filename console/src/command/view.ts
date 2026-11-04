@@ -58,6 +58,7 @@ function metricSeqs(key: Tile, p: Posture): readonly number[] {
     case "consent": return p.consent.certified.seqs;
     case "attribution": return p.decided.seqs;
     case "latency": return p.latency.seqs;
+    case "rails": return p.rails.flatMap((r) => r.seqs).sort((a, b) => a - b);
   }
 }
 
