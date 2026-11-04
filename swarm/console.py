@@ -29,7 +29,7 @@ from opentimestamps.calendar import RemoteCalendar
 
 from bank.api import Bank
 from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
-from bank.events import BankEvents
+from bank.events import BankEvent, BankEvents
 from bank.increase import IncreaseRail, sandbox_client
 from bank.rail import SANDBOX, BankRail
 from bank.verifier import Verifier
@@ -362,17 +362,29 @@ def _sandbox(
     key: str,
     names: tuple[str, ...],
     two_step: bool = False,
+    ach: bool = False,
 ) -> tuple[IncreaseRail, Increase]:
     try:
         client = sandbox_client(key)
-        rail = IncreaseRail.connect(client, two_step=two_step)
+        rail = IncreaseRail.connect(client, two_step=two_step, ach=ach)
     except (AuthenticationError, PermissionDeniedError):
         parser.exit(2, "bank rail unavailable: the sandbox refused the key\n")
     except IncreaseError:
         parser.exit(2, "bank rail unavailable: the sandbox is unreachable\n")
     if not rail.holds(names):
         parser.exit(2, "bank accounts missing: run mandate-bank-setup\n")
+    if ach and not all(_pays_by_ach(rail, name) for name in names[1:]):
+        parser.exit(2, "bank accounts missing: run mandate-bank-setup --ach\n")
     return rail, client
+
+
+def _pays_by_ach(rail: IncreaseRail, name: str) -> bool:
+    """Tell whether the rail knows where an ACH transfer to a payee goes."""
+    try:
+        rail.destination(name)
+    except ValueError:
+        return False
+    return True
 
 
 @contextmanager
@@ -521,7 +533,11 @@ def anchor_round(anchors: PublicAnchors) -> None:
 
 
 def bank_events_every(
-    feed: BankEvents, hub: EventHub, every_s: float, stop: threading.Event
+    feed: BankEvents,
+    hub: EventHub,
+    every_s: float,
+    stop: threading.Event,
+    desk: PaymentDesk | None = None,
 ) -> threading.Thread:
     """Publish the bank's new events every ``every_s`` seconds until stopped.
 
@@ -533,6 +549,7 @@ def bank_events_every(
         hub: Hub that receives the bank lines.
         every_s: Seconds between rounds; the first runs after one interval.
         stop: Set to end the loop.
+        desk: Desk whose ACH payments the events update, if any.
 
     Returns:
         The started daemon thread.
@@ -540,25 +557,52 @@ def bank_events_every(
 
     def loop() -> None:
         while not stop.wait(every_s):
-            bank_events_round(feed, hub)
+            bank_events_round(feed, hub, desk)
 
     thread = threading.Thread(target=loop, name="bank-events", daemon=True)
     thread.start()
     return thread
 
 
-def bank_events_round(feed: BankEvents, hub: EventHub) -> None:
+# The bank's event for any change to an ACH transfer; it names only the id.
+_ACH_UPDATED = "ach_transfer.updated"
+
+
+def bank_events_round(
+    feed: BankEvents, hub: EventHub, desk: PaymentDesk | None = None
+) -> None:
     """Publish one round of the bank's new events; a failure is logged by type.
+
+    Events carry only ids, so each ACH transfer named by an update is read
+    once after the round, and only when the desk tracks it. The reconcile
+    round reads every tracked transfer anyway, so a read that fails here is
+    only logged.
 
     Args:
         feed: The bank's event feed.
         hub: Hub that receives the bank lines.
+        desk: Desk whose ACH payments the events update, if any.
     """
+    updated: dict[str, None] = {}
+
+    def publish(event: BankEvent) -> None:
+        hub.publish(bank_line(event))
+        if event.category == _ACH_UPDATED:
+            updated[event.object_id] = None
+
     try:
-        feed.poll(lambda event: hub.publish(bank_line(event)))
+        feed.poll(publish)
     except Exception as exc:
         # Only the type: a message could carry the bank's text.
         _log.error("bank events failed (%s)", type(exc).__name__)
+    if desk is None:
+        return
+    for payment_id in updated:
+        try:
+            desk.track_ach(payment_id)
+        except Exception as exc:
+            # Only the type: a message could carry the bank's text.
+            _log.error("ach lifecycle failed (%s)", type(exc).__name__)
 
 
 def _port_free(listen: str) -> bool:
@@ -612,7 +656,9 @@ def cli(argv: list[str] | None = None) -> None:
     OpenTimestamps calendars at start and every ``ANCHOR_EVERY_S``. On the
     sandbox rail the console also shows the bank's own events every
     ``BANK_EVENTS_EVERY_S``. ``--two-step`` (needs ``--rail sandbox``) holds
-    each quote at the bank until the certified confirm approves it. Template attacks
+    each quote at the bank until the certified confirm approves it. With
+    ``--ach`` (needs ``--rail sandbox``) the desk pays by ACH transfer, and
+    bank events of its transfers update their lifecycle. Template attacks
     always run on a simulated bank of their own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
@@ -641,6 +687,15 @@ def cli(argv: list[str] | None = None) -> None:
         help=(
             "hold each quote at the bank as a transfer awaiting approval; "
             "the certified confirm approves it; needs --rail sandbox"
+        ),
+    )
+    parser.add_argument(
+        "--ach",
+        action="store_true",
+        help=(
+            "pay each certified payment as an ACH transfer to the payee's "
+            "account number; the bank settles or returns it later; "
+            "needs --rail sandbox"
         ),
     )
     parser.add_argument(
@@ -707,6 +762,10 @@ def cli(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.two_step and args.rail != "sandbox":
         parser.exit(2, "--two-step needs --rail sandbox\n")
+    if args.ach and args.rail != "sandbox":
+        parser.exit(2, "--ach needs --rail sandbox\n")
+    if args.ach and args.two_step:
+        parser.exit(2, "--ach and --two-step are exclusive\n")
     bank_key = take_bank_key(os.environ)
     # The holder proves in its own process; the value is never read here.
     take_holder_key(os.environ)
@@ -742,7 +801,11 @@ def cli(argv: list[str] | None = None) -> None:
                 )
         else:
             rail, client = _sandbox(
-                parser, sandbox_key, (args.source, "acme-991"), args.two_step
+                parser,
+                sandbox_key,
+                (args.source, "acme-991"),
+                args.two_step,
+                args.ach,
             )
         notary, zktls = (
             _zktls(parser, rail, args.source) if args.zktls else (None, None)
@@ -847,7 +910,7 @@ def _serve(
         held.callback(_end_loop, stop, loop)
     if feed is not None:
         stop_feed = threading.Event()
-        feeding = bank_events_every(feed, hub, BANK_EVENTS_EVERY_S, stop_feed)
+        feeding = bank_events_every(feed, hub, BANK_EVENTS_EVERY_S, stop_feed, desk)
         # Unwound before the store closes, like the reconcile loop.
         held.callback(_end_loop, stop_feed, feeding)
     if anchors is not None:

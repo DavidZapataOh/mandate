@@ -30,6 +30,12 @@ function deskText(line: Extract<ConsoleLine, { source: "desk" }>): string {
       ? `Holder approved ${s.quote_id}`
       : `Approval of ${s.quote_id} refused: ${reason}`;
   }
+  if (s.step === "settle") {
+    // An observation of the bank, after the receipt was sealed: it never reads as a payment of its own.
+    return s.status === "returned"
+      ? `Returned by the bank: ${s.summary} · ${s.payment_id} · ${reason}`
+      : `Settled at the bank: ${s.summary} · ${s.payment_id}`;
+  }
   if (s.status === "confirmed") {
     const took = line.event ? ` in ${formatLatency(line.event.lat_us)}` : "";
     return `Paid ✓ ${s.summary}${took}`;

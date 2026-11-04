@@ -1,0 +1,80 @@
+{
+  "body": {
+    "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+    "account_number": "7427948952",
+    "acknowledgement": {
+      "acknowledged_at": "2026-11-04T18:40:59Z"
+    },
+    "addenda": {
+      "category": "other",
+      "freeform": null,
+      "payment_order_remittance_advice": null
+    },
+    "addendum": null,
+    "amount": 100,
+    "approval": null,
+    "cancellation": null,
+    "company_descriptive_date": null,
+    "company_discretionary_data": null,
+    "company_entry_description": null,
+    "company_id": "7693188739",
+    "company_name": null,
+    "created_at": "2026-11-04T18:40:57Z",
+    "created_by": {
+      "api_key": {
+        "description": "Mandate bank verifier"
+      },
+      "category": "api_key"
+    },
+    "currency": "USD",
+    "destination_account_holder": "unknown",
+    "effective_date": null,
+    "external_account_id": null,
+    "funding": "checking",
+    "id": "sandbox_ach_transfer_bi5g1gy0f972s0y3uiap",
+    "idempotency_key": "mandate-capture-d41ae6bdca64726b",
+    "inbound_funds_hold": null,
+    "individual_id": null,
+    "individual_name": "capture-payee",
+    "network": "ach",
+    "notification_of_change": null,
+    "notifications_of_change": [],
+    "path": "/transfers/sandbox_ach_transfer_bi5g1gy0f972s0y3uiap",
+    "pending_transaction_id": "sandbox_pending_transaction_6tlyuicwp095ps7vzl02",
+    "preferred_effective_date": {
+      "date": null,
+      "settlement_schedule": "same_day"
+    },
+    "return": {
+      "addenda_information": null,
+      "class_name": "ach_transfer_return",
+      "created_at": "2026-11-04T18:41:00Z",
+      "raw_return_reason_code": "R01",
+      "return_reason_code": "insufficient_fund",
+      "trace_number": "907522460907726",
+      "transaction_id": "sandbox_transaction_ax5r0x7dtw15f6oj92xl",
+      "transfer_id": "sandbox_ach_transfer_bi5g1gy0f972s0y3uiap"
+    },
+    "routing_number": "123308582",
+    "settlement": {
+      "settled_at": "2026-11-04T18:40:59Z"
+    },
+    "standard_entry_class_code": "corporate_credit_or_debit",
+    "statement_descriptor": "Mandate capture mandate-capture-d41ae6bdca64726b",
+    "status": "returned",
+    "submission": {
+      "administrative_returns_expected_by": "2026-11-06T11:00:00Z",
+      "effective_date": "2026-11-04",
+      "expected_funds_settlement_at": "2026-11-04T22:00:00Z",
+      "expected_settlement_schedule": "same_day",
+      "submitted_at": "2026-11-04T18:40:59Z",
+      "trace_number": "182488793795869"
+    },
+    "transaction_id": "sandbox_transaction_zbdfomyj1x7tjegmhg7n",
+    "transfer_session_id": null,
+    "type": "ach_transfer",
+    "unique_identifier": "mandate-capture-d41ae6bdca64726b"
+  },
+  "replayed": null,
+  "status": 200
+}

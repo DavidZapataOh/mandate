@@ -183,15 +183,16 @@ def test_retries_that_all_lose_their_answer_end_in_the_lookup():
     ],
 )
 def test_the_lookup_after_no_answer_never_guesses(found, reason):
-    rail, cassette = _rail(LOST, found)
+    rail, cassette = _rail(LOST, found, _listed())
     with pytest.raises(RailError) as raised:
         rail.execute(REQUEST, "h1", KEY)
     assert str(raised.value) == reason
-    assert len(cassette.requests) == 2
+    assert [r.method for r in cassette.requests][:2] == ["POST", "GET"]
+    assert [r.method for r in cassette.requests].count("POST") == 1
 
 
 def test_reconcile_finds_the_transfer_by_its_key_or_nothing():
-    rail, cassette = _rail(_listed(_transfer()), _listed())
+    rail, cassette = _rail(_listed(_transfer()), _listed(), _listed())
     found = rail.reconcile(REQUEST, "h1", KEY)
     assert found is not None
     assert (found.payment_id, found.action_hash, found.idempotency_key) == (
@@ -202,7 +203,8 @@ def test_reconcile_finds_the_transfer_by_its_key_or_nothing():
     assert rail.reconcile(REQUEST, "h1", KEY) is None
     assert [dict(r.url.params) for r in cassette.requests] == [
         {"idempotency_key": KEY}
-    ] * 2
+    ] * 3
+    assert cassette.requests[2].url.path == "/ach_transfers"
 
 
 def test_bank_time_is_bounded():
@@ -470,10 +472,13 @@ def test_an_answer_that_is_not_a_transfer_is_settled_by_the_lookup(answer):
 
 @pytest.mark.parametrize("answer", NOT_TRANSFERS)
 def test_an_answer_that_is_not_a_transfer_with_nothing_found_is_unknown(answer):
-    rail, cassette = _rail(answer, _listed())
+    rail, cassette = _rail(answer, _listed(), _listed())
     with pytest.raises(RailError, match="^bank: outcome unknown$"):
         rail.execute(REQUEST, "h1", KEY)
-    assert len(cassette.requests) == 2
+    assert [r.url.path for r in cassette.requests][1:] == [
+        "/account_transfers",
+        "/ach_transfers",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -534,10 +539,10 @@ def _page(ids, cursor):
 
 
 def test_listing_is_read_only_and_pages_to_the_end():
-    rail, cassette = _rail(_page(["t1"], "c2"), _page(["t2"], None))
+    rail, cassette = _rail(_page(["t1"], "c2"), _page(["t2"], None), _listed())
     listed = rail.transfers("checking-881", SINCE)
     assert [t.transfer_id for t in listed] == ["t1", "t2"]
-    assert [(r.method, str(r.url)) for r in cassette.requests] == [
+    assert [(r.method, str(r.url)) for r in cassette.requests][:2] == [
         (
             "GET",
             "https://sandbox.increase.com/account_transfers?account_id=account_payer"
@@ -552,7 +557,7 @@ def test_listing_is_read_only_and_pages_to_the_end():
 
 
 def test_a_listed_transfer_keeps_the_banks_fields():
-    rail, _ = _rail("account_transfers_list")
+    rail, _ = _rail("account_transfers_list", _listed())
     row = recorded("account_transfers_list")["body"]["data"][0]
     fields = ("id", "amount", "status", "idempotency_key", "created_at")
     want = BankTransfer(*(row[f] for f in fields))
@@ -560,12 +565,15 @@ def test_a_listed_transfer_keeps_the_banks_fields():
 
 
 def test_lookup_asks_for_exactly_that_key():
-    rail, cassette = _rail("account_transfers_by_key", "account_transfers_none")
+    rail, cassette = _rail(
+        "account_transfers_by_key", "account_transfers_none", _listed()
+    )
     key = recorded("account_transfers_by_key")["body"]["data"][0]["idempotency_key"]
     assert rail.transfer_by_key(key).idempotency_key == key
     assert rail.transfer_by_key("mandate-cert-none") is None
     assert [r.url.params["idempotency_key"] for r in cassette.requests] == [
         key,
+        "mandate-cert-none",
         "mandate-cert-none",
     ]
 

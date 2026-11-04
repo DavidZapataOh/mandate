@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ATTACK, CONFIRM, patch } from "../wire/__fixtures__/lines";
+import { ATTACK, CONFIRM, patch, RETURNED, SETTLED } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { formatLatency } from "../shared/format";
 import { forensicText, gameText } from "./narrate";
@@ -123,5 +123,19 @@ describe("formatLatency", () => {
     [1530, "1.5ms"],
   ])("%d us", (us, want) => {
     expect(formatLatency(us)).toBe(want);
+  });
+});
+
+describe("settle lines", () => {
+  it("narrates a settlement", () => {
+    expect(gameText(parseLine(SETTLED))).toBe(
+      "Settled at the bank: Pay 200.00 USD to acme-991 (ref A-991) from checking-881 · ach_transfer_t1",
+    );
+  });
+
+  it("narrates a return with its label", () => {
+    expect(gameText(parseLine(RETURNED))).toBe(
+      "Returned by the bank: Pay 200.00 USD to acme-991 (ref A-991) from checking-881 · ach_transfer_t1 · bank: returned R01 insufficient_fund (SIMULATED RETURN)",
+    );
   });
 });

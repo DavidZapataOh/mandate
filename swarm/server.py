@@ -670,6 +670,17 @@ state is returned."""
             return JSONResponse(dict(_NOT_FOUND), status_code=404)
         return JSONResponse(present(found, frozenset()))
 
+    async def lifecycle(request: Request) -> Response:
+        # Sealed entries and their proofs only: nothing the holder alone sees.
+        if request.url.query:
+            return _bad_request()
+        found = await anyio.to_thread.run_sync(
+            desk.lifecycle, request.path_params["payment_id"]
+        )
+        if found is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse(found)
+
     async def device(request: Request) -> Response:
         # A count only: naming a device would link payments to a holder.
         return JSONResponse(
@@ -896,6 +907,7 @@ state is returned."""
         ("/api/registry", "GET", registry),
         ("/api/receipt/by-hash/{digest}", "GET", receipt_by_hash),
         ("/api/receipt/{payment_id}", "GET", receipt),
+        ("/api/lifecycle/{payment_id}", "GET", lifecycle),
         ("/api/reconcile", "POST", reconcile),
         ("/api/anchor", "POST", anchor),
         ("/api/voice", "POST", voice_text),

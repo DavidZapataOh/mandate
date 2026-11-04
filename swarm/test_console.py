@@ -18,7 +18,7 @@ import pytest
 import uvicorn
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from bank.api import Bank
+from bank.api import Bank, RailError
 from bank.conftest import (
     SENTINEL_KEY,
     Cassette,
@@ -26,9 +26,11 @@ from bank.conftest import (
     event_body,
     events_page,
     named_accounts,
+    recorded,
 )
 from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
 from bank.events import BankEvents
+from bank.reconcile import AchState
 from bank.verifier import Verifier
 from evidence.conftest import fake_binary
 from evidence.zktls import ZKTLS_BIN_ENV
@@ -48,6 +50,7 @@ from swarm.nimbus import NimbusStep
 from swarm.redteam import PINNED, AttackKind
 from swarm.server import build_server
 from swarm.test_console_line import RECORD
+from swarm.test_desk_ach import PID, _paid
 from swarm.test_server import FOREIGN, PAIR, _approval_json, _asgi, _b64
 from swarm.test_server_intent import _text
 from swarm.test_voice import CLIP
@@ -59,6 +62,8 @@ CSP = (
     "base-uri 'none'; frame-ancestors 'none'"
 )
 NOW = 1800001000
+# The sandbox lists ACH transfers next to account transfers; none here.
+NO_ACH = (200, {"data": [], "next_cursor": None})
 
 
 def _world():
@@ -662,7 +667,7 @@ async def test_cli_sandbox_console_keeps_attacks_simulated(
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
     keys = []
     cassette = Cassette(
-        named_accounts("checking-881", "acme-991"), "account_transfers_none"
+        named_accounts("checking-881", "acme-991"), "account_transfers_none", NO_ACH
     )
 
     def client(key):
@@ -681,7 +686,7 @@ async def test_cli_sandbox_console_keeps_attacks_simulated(
     bank = read_console_line(attack.text).forensic["bank"]
     assert (bank["rail"], bank["transfer_id"]) == ("simulated", "pay:000001")
     paths = [r.url.path for r in cassette.requests]
-    assert paths == ["/accounts", "/account_transfers"]
+    assert paths == ["/accounts", "/account_transfers", "/ach_transfers"]
 
 
 def test_cli_drops_the_holder_key(monkeypatch, capsys, dist):
@@ -707,7 +712,7 @@ FAKE_NOTARY = (
 def _sandbox(monkeypatch):
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
     cassette = Cassette(
-        named_accounts("checking-881", "acme-991"), "account_transfers_none"
+        named_accounts("checking-881", "acme-991"), "account_transfers_none", NO_ACH
     )
     monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
 
@@ -1293,6 +1298,7 @@ def test_cli_sandbox_console_streams_the_banks_events(
         cassette = Cassette(
             named_accounts("checking-881", "acme-991"),
             "account_transfers_none",
+            NO_ACH,
             events_page(*events, next_cursor=cursor),
         )
         monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
@@ -1344,3 +1350,74 @@ def test_sandbox_rail_holds_only_when_asked(monkeypatch):
         rail, _ = console._sandbox(parser, SENTINEL_KEY, names, two_step=two_step)
         built.append(rail)
     assert [rail.two_step for rail in built] == [False, True]
+
+
+def test_cli_ach_needs_the_sandbox_rail(monkeypatch, capsys, dist):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--ach")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "--ach needs --rail sandbox\n"
+
+
+def test_cli_ach_and_two_step_are_exclusive(monkeypatch, capsys, dist):
+    argv = ("--console-dir", str(dist), "--rail", "sandbox", "--ach", "--two-step")
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, *argv)
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "--ach and --two-step are exclusive\n"
+
+
+def test_sandbox_rail_pays_by_ach_only_when_asked(monkeypatch, capsys):
+    parser = argparse.ArgumentParser()
+    names = ("checking-881", "acme-991")
+    number = dict(recorded("account_number")["body"], account_id="account_acme-991")
+    built = []
+    for ach in (False, True):
+        answers = [named_accounts(*names)]
+        if ach:
+            answers.append((200, {"data": [number], "next_cursor": None}))
+        client = Cassette(*answers).client()
+        monkeypatch.setattr(console, "sandbox_client", lambda key, c=client: c)
+        built.append(console._sandbox(parser, SENTINEL_KEY, names, ach=ach)[0])
+    assert [rail.ach for rail in built] == [False, True]
+    client = Cassette(
+        named_accounts(*names), (200, {"data": [], "next_cursor": None})
+    ).client()
+    monkeypatch.setattr(console, "sandbox_client", lambda key: client)
+    with pytest.raises(SystemExit) as stopped:
+        console._sandbox(parser, SENTINEL_KEY, names, ach=True)
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "bank accounts missing: run mandate-bank-setup --ach\n"
+    )
+
+
+def test_a_bank_event_for_an_ach_payment_reads_its_lifecycle(state_store, tmp_path):
+    desk_store = StateStore(tmp_path / "desk.db")
+    desk, rail, lines, _ = _paid(desk_store)
+    settled_at = "2027-01-15T09:16:40Z"
+    rail.states[PID] = AchState(PID, "submitted", settled_at, None, None, None)
+    page = events_page(
+        event_body(1, "ach_transfer.updated", object_id=PID),
+        event_body(2, "ach_transfer.updated", object_id=PID),
+        event_body(3, "account_transfer.created"),
+    )
+    hub = EventHub()
+    console.bank_events_round(_feed(state_store, page), hub, desk)
+    assert rail.state_reads == [PID]
+    assert [x.source for x in hub.since(0)] == ["bank", "bank", "bank"]
+    assert lines[-1].subject["status"] == "settled"
+    desk_store.close()
+
+
+def test_a_failed_lifecycle_read_never_stops_the_feed(state_store, tmp_path, caplog):
+    desk_store = StateStore(tmp_path / "desk.db")
+    desk, rail, _, _ = _paid(desk_store)
+    rail.states[PID] = RailError("bank: unavailable")
+    page = events_page(event_body(1, "ach_transfer.updated", object_id=PID))
+    hub = EventHub()
+    with caplog.at_level(logging.ERROR):
+        console.bank_events_round(_feed(state_store, page), hub, desk)
+    assert hub.last_seq == 1
+    assert "ach lifecycle failed (RailError)" in caplog.text
+    desk_store.close()

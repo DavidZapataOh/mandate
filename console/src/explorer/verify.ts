@@ -115,7 +115,16 @@ const short = (value: unknown) => `${shown(value).slice(0, 12)}…`;
 
 // The only bank a sandbox claim may name, and the shape of the transfer ids it issues.
 const SANDBOX_PROVIDER = "increase";
-const INCREASE_TRANSFER = /^(?:sandbox_)?account_transfer_[A-Za-z0-9]{1,64}$/;
+const INCREASE_TRANSFER = /^(?:sandbox_)?(?:account|ach)_transfer_[A-Za-z0-9]{1,64}$/;
+// An ACH transfer settles or is returned days after the bank accepts it, so acceptance is all a receipt can seal.
+const ACH_TRANSFER = /^(?:sandbox_)?ach_transfer_[A-Za-z0-9]{1,64}$/;
+const ACH_ACCEPTED: readonly string[] = ["pending_submission", "submitted"];
+const ACH_RETURNED = "returned";
+
+/** Whether a transfer id names an Increase ACH transfer, whose outcome the bank lifecycle records later. */
+export function isAchTransfer(id: string): boolean {
+  return ACH_TRANSFER.test(id);
+}
 
 // The only server a zkTLS funds proof may name, and the evidence prefix of each funds kind.
 const ZKTLS_SERVER = "sandbox.increase.com";
@@ -404,6 +413,14 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
       if (!INCREASE_TRANSFER.test(bank.transfer_id)) throw new Fail(`Bank transfer ${shown(bank.transfer_id)} is not an Increase transfer id`);
     }
     if (bank.transfer_id !== r.payment_id) throw new Fail(`Bank transfer ${bank.transfer_id} is not the sealed payment ${r.payment_id}`);
+    if (bank.rail === "sandbox" && isAchTransfer(bank.transfer_id)) {
+      // A lost answer reconciled after the return seals the bank's own status; the payment moved, came back and paid nothing.
+      if (bank.status === ACH_RETURNED) {
+        return `SANDBOX ACH transfer ${bank.transfer_id} at ${SANDBOX_PROVIDER}, requested under this certificate and returned by the bank before this receipt was sealed: the money moved and came back, so this payment paid nothing; the bank lifecycle below the steps says why`;
+      }
+      if (!ACH_ACCEPTED.includes(bank.status)) throw new Fail(`Bank reports the ACH transfer ${bank.status}, not accepted`);
+      return `SANDBOX ACH transfer ${bank.transfer_id} at ${SANDBOX_PROVIDER}, accepted by the bank (${bank.status}) under this certificate; an ACH transfer settles or is returned days later, so the Bank lifecycle panel says how it ended`;
+    }
     if (bank.status !== "complete") throw new Fail(`Bank reports the transfer ${bank.status}, not complete`);
     if (bank.rail === "sandbox") {
       return `SANDBOX transfer ${bank.transfer_id} at ${SANDBOX_PROVIDER}, requested under this certificate; the gate signs this claim, and the id is checkable in the Increase sandbox dashboard of the account that holds the key`;

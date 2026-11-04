@@ -79,7 +79,7 @@ _SUBJECT_KEYS = {
         )
     ),
 }
-_DESK_STEPS = ("intent", "quote", "approve", "confirm")
+_DESK_STEPS = ("intent", "quote", "approve", "confirm", "settle")
 _RECORD_KEYS = frozenset(("agent", "tool", "targets", "event", "tool_use_id"))
 _MALFORMED = "console line: malformed"
 _SAFE_INT = 2**53 - 1
@@ -449,7 +449,8 @@ def desk_line(
     """Build the line for one desk step.
 
     Args:
-        step: ``intent``, ``quote``, ``approve`` or ``confirm``.
+        step: ``intent``, ``quote``, ``approve``, ``confirm``, or ``settle``
+            (the bank settled or returned an accepted ACH payment).
         view: The desk's view of the step (``status``, optional ids and reason).
         summary: Payment sentence.
         event: Gate decision event, when the gate decided.

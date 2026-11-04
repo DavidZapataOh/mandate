@@ -79,7 +79,7 @@ const UTC_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
 
 const SUBJECTS: Record<Source, Check> = {
   desk: shape({
-    step: oneOf("intent", "quote", "approve", "confirm"),
+    step: oneOf("intent", "quote", "approve", "confirm", "settle"),
     quote_id: nullable(str),
     status: str,
     summary: str,

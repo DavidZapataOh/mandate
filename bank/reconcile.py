@@ -9,6 +9,18 @@ _KEY_PREFIX = "mandate-cert-"
 CANCELED = "canceled"
 # A held transfer awaiting approval has moved no money yet.
 PENDING_APPROVAL = "pending_approval"
+# ACH transfer statuses. The bank holds the full amount from acceptance on;
+# a settled transfer stays `submitted`, and a return gives the money back.
+PENDING_SUBMISSION = "pending_submission"
+SUBMITTED = "submitted"
+RETURNED = "returned"
+REJECTED = "rejected"
+# An ACH the bank accepted.
+IN_FLIGHT = (PENDING_SUBMISSION, SUBMITTED)
+# Money left under the key (a return gives it back later).
+MOVED = ("complete", PENDING_SUBMISSION, SUBMITTED, RETURNED)
+# Nothing ever moved.
+NO_MONEY = (CANCELED, REJECTED)
 
 
 @dataclass(frozen=True)
@@ -29,6 +41,39 @@ class BankTransfer:
     status: str
     idempotency_key: str | None
     created_at: str
+
+
+def standing(transfer: BankTransfer) -> bool:
+    """Tell whether a transfer's money is still out of the paying account.
+
+    Args:
+        transfer: The transfer as the bank reports it.
+
+    Returns:
+        False when nothing moved (canceled, rejected) or the bank returned it.
+    """
+    return transfer.status not in NO_MONEY and transfer.status != RETURNED
+
+
+@dataclass(frozen=True)
+class AchState:
+    """Where an ACH transfer stands in its lifecycle, as the bank reports it.
+
+    Args:
+        transfer_id: The bank's identifier for the ACH transfer.
+        status: The transfer's status.
+        settled_at: When it settled (``YYYY-MM-DDTHH:MM:SSZ``), or None.
+        return_code: The ACH return code (R01 to R85), or None.
+        return_reason: The bank's name for the return reason, or None.
+        returned_at: When the bank returned it, or None.
+    """
+
+    transfer_id: str
+    status: str
+    settled_at: str | None
+    return_code: str | None
+    return_reason: str | None
+    returned_at: str | None
 
 
 @runtime_checkable
@@ -120,8 +165,10 @@ def compare(
     A listed transfer is certified when its idempotency key names the
     certificate of the sealed receipt for the same transfer id and that
     receipt's entry is the registry's; any other transfer that moved money is
-    unbacked. A sealed payment the bank does not list, or lists as canceled,
-    is missing.
+    unbacked. A returned transfer no longer counts as moved money: with its
+    own sealed receipt it is neither certified nor unbacked, without one it is
+    unbacked. A sealed payment the bank does not list, or lists as canceled
+    or rejected, is missing.
 
     Args:
         listed: The transfers the bank lists from the desk's account.
@@ -136,17 +183,20 @@ def compare(
     certified = 0
     unbacked: list[str] = []
     for transfer in listed:
-        if transfer.status == CANCELED:
+        if transfer.status in NO_MONEY:
             continue
         found = sealed.get(transfer.transfer_id)
-        if (
+        ours = (
             found is not None
             and found[1]
             and transfer.idempotency_key == _KEY_PREFIX + found[0]
-        ):
+        )
+        if ours and transfer.status == RETURNED:
+            continue
+        if ours:
             certified += 1
         else:
             unbacked.append(transfer.transfer_id)
-    held = {t.transfer_id for t in listed if t.status != CANCELED}
+    held = {t.transfer_id for t in listed if t.status not in NO_MONEY}
     missing = tuple(sorted(pid for pid in sealed if pid not in held))
     return certified, tuple(unbacked), missing

@@ -13,14 +13,26 @@ from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
-from bank.rail import NO_TRANSFER, SANDBOX, BankRail, HoldingRail, idempotency_key
+from bank.rail import (
+    NO_TRANSFER,
+    SANDBOX,
+    AchRail,
+    BankRail,
+    HoldingRail,
+    idempotency_key,
+)
 from bank.reconcile import (
-    CANCELED,
+    IN_FLIGHT,
+    MOVED,
+    NO_MONEY,
     PENDING_APPROVAL,
+    RETURNED,
+    AchState,
     BankTransfer,
     Reconciliation,
     TransferLedger,
     compare,
+    standing,
 )
 from bank.verifier import Verifier, action_commitment
 from evidence.cooperative import sign_state
@@ -100,6 +112,23 @@ _NOTHING_HELD = (
 _HOLD_FIELDS = ("intent_id", "idempotency_key", "transfer_id", "expires_at", "rail")
 # A journal another path settled while this round asked the bank.
 _GONE = ""
+# A settled ACH can still be returned: the reconcile round re-reads it this
+# long after its seal; later returns are seen only through bank events.
+ACH_WATCH_S = 5 * 86_400
+# On the sandbox no ACH reaches the Federal Reserve: every return there is
+# one Mandate's own simulation call caused.
+SIMULATED_RETURN = "SIMULATED RETURN"
+_ACH_KEYS = (
+    "quote_id",
+    "intent_id",
+    "idempotency_key",
+    "execution_seq",
+    "summary",
+    "state",
+    "since",
+    "entries",
+)
+_ACH_STATES = ("in_flight", "settled", "returned")
 _BYTE_FIELDS = ("signature", "consent_key", "key_signature")
 _T = TypeVar("_T")
 
@@ -210,6 +239,11 @@ class PaymentDesk:
             raise ValueError("zktls needs the sandbox rail")
         self.bank = bank
         self._two_step = isinstance(bank, HoldingRail) and bank.two_step
+        self._ach_rail = isinstance(bank, AchRail) and bank.ach
+        # Settlements and returns arrive days later: only a durable record
+        # can follow an accepted ACH payment until then.
+        if self._ach_rail and state is None:
+            raise ValueError("ach needs a state store")
         self._zktls = zktls
         self._source = source
         self._verifier = verifier
@@ -254,6 +288,8 @@ class PaymentDesk:
         self._paid_twice: dict[str, list[str]] = {}
         # Transfers held at the bank for approval, by quote id.
         self._holds: dict[str, dict[str, Any]] = {}
+        # Accepted ACH payments and where each stands, by payment id.
+        self._ach: dict[str, dict[str, Any]] = {}
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
         # One reconciliation round at a time; it holds the desk lock only
@@ -261,6 +297,11 @@ class PaymentDesk:
         self._rounds = threading.Lock()
         if state is not None:
             self._load(state)
+        if self._ach and not self._ach_rail:
+            _log.warning(
+                "ach payments not followed (rail pays no ACH): %d in flight",
+                len(self._untracked_ach()),
+            )
 
     def _load(self, state: StateStore) -> None:
         """Adopt the stored desk; a row that does not read stops the start."""
@@ -293,6 +334,14 @@ class PaymentDesk:
             k: _texts(json.loads(v)) for k, v in state.records("paid_twice")
         }
         self._holds = {k: _hold_from(v) for k, v in state.records("hold")}
+        for payment_id, value in state.records("ach"):
+            try:
+                record = _ach_from(value)
+                _ach_in_registry(payment_id, record, self.registry)
+            except Exception:
+                _log.error("ach record %s does not read", payment_id)
+                raise ValueError(_UNREADABLE) from None
+            self._ach[payment_id] = record
         for quote_id, value in state.records("pending"):
             journal = _journal_from(value)
             if quote_id not in self._closed:
@@ -568,7 +617,9 @@ class PaymentDesk:
 
         First cancels every transfer held for approval that nothing can
         approve any more (see ``_hold_due``); that cancel is the only bank
-        write it makes, and it cannot move money. Then settles every
+        write it makes, and it cannot move money. Then reads every accepted
+        ACH payment the bank may still settle or return and seals each new
+        outcome (see ``track_ach``). Then settles every
         journaled payment (see ``_settle_found``), in quote order, and
         compares the transfers the bank lists from the debit account since
         the registry began with the sealed receipts, leaving out a transfer
@@ -612,12 +663,19 @@ class PaymentDesk:
         error: str | None = None
         if self._holds and isinstance(self.bank, HoldingRail):
             released, error = self._release_holds()
+        tracked: tuple[str, ...] = ()
+        if error is None:
+            with self._lock:
+                now = self._clock()
+            tracked, error = self._track_ach_payments(now)
         with self._lock:
             journals = [] if self._state is None else self._state.records("pending")
         settled, pending, unreadable, error = self._settle_journals(
             ledger, sorted(journals), error=error
         )
-        resolved = (*released, *settled)
+        resolved = (*released, *tracked, *settled)
+        with self._lock:
+            pending = (*pending, *(f"ach {pid}" for pid in self._untracked_ach()))
         with self._lock:
             before = set(self._sealed(ledger.rail)[0])
         listed: list[BankTransfer] | None = None
@@ -644,7 +702,7 @@ class PaymentDesk:
                 self._late_transfers(listed)
                 certified, unbacked, missing = compare(listed, sealed, ledger.rail)
                 missing = tuple(pid for pid in missing if pid in before)
-                transfers = sum(1 for t in listed if t.status != CANCELED)
+                transfers = sum(1 for t in listed if standing(t))
             report = Reconciliation(
                 ledger.rail,
                 ledger.provider,
@@ -717,7 +775,8 @@ class PaymentDesk:
                 continue
         for transfer in listed:
             iid = released.get(transfer.idempotency_key or "")
-            if not isinstance(iid, str) or not iid or transfer.status == CANCELED:
+            # A returned transfer under a released key still paid once.
+            if not isinstance(iid, str) or not iid or transfer.status in NO_MONEY:
                 continue
             twice = self._second_payment(iid, transfer.transfer_id)
             if twice is not None:
@@ -829,7 +888,7 @@ class PaymentDesk:
         if transfer is not None and not isinstance(transfer, BankTransfer):
             raise RailError(_BANK_DOWN)
         held = None
-        if transfer is not None and transfer.status == "complete":
+        if transfer is not None and transfer.status in MOVED:
             held = self._matching(journal, transfer)
         return transfer, held
 
@@ -857,12 +916,12 @@ class PaymentDesk:
             return _GONE
         if not self.registry.has_room():
             return None
-        if transfer is not None and transfer.status == "complete":
+        if transfer is not None and transfer.status in MOVED:
             if held is None:
                 return None
             self._seal_transfer(quote_id, journal, held)
             return held.payment_id
-        absent = transfer is None or transfer.status == CANCELED
+        absent = transfer is None or transfer.status in NO_MONEY
         if absent and self._clock() >= _release_at(journal["expires_at"]):
             self._seal_not_paid(quote_id, journal)
             return "not paid"
@@ -930,9 +989,19 @@ class PaymentDesk:
         bound = self._intents.get(iid)
         changes = _paid_changes(bound, quote_id, payment.payment_id)
         twice = self._second_payment(iid, payment.payment_id)
+        ach: dict[str, Any] | None = None
 
         def work() -> tuple[InclusionProof, dict[str, Any]]:
+            nonlocal ach
             seq, seal = self._append("execution", body)
+            ach = self._ach_record(
+                payment,
+                quote_id,
+                journal["intent_id"],
+                journal["idempotency_key"],
+                seq,
+                consent,
+            )
             proof = self.registry.prove(seq)
             receipt = proof_receipt(
                 payment.payment_id,
@@ -963,6 +1032,8 @@ class PaymentDesk:
 
         proof, receipt = self._durably(work)
         self._holds.pop(quote_id, None)
+        if ach is not None:
+            self._ach[payment.payment_id] = ach
         if twice is not None:
             self._note_twice(iid, twice)
         self._keep_receipt(payment.payment_id, receipt)
@@ -1069,7 +1140,7 @@ class PaymentDesk:
                 if self._holds.get(quote_id) != hold:
                     continue
                 outcome = None
-                if status == CANCELED:
+                if status in NO_MONEY:
                     outcome = "hold canceled"
                 elif status == NO_TRANSFER and now >= _release_at(hold["expires_at"]):
                     # Past this window no create under the key is in flight.
@@ -1078,6 +1149,195 @@ class PaymentDesk:
                     self._drop_hold(quote_id)
                     resolved.append(f"{quote_id} -> {outcome}")
         return tuple(resolved), error
+
+    def track_ach(self, payment_id: str) -> str | None:
+        """Read an accepted ACH payment at the bank and seal any new outcome.
+
+        The record is read under the desk lock, the bank outside it, and the
+        change is applied under it again only if the record has not changed
+        since. A settlement or a return becomes its own sealed registry entry
+        linked to the payment's execution entry; the receipt never changes. A
+        returned payment never changes again, so it is never read again.
+
+        Args:
+            payment_id: The bank's id for the ACH transfer.
+
+        Returns:
+            ``settled`` or ``returned`` when an entry was appended; None when
+            nothing changed or the desk does not track the id, which then
+            costs no bank call.
+
+        Raises:
+            RailError: If the bank cannot be read.
+        """
+        with self._lock:
+            before = self._ach_due(payment_id)
+        if before is None:
+            return None
+        state = self._read_ach(payment_id)
+        with self._lock:
+            appended = self._apply_ach(payment_id, before, state)
+        return None if not appended else str(appended[-1][0])
+
+    def _untracked_ach(self) -> list[str]:
+        """Accepted ACH payments in flight that this rail cannot follow."""
+        if self._ach_rail:
+            return []
+        return [p for p, r in self._ach.items() if r["state"] == "in_flight"]
+
+    def _ach_due(self, payment_id: str) -> dict[str, Any] | None:
+        """A copy of a record the bank may still change, or None."""
+        record = self._ach.get(payment_id)
+        if not self._ach_rail or record is None or record["state"] == "returned":
+            return None
+        return dict(record, entries=list(record["entries"]))
+
+    def _read_ach(self, payment_id: str) -> AchState:
+        """One lifecycle read; anything but this transfer's state is unavailable."""
+        try:
+            state = cast(AchRail, self.bank).ach_state(payment_id)
+        except RailError:
+            raise
+        except Exception:
+            raise RailError(_BANK_DOWN) from None
+        if not isinstance(state, AchState) or state.transfer_id != payment_id:
+            raise RailError(_BANK_DOWN)
+        return state
+
+    def _apply_ach(
+        self, payment_id: str, before: dict[str, Any], state: AchState
+    ) -> list[tuple[str, str]]:
+        """Seal what the bank says changed; runs under the desk lock.
+
+        Returns:
+            For each appended entry in order, its new state and its
+            ``resolved`` text; empty when nothing changed.
+        """
+        if self._ach.get(payment_id) != before or not self.registry.has_room():
+            return []
+        phase = _ach_phase(state)
+        if phase is None:
+            # Only the id and status: the answer is the bank's, not ours.
+            _log.warning("ach %s reads %s (unchanged)", payment_id, state.status)
+            return []
+        old = before["state"]
+        if phase == old or phase == "in_flight":
+            return []
+        link = {
+            "execution_seq": before["execution_seq"],
+            "payment_id": payment_id,
+            "quote_id": before["quote_id"],
+        }
+        added: list[tuple[str, str, dict[str, Any]]] = []
+        if old == "in_flight" and state.settled_at is not None:
+            settled = {**link, "settled_at": state.settled_at, "status": "settled"}
+            added.append(("settlement", "settled", settled))
+        if phase == "returned":
+            returned = {
+                **link,
+                "code": state.return_code,
+                "label": SIMULATED_RETURN,
+                "reason": state.return_reason,
+                "returned_at": state.returned_at,
+                "status": "returned",
+            }
+            added.append(("return", "returned", returned))
+
+        def work() -> dict[str, Any]:
+            seqs = [self._append(kind, _dumps(body))[0] for kind, _, body in added]
+            after = {**before, "state": phase, "entries": [*before["entries"], *seqs]}
+            self._put("ach", payment_id, after)
+            return after
+
+        self._ach[payment_id] = self._durably(work)
+        out: list[tuple[str, str]] = []
+        for _, status, body in added:
+            if status == "settled":
+                reason = "ok: settled at the bank"
+                text = f"{payment_id} -> settled"
+            else:
+                reason = (
+                    f"bank: returned {body['code']} {body['reason']} "
+                    f"({SIMULATED_RETURN})"
+                )
+                text = f"{payment_id} -> returned {body['code']} ({SIMULATED_RETURN})"
+            view = {
+                "status": status,
+                "quote_id": before["quote_id"],
+                "payment_id": payment_id,
+                "reason": reason,
+            }
+            self._line("settle", view, before["summary"])
+            out.append((status, text))
+        return out
+
+    def _track_ach_payments(self, now: int) -> tuple[tuple[str, ...], str | None]:
+        """Read every accepted ACH payment the bank may still settle or return.
+
+        That is every one in flight, and every settled one within
+        ``ACH_WATCH_S`` of its seal, in the order they were sealed. The first
+        read that fails stops the rest.
+
+        Returns:
+            The resolved entries, and why the bank could not be read (or
+            None).
+        """
+        with self._lock:
+            due = [
+                pid
+                for pid, record in self._ach.items()
+                if record["state"] == "in_flight"
+                or (
+                    record["state"] == "settled" and now < record["since"] + ACH_WATCH_S
+                )
+            ]
+        resolved: list[str] = []
+        for payment_id in due:
+            with self._lock:
+                before = self._ach_due(payment_id)
+            if before is None:
+                continue
+            try:
+                state = self._read_ach(payment_id)
+            except RailError as exc:
+                return tuple(resolved), str(exc)
+            with self._lock:
+                appended = self._apply_ach(payment_id, before, state)
+            resolved.extend(text for _, text in appended)
+        return tuple(resolved), None
+
+    def _ach_record(
+        self,
+        payment: Payment,
+        quote_id: str,
+        intent_id: str | None,
+        key: str,
+        execution_seq: int,
+        consent: Consent,
+        since: int | None = None,
+    ) -> dict[str, Any] | None:
+        """Write the record of an ACH payment the bank accepted; None otherwise.
+
+        Runs inside the seal's commit, so the record and the receipt are
+        written together or not at all.
+        """
+        if not self._ach_rail or payment.status not in (*IN_FLIGHT, RETURNED):
+            return None
+        c = consent
+        record: dict[str, Any] = {
+            "quote_id": quote_id,
+            "intent_id": intent_id,
+            "idempotency_key": key,
+            "execution_seq": execution_seq,
+            "summary": pay_summary(
+                str(c.amount_cents), c.currency, c.recipient, c.reference, c.source
+            ),
+            "state": "in_flight",
+            "since": self._clock() if since is None else since,
+            "entries": [],
+        }
+        self._put("ach", payment.payment_id, record)
+        return record
 
     def _quote_paid(self, quote_id: str) -> bool:
         record = self._quotes.get(quote_id)
@@ -1248,7 +1508,24 @@ class PaymentDesk:
         if found.unsettled is not None:
             view["idempotency_key"] = found.unsettled.key
             view["detail"] = _unsettled_detail(found.unsettled)
+        returned = self._returned(found.payment_id)
+        if returned is not None:
+            view["status"] = "returned"
+            view["detail"] = returned
         return view
+
+    def _returned(self, payment_id: str | None) -> str | None:
+        """The holder's sentence for a payment the bank returned, else None."""
+        record = self._ach.get(payment_id or "")
+        if record is None or record["state"] != "returned":
+            return None
+        body = json.loads(self.registry.entry(record["entries"][-1]).body)
+        return (
+            f"The bank returned payment {payment_id} ({body['code']} "
+            f"{body['reason']}, {SIMULATED_RETURN}); the money went back to the "
+            "paying account. This intent pays nothing more: sign a new intent "
+            "to pay again."
+        )
 
     def quote(
         self,
@@ -1611,6 +1888,44 @@ class PaymentDesk:
             seals = self.registry.anchors()
             return seal_view(seals[-1]) if seals else None
 
+    def lifecycle(self, payment_id: str) -> dict[str, Any] | None:
+        """The sealed settlement and return entries of an accepted ACH payment.
+
+        Args:
+            payment_id: The bank's id for the ACH transfer.
+
+        Returns:
+            None when the desk does not track the id. Otherwise the payment
+            id, ``label`` (``SIMULATED RETURN`` once returned, else None),
+            ``state``, and ``events``: each entry in order with its inclusion
+            proof and the newest seal, which covers every entry.
+        """
+        with self._lock:
+            record = self._ach.get(payment_id)
+            if record is None:
+                return None
+            seals = self.registry.anchors()
+            events = []
+            for seq in record["entries"]:
+                proof = self.registry.prove(seq)
+                events.append(
+                    {
+                        "entry": dataclasses.asdict(self.registry.entry(seq)),
+                        "proof": {
+                            **dataclasses.asdict(proof),
+                            "siblings": list(proof.siblings),
+                        },
+                        "seal": seal_view(seals[-1]),
+                    }
+                )
+            state = record["state"]
+            return {
+                "payment_id": payment_id,
+                "label": SIMULATED_RETURN if state == "returned" else None,
+                "state": state,
+                "events": events,
+            }
+
     def _record_intent(
         self, intent: Intent, signature: bytes, summary: str
     ) -> dict[str, Any]:
@@ -1836,13 +2151,25 @@ class PaymentDesk:
             }
         body = _result_body(result)
         kind = "execution" if paid else "denial"
+        ach: dict[str, Any] | None = None
 
         def work() -> tuple[InclusionProof, dict[str, Any] | None]:
+            nonlocal ach
             if self._state is not None:
                 self._state.prune(now)
             seq, seal = self._append(kind, body)
             proof = self.registry.prove(seq)
             receipt = None
+            if payment_id is not None and outcome.payment is not None:
+                ach = self._ach_record(
+                    outcome.payment,
+                    quote_id,
+                    record.intent_id,
+                    idempotency_key(request.nonce),
+                    seq,
+                    c,
+                    since=now,
+                )
             if payment_id is not None:
                 entry = LogEntry(seq, kind, body)
                 receipt = self._receipt_of(
@@ -1875,6 +2202,8 @@ class PaymentDesk:
         if payment_id is not None:
             self._holds.pop(quote_id, None)
             self._receipts[payment_id] = result
+            if ach is not None:
+                self._ach[payment_id] = ach
             if receipt is not None:
                 self._keep_receipt(payment_id, receipt)
         if bound is not None:
@@ -2096,6 +2425,67 @@ def _hold_from(value: str) -> dict[str, Any]:
     return hold
 
 
+def _ach_from(value: str) -> dict[str, Any]:
+    """Read one stored ACH record; a row that does not read stops the start."""
+    record = json.loads(value)
+    if not isinstance(record, dict) or set(record) != set(_ACH_KEYS):
+        raise ValueError(_UNREADABLE)
+    record = {key: record[key] for key in _ACH_KEYS}
+    texts = (record["quote_id"], record["idempotency_key"], record["summary"])
+    numbers = (record["execution_seq"], record["since"], *record["entries"])
+    usable = (
+        all(isinstance(text, str) for text in texts)
+        and isinstance(record["intent_id"], str | None)
+        and record["state"] in _ACH_STATES
+        and isinstance(record["entries"], list)
+        and all(type(n) is int for n in numbers)
+    )
+    if not usable:
+        raise ValueError(_UNREADABLE)
+    return record
+
+
+def _ach_in_registry(
+    payment_id: str, record: dict[str, Any], registry: Registry
+) -> None:
+    """Check a stored ACH record against the sealed entries it names.
+
+    Raises:
+        ValueError: If the execution entry or a lifecycle entry is not the
+            registry's, or the state does not follow from the entries.
+    """
+    seq = record["execution_seq"]
+    if not 0 < seq <= registry.size() or registry.entry(seq).kind != "execution":
+        raise ValueError(_UNREADABLE)
+    kinds: list[str] = []
+    for n in record["entries"]:
+        if not seq < n <= registry.size():
+            raise ValueError(_UNREADABLE)
+        entry = registry.entry(n)
+        body = json.loads(entry.body)
+        link = (body["payment_id"], body["execution_seq"])
+        if entry.kind not in ("settlement", "return") or link != (payment_id, seq):
+            raise ValueError(_UNREADABLE)
+        kinds.append(entry.kind)
+    allowed = {
+        "in_flight": ([],),
+        "settled": (["settlement"],),
+        "returned": (["return"], ["settlement", "return"]),
+    }
+    if kinds not in allowed[record["state"]]:
+        raise ValueError(_UNREADABLE)
+
+
+def _ach_phase(state: AchState) -> str | None:
+    """Where an ACH payment stands, or None for a status that is no phase."""
+    if state.status == RETURNED:
+        texts = (state.return_code, state.return_reason, state.returned_at)
+        return "returned" if all(isinstance(t, str) for t in texts) else None
+    if state.status not in IN_FLIGHT:
+        return None
+    return "in_flight" if state.settled_at is None else "settled"
+
+
 def _outcome_unknown(quote_id: str) -> dict[str, Any]:
     return {
         "status": "denied",
@@ -2224,7 +2614,7 @@ def _journal_hash(journal: dict[str, Any]) -> str:
 
 
 def _same_payment(held: Payment, request: PaymentRequest, key: str) -> bool:
-    """Whether the bank's payment is the request, complete, under the key."""
+    """Whether the bank's payment is the request, moved, under the key."""
     return (
         held.from_acct,
         held.to_acct,
@@ -2232,7 +2622,6 @@ def _same_payment(held: Payment, request: PaymentRequest, key: str) -> bool:
         held.currency,
         held.ref,
         held.idempotency_key,
-        held.status,
     ) == (
         request.from_acct,
         request.to_acct,
@@ -2240,8 +2629,7 @@ def _same_payment(held: Payment, request: PaymentRequest, key: str) -> bool:
         request.currency,
         request.ref,
         key,
-        "complete",
-    )
+    ) and held.status in MOVED
 
 
 def _unsettled_by(found: _Intent, quote_id: str) -> bool:

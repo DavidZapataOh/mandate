@@ -12,7 +12,14 @@ from increase import Increase
 from bank.api import Payment, PaymentRequest, RailError
 from bank.increase import sandbox_client
 from bank.rail import NO_TRANSFER, SANDBOX
-from bank.reconcile import CANCELED, PENDING_APPROVAL, BankTransfer
+from bank.reconcile import (
+    CANCELED,
+    MOVED,
+    PENDING_APPROVAL,
+    PENDING_SUBMISSION,
+    AchState,
+    BankTransfer,
+)
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "increase"
 SENTINEL_KEY = "sandbox_key_SENTINEL_7f3a9c"
@@ -42,6 +49,9 @@ class RecordingRail:
         two_step: Whether the desk holds each quote here before it confirms.
         hold_error: Raised by every ``hold`` after the call is recorded.
         release_error: Raised by every ``release`` after the key is recorded.
+        ach: Whether ``execute`` pays by ACH: the payment is
+            ``ach_transfer_t1``, accepted as ``pending_submission``, and
+            ``ach_state`` answers from ``states``.
     """
 
     def __init__(
@@ -52,8 +62,12 @@ class RecordingRail:
         two_step: bool = False,
         hold_error: Exception | None = None,
         release_error: Exception | None = None,
+        ach: bool = False,
     ) -> None:
         self.error = error
+        self._ach = ach
+        self.states: dict[str, AchState | Exception] = {}
+        self.state_reads: list[str] = []
         self._two_step = two_step
         self.holds: list[tuple[PaymentRequest, str]] = []
         self.hold_error = hold_error
@@ -67,7 +81,7 @@ class RecordingRail:
         self.provider = "increase"
         self.listed: list[BankTransfer] = []
         self.listed_error: Exception | None = None
-        self.paid_id = "account_transfer_t1"
+        self.paid_id = "ach_transfer_t1" if ach else "account_transfer_t1"
 
     @property
     def rail(self) -> str:
@@ -78,6 +92,25 @@ class RecordingRail:
     def two_step(self) -> bool:
         """Whether the desk holds each quote here before it confirms."""
         return self._two_step
+
+    @property
+    def ach(self) -> bool:
+        """Whether ``execute`` pays by ACH transfer."""
+        return self._ach
+
+    def ach_state(self, transfer_id: str) -> AchState:
+        """Record the read, then raise or return ``states[transfer_id]``.
+
+        Raises:
+            RailError: ``bank: unavailable`` for an id ``states`` lacks.
+        """
+        self.state_reads.append(transfer_id)
+        state = self.states.get(transfer_id)
+        if state is None:
+            raise RailError("bank: unavailable")
+        if isinstance(state, Exception):
+            raise state
+        return state
 
     def hold(self, request: PaymentRequest, idempotency_key: str) -> str:
         """Record the call, then raise ``hold_error`` or list a pending hold."""
@@ -153,10 +186,12 @@ class RecordingRail:
         )
         if held is None:
             return None
-        if held.status != "complete":
+        if held.status not in MOVED:
             raise RailError("bank: not complete")
         paid = self._payment(request, action_hash, idempotency_key)
-        return dataclasses.replace(paid, payment_id=held.transfer_id)
+        return dataclasses.replace(
+            paid, payment_id=held.transfer_id, status=held.status
+        )
 
     def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
         """Raise the configured listing error or return ``listed``."""
@@ -183,6 +218,7 @@ class RecordingRail:
             action_hash,
             rail=SANDBOX,
             provider="increase",
+            status=PENDING_SUBMISSION if self._ach else "complete",
             idempotency_key=idempotency_key,
         )
 
@@ -288,3 +324,87 @@ def events_page(
 ) -> tuple[int, dict[str, Any]]:
     """Answer a List Events page holding ``events`` in order."""
     return 200, {"data": list(events), "next_cursor": next_cursor}
+
+
+ACH_SUBMISSION = {
+    "administrative_returns_expected_by": "2027-01-20T08:16:40Z",
+    "effective_date": "2027-01-15",
+    "expected_funds_settlement_at": "2027-01-15T09:16:40Z",
+    "expected_settlement_schedule": "same_day",
+    "submitted_at": "2027-01-15T08:20:00Z",
+    "trace_number": "058349238292834",
+}
+ACH_RETURN = {
+    "addenda_information": None,
+    "created_at": "2027-01-16T08:16:40Z",
+    "raw_return_reason_code": "R01",
+    "return_reason_code": "insufficient_fund",
+    "trace_number": "111122223292834",
+    "transaction_id": "transaction_r1",
+    "transfer_id": "ach_transfer_uoxatyh3lt5evrsdvo7q",
+}
+
+
+def ach_body(**change: Any) -> dict[str, Any]:
+    """An ACH transfer the bank accepted for 200.00 to acme-991's number."""
+    key = "mandate-cert-" + "c1" * 16
+    body: dict[str, Any] = {
+        "account_id": "account_payer",
+        "account_number": "987654321",
+        "acknowledgement": None,
+        "addenda": None,
+        "addendum": None,
+        "amount": 20000,
+        "approval": None,
+        "cancellation": None,
+        "company_descriptive_date": None,
+        "company_discretionary_data": None,
+        "company_entry_description": None,
+        "company_id": "1234987601",
+        "company_name": None,
+        "created_at": "2027-01-15T08:16:40Z",
+        "created_by": None,
+        "currency": "USD",
+        "destination_account_holder": "unknown",
+        "effective_date": None,
+        "external_account_id": None,
+        "funding": "checking",
+        "id": "ach_transfer_uoxatyh3lt5evrsdvo7q",
+        "idempotency_key": key,
+        "inbound_funds_hold": None,
+        "individual_id": None,
+        "individual_name": "acme-991",
+        "network": "ach",
+        "notification_of_change": None,
+        "notifications_of_change": [],
+        "path": "/transfers/ach_transfer_uoxatyh3lt5evrsdvo7q",
+        "pending_transaction_id": "pending_transaction_p1",
+        "preferred_effective_date": {"date": None, "settlement_schedule": "same_day"},
+        "return": None,
+        "routing_number": "101050001",
+        "settlement": None,
+        "standard_entry_class_code": "corporate_credit_or_debit",
+        "statement_descriptor": f"Mandate A-991 {key}",
+        "status": "pending_submission",
+        "submission": None,
+        "transaction_id": None,
+        "transfer_session_id": None,
+        "type": "ach_transfer",
+        "unique_identifier": None,
+    }
+    return {**body, **change}
+
+
+def ach_settled(**change: Any) -> dict[str, Any]:
+    """The same ACH transfer once the bank submitted and settled it."""
+    settled = {
+        "status": "submitted",
+        "submission": ACH_SUBMISSION,
+        "settlement": {"settled_at": "2027-01-15T09:16:40Z"},
+    }
+    return ach_body(**{**settled, **change})
+
+
+def ach_returned(**change: Any) -> dict[str, Any]:
+    """The settled ACH transfer once the bank returned it as R01."""
+    return ach_settled(**{"status": "returned", "return": ACH_RETURN, **change})

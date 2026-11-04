@@ -13,6 +13,7 @@ mandate-hook = "swarm.hook:cli"
 mandate-desk = "swarm.server:cli"
 mandate-console = "swarm.console:cli"
 mandate-bank-setup = "bank.increase:setup_cli"
+mandate-bank-simulate = "bank.ach:simulate_cli"
 mandate-holder-proof = "swarm.holder_proof:cli"
 
 [build-system]
@@ -39,6 +40,7 @@ show_error_codes = true
 
 [[tool.mypy.overrides]]
 module = [
+    "bank.test_ach",
     "bank.test_credentials",
     "bank.test_events",
     "bank.test_increase",
@@ -97,6 +99,7 @@ module = [
     "swarm.test_console_attacks",
     "swarm.test_console_line",
     "swarm.test_desk",
+    "swarm.test_desk_ach",
     "swarm.test_desk_anchor",
     "swarm.test_desk_state",
     "swarm.test_desk_two_step",

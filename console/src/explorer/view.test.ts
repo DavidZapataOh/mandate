@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ATTACK } from "../wire/__fixtures__/lines";
-import { AUDITOR, forge, GATE_KEY, HOLDER_KEY, RECEIPT, SANDBOX_RECEIPT, tamper } from "./__fixtures__/receipts";
+import { AUDITOR, forge, GATE_KEY, HOLDER_KEY, RECEIPT, resign, SANDBOX_RECEIPT, tamper } from "./__fixtures__/receipts";
 import OTS from "./__fixtures__/ots.json" with { type: "json" };
+import RECEIPT_ACH from "./__fixtures__/receipt-ach.json" with { type: "json" };
+import LIFECYCLE from "./__fixtures__/lifecycle-ach.json" with { type: "json" };
 import { WITHHELD } from "./exposure";
 import { mountExplorer, type Explorer } from "./view";
 
@@ -376,5 +378,62 @@ describe("explorer page", () => {
     expect(verdict()).toBe("CANNOT VERIFY");
     expect(verdictText()).toBe(`The server answered with a receipt that does not carry ${ACTION_HASH}`);
     expect(marks()).toEqual([]);
+  });
+});
+
+describe("bank lifecycle", () => {
+  const ach = () =>
+    server({
+      "/api/receipt/ach_transfer_t1": json(200, RECEIPT_ACH),
+      "/api/lifecycle/ach_transfer_t1": json(200, LIFECYCLE),
+    });
+  const lifecycle = () => [...document.querySelectorAll("#lifecycle dd")].map((d) => d.textContent);
+
+  it("shows what was requested, approved and processed after a lookup by id", async () => {
+    const { fetchFn, seen } = ach();
+    const verify = await mount(fetchFn);
+    await verify("ach_transfer_t1");
+    expect(verdict()).toBe("VERIFIED");
+    expect(seen).toEqual(["/api/keys", "/api/receipt/ach_transfer_t1", "/api/lifecycle/ach_transfer_t1"]);
+    expect([...document.querySelectorAll("#lifecycle dt")].map((d) => d.textContent)).toEqual([
+      "Requested", "Approved", "Processed", "Sealed entry #2", "Sealed entry #3",
+    ]);
+    expect(lifecycle()).toContain(
+      "SIMULATED RETURN R01 insufficient_fund at 2027-01-16T08:16:40Z; the money went back to the payer",
+    );
+  });
+
+  it("shows no lifecycle for a pasted receipt, and clears it on the next run", async () => {
+    const verify = await mount(ach().fetchFn);
+    await verify("ach_transfer_t1");
+    expect(lifecycle()).toHaveLength(5);
+    await verify(JSON.stringify(RECEIPT_ACH));
+    expect(verdict()).toBe("VERIFIED");
+    expect(document.getElementById("lifecycle")!.childElementCount).toBe(0);
+  });
+
+  it("shows the lifecycle of a payment whose receipt was sealed after its return", async () => {
+    const returned = await resign((p) => {
+      p.bank = { ...(p.bank as object), status: "returned" };
+    }, JSON.stringify(RECEIPT_ACH));
+    const { fetchFn, seen } = server({
+      "/api/receipt/ach_transfer_t1": json(200, JSON.parse(returned)),
+      "/api/lifecycle/ach_transfer_t1": json(200, LIFECYCLE),
+    });
+    const verify = await mount(fetchFn);
+    await verify("ach_transfer_t1");
+    expect(verdict()).toBe("VERIFIED");
+    expect(seen).toContain("/api/lifecycle/ach_transfer_t1");
+    expect(lifecycle()).toContain(
+      "SIMULATED RETURN R01 insufficient_fund at 2027-01-16T08:16:40Z; the money went back to the payer",
+    );
+  });
+
+  it("asks for no lifecycle for an account transfer", async () => {
+    const { fetchFn, seen } = server();
+    const verify = await mount(fetchFn);
+    await verify("pay:000001");
+    expect(seen).toEqual(["/api/keys", "/api/receipt/pay%3A000001"]);
+    expect(document.getElementById("lifecycle")!.childElementCount).toBe(0);
   });
 });

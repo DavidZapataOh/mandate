@@ -1,0 +1,30 @@
+{
+  "body": {
+    "data": [
+      {
+        "account_id": "sandbox_account_l3oh3bxybri8accqq06i",
+        "account_number": "7427948952",
+        "created_at": "2026-11-04T18:40:57Z",
+        "id": "sandbox_account_number_x1rd2j2qn4p5w5a25tvx",
+        "idempotency_key": "mandate-capture-ach-number-payee",
+        "inbound_ach": {
+          "debit_status": "allowed"
+        },
+        "inbound_checks": {
+          "status": "check_transfers_only"
+        },
+        "name": "capture-payee ach",
+        "path": "/account_numbers/sandbox_account_number_x1rd2j2qn4p5w5a25tvx",
+        "routing_number": "123308582",
+        "status": "active",
+        "type": "account_number"
+      }
+    ],
+    "next_cursor": null,
+    "response_metadata": {
+      "next_cursor": null
+    }
+  },
+  "replayed": null,
+  "status": 200
+}

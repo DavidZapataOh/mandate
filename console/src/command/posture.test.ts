@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { patch } from "../wire/__fixtures__/lines";
+import { parseLine } from "../wire/parse";
+import { patch, RETURNED, SANDBOX_CONFIRM, SETTLED } from "../wire/__fixtures__/lines";
 import { attackLine, BANK_OTHER, BANK_REPORT, BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, SANDBOX_PAY, SANDBOX_REFUSED, WINDOW } from "./__fixtures__/window";
-import { bankEventsText, computePosture, counted, DEFINITIONS, formatCents, formatShare, LAYERS, layerOf, nearestRank } from "./posture";
+import { bankEventsText, computePosture, counted, DEFINITIONS, formatCents, formatShare, LAYERS, layerOf, nearestRank, railsText } from "./posture";
 
 const none = { count: 0, seqs: [] };
 const quiet = (kind: string) => ({ kind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] });
@@ -46,6 +47,7 @@ describe("computePosture", () => {
       },
       rails: [{ rail: "simulated", count: 2, seqs: [3, 9] }],
       bankEvents: { events: none, reported: none },
+      returned: [],
     });
   });
 
@@ -247,5 +249,20 @@ describe("definitions name holder intents", () => {
     expect(DEFINITIONS.layers).toBe(
       "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
     );
+  });
+});
+
+describe("returned payments", () => {
+  it("posture: a returned payment leaves its rail and is named returned", () => {
+    const paid = patch(SANDBOX_CONFIRM, {
+      seq: 5,
+      subject: { ...JSON.parse(SANDBOX_CONFIRM).subject, payment_id: "ach_transfer_t1" },
+    });
+    const p = computePosture([parseLine(paid), parseLine(RETURNED)]);
+    expect(p.rails).toEqual([]);
+    expect(p.returned).toEqual([8]);
+    expect(railsText(p)).toBe("no verified payments in this window · 1 returned (SIMULATED RETURN)");
+    expect(layerOf(parseLine(SETTLED))).toBe("bank");
+    expect(p.decided.count).toBe(1);
   });
 });

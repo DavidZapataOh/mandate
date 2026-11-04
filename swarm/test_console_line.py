@@ -673,3 +673,51 @@ def test_console_bank_fixture_is_the_python_golden():
 def test_reader_refuses_a_malformed_bank_line(line):
     with pytest.raises(ValueError, match="console line: malformed"):
         read_console_line(json.dumps(line))
+
+
+GOLDEN_SETTLED = (
+    '{"v":3,"seq":7,"source":"desk","event":null,"meta":null,"subject":{"step":'
+    '"settle","quote_id":"q:000001","status":"settled","summary":"Pay 200.00 USD'
+    ' to acme-991 (ref A-991) from checking-881","payment_id":"ach_transfer_t1",'
+    '"reason":"ok: settled at the bank"},"forensic":null}'
+)
+GOLDEN_RETURNED = (
+    '{"v":3,"seq":8,"source":"desk","event":null,"meta":null,"subject":{"step":'
+    '"settle","quote_id":"q:000001","status":"returned","summary":"Pay 200.00 USD'
+    ' to acme-991 (ref A-991) from checking-881","payment_id":"ach_transfer_t1",'
+    '"reason":"bank: returned R01 insufficient_fund (SIMULATED RETURN)"},'
+    '"forensic":null}'
+)
+ACH_SUMMARY = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881"
+
+
+@pytest.mark.parametrize(
+    ("seq", "status", "reason", "golden"),
+    [
+        (7, "settled", "ok: settled at the bank", GOLDEN_SETTLED),
+        (
+            8,
+            "returned",
+            "bank: returned R01 insufficient_fund (SIMULATED RETURN)",
+            GOLDEN_RETURNED,
+        ),
+    ],
+)
+def test_settle_lines_are_the_goldens(seq, status, reason, golden):
+    view = {
+        "status": status,
+        "quote_id": "q:000001",
+        "payment_id": "ach_transfer_t1",
+        "reason": reason,
+    }
+    line = dataclasses.replace(desk_line("settle", view, ACH_SUMMARY), seq=seq)
+    assert console_line_json(line) == golden
+    assert read_console_line(golden) == line
+
+
+@pytest.mark.parametrize(
+    ("name", "golden"),
+    [("SETTLED", GOLDEN_SETTLED), ("RETURNED", GOLDEN_RETURNED)],
+)
+def test_console_settle_fixtures_are_the_python_goldens(name, golden):
+    test_console_fixtures_are_the_python_goldens(name, golden)

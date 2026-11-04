@@ -19,6 +19,7 @@ import {
   tamper,
 } from "./__fixtures__/receipts";
 import OTS from "./__fixtures__/ots.json" with { type: "json" };
+import RECEIPT_ACH from "./__fixtures__/receipt-ach.json" with { type: "json" };
 import { keyBytes } from "./canon";
 import { anchorDigest, consentBytes } from "./chain";
 import { readDisclosure } from "./sdjwt";
@@ -744,5 +745,36 @@ describe("funds proof step", () => {
       status: "pass",
       detail: `COOPERATIVE statement ${COOP_REF}, signed by the desk; not a bank proof`,
     });
+  });
+});
+
+describe("ACH bank transfer step", () => {
+  it("passes an ACH transfer the bank accepted", async () => {
+    const r = await verifyReceipt(RECEIPT_ACH, TRUST);
+    expect(r.find((s) => s.step === "Bank transfer")).toEqual({
+      step: "Bank transfer",
+      status: "pass",
+      detail:
+        "SANDBOX ACH transfer ach_transfer_t1 at increase, accepted by the bank (pending_submission) under this certificate; an ACH transfer settles or is returned days later, so the Bank lifecycle panel says how it ended",
+    });
+  });
+
+  it.each([
+    [{ status: "complete" }, "Bank reports the ACH transfer complete, not accepted"],
+    [{ status: "pending_approval" }, "Bank reports the ACH transfer pending_approval, not accepted"],
+  ])("an ACH claim %j the bank did not accept fails", async (change, detail) => {
+    expect(await failed(await resign(bank(change), JSON.stringify(RECEIPT_ACH)))).toEqual({ step: "Bank transfer", status: "fail", detail });
+  });
+
+  it("passes an ACH transfer sealed after its return, and says it paid nothing", async () => {
+    const returned = await resign(bank({ status: "returned" }), JSON.stringify(RECEIPT_ACH));
+    const r = await verifyReceipt(JSON.parse(returned), TRUST);
+    expect(r.find((s) => s.step === "Bank transfer")).toEqual({
+      step: "Bank transfer",
+      status: "pass",
+      detail:
+        "SANDBOX ACH transfer ach_transfer_t1 at increase, requested under this certificate and returned by the bank before this receipt was sealed: the money moved and came back, so this payment paid nothing; the bank lifecycle below the steps says why",
+    });
+    expect(verdictOf(r).label).toBe("VERIFIED");
   });
 });

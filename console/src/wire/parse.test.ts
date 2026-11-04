@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ATTACK, BANK, CONFIRM, HOSTILE, patch } from "./__fixtures__/lines";
+import { ATTACK, BANK, CONFIRM, HOSTILE, patch, RETURNED, SETTLED } from "./__fixtures__/lines";
 import { parseHello, parseLine, WireError } from "./parse";
 
 describe("parseLine", () => {
@@ -122,5 +122,23 @@ describe("bank lines on the wire", () => {
   ])("rejects %s", (_name, text) => {
     expect(() => parseLine(text)).toThrow(WireError);
     expect(() => parseLine(text)).toThrow("wire: malformed line");
+  });
+});
+
+describe("settle lines", () => {
+  it("reads the bank's verdict on a payment as a desk step", () => {
+    const line = parseLine(RETURNED);
+    expect(line.source === "desk" && line.subject).toMatchObject({
+      step: "settle",
+      status: "returned",
+      payment_id: "ach_transfer_t1",
+      reason: "bank: returned R01 insufficient_fund (SIMULATED RETURN)",
+    });
+    expect(line.forensic).toBeNull();
+  });
+
+  it("refuses an unknown step", () => {
+    const subject = { ...JSON.parse(SETTLED).subject, step: "settled" };
+    expect(() => parseLine(patch(SETTLED, { subject }))).toThrow("wire: malformed line");
   });
 });

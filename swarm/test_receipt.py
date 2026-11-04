@@ -1,10 +1,12 @@
 import base64
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from bank.conftest import RecordingRail
+from bank.reconcile import AchState
 from gate.cava import CavaAction, Freshness, action_commitment
 from gate.certs import public_key_of, read_claims
 from gate.consent import Consent, verify_signature
@@ -294,3 +296,41 @@ def test_receipt_signs_the_bank_transfer(make_desk, sign_quote):
     }
     entry = json.loads(receipt["registry"]["entry"]["body"])
     assert entry["payment_id"] == "account_transfer_t1"
+
+
+ACH_GOLDEN = FIXTURES / "receipt-ach.json"
+LIFECYCLE_GOLDEN = FIXTURES / "lifecycle-ach.json"
+
+
+def test_ach_desk_receipt_and_lifecycle_are_the_goldens(
+    make_desk, sign_quote, state_store
+):
+    rail = RecordingRail(balance=50000, ach=True)
+    desk, _ = make_desk(
+        gate_key=GATE,
+        holder_key=HOLDER,
+        intents=(DEMO_INTENT,),
+        bank=rail,
+        bank_key=b"\x07" * 32,
+        state=state_store,
+    )
+    q = desk.quote("acme-991", 20000, "USD", "A-991", "i:000001")
+    desk.approve(q["quote_id"], sign_quote(HOLDER, q))
+    pid = desk.confirm(q["quote_id"])["payment_id"]
+    rail.states[pid] = AchState(
+        pid,
+        "returned",
+        "2027-01-15T09:16:40Z",
+        "R01",
+        "insufficient_fund",
+        "2027-01-16T08:16:40Z",
+    )
+    desk.track_ach(pid)
+    for path, value in (
+        (ACH_GOLDEN, desk.proof_receipt(pid)),
+        (LIFECYCLE_GOLDEN, desk.lifecycle(pid)),
+    ):
+        text = json.dumps(value, separators=(",", ":")) + "\n"
+        if os.environ.get("MANDATE_GOLDEN") == "1":
+            path.write_text(text)
+        assert text == path.read_text()

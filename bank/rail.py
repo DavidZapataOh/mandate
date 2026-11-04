@@ -4,6 +4,7 @@ import re
 from typing import Any, Protocol, runtime_checkable
 
 from bank.api import Payment, PaymentRequest
+from bank.reconcile import AchState
 
 SIMULATED = "simulated"
 SANDBOX = "sandbox"
@@ -127,6 +128,31 @@ class HoldingRail(Protocol):
 
         Raises:
             RailError: If the bank cannot be read (``bank: unavailable``).
+        """
+        ...
+
+
+@runtime_checkable
+class AchRail(Protocol):
+    """A bank rail that can pay by ACH and read each transfer's lifecycle."""
+
+    @property
+    def ach(self) -> bool:
+        """True when ``execute`` pays by ACH transfer."""
+        ...
+
+    def ach_state(self, transfer_id: str) -> AchState:
+        """Read where an ACH transfer stands: accepted, settled or returned.
+
+        Args:
+            transfer_id: The bank's id for the ACH transfer.
+
+        Returns:
+            The transfer's lifecycle as the bank reports it.
+
+        Raises:
+            RailError: If the bank cannot be read, or its answer is not this
+                ACH transfer (``bank: unavailable``).
         """
         ...
 

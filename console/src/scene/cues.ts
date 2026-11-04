@@ -91,6 +91,11 @@ function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
       const s = line.subject;
       const agent = agentOf(line.meta);
       const walker = (actor: ActorKind) => ({ actor, tag: TAGS[actor] as string });
+      if (s.step === "settle") {
+        // The bank's later word on a sealed payment: a note, so it never takes the stage from a verdict.
+        const bubble = s.status === "returned" ? `SIMULATED RETURN · ${s.summary}` : `Settled: ${s.summary}`;
+        return { ...base, actor: "agent", tag: "bank", route: "none", seal: null, outcome: "note", bubble: clip(bubble) };
+      }
       if (s.status === "denied" || s.status === "expired") {
         const holder = s.step === "approve" || s.step === "intent";
         return {

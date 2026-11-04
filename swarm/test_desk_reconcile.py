@@ -2,11 +2,14 @@ import json
 import sqlite3
 import threading
 
+import httpx
 import pytest
 
 from bank.api import RailError
-from bank.conftest import RecordingRail
+from bank.conftest import SENTINEL_KEY, RecordingRail, ach_body
+from bank.increase import IncreaseRail, sandbox_client
 from bank.reconcile import BankTransfer
+from bank.test_increase import ACCOUNTS
 from gate.state import StateStore
 from swarm.conftest import DEMO_INTENT
 from swarm.intent import sign_intent
@@ -437,3 +440,45 @@ def test_a_journal_from_another_rail_is_never_settled_here(state_store):
     assert (report.resolved, report.pending) == ((), ("q:000001",))
     assert desk.reconcile_intent("i:000001")["status"] == "unsettled"
     assert desk.registry.size() == 1
+
+
+class _AchAtTheBank:
+    """A sandbox that holds one ACH transfer under the journal's key."""
+
+    def __init__(self, status):
+        self.ach = ach_body(idempotency_key=KEY, status=status)
+        self.asked = []
+
+    def __call__(self, request):
+        self.asked.append((request.method, request.url.path, dict(request.url.params)))
+        if (request.method, request.url.path) == ("GET", "/account_transfers"):
+            return httpx.Response(200, json={"data": [], "next_cursor": None})
+        if (request.method, request.url.path) == ("GET", "/ach_transfers"):
+            return httpx.Response(200, json={"data": [self.ach], "next_cursor": None})
+        return httpx.Response(500, json={"type": "unexpected"})
+
+
+@pytest.mark.parametrize("status", ["pending_submission", "submitted"])
+def test_an_ach_journal_is_never_freed_by_a_restart_without_ach(state_store, status):
+    now = [NOW]
+    _unknown(state_store, now=now)
+    path = state_store.path
+    state_store.close()
+    store = StateStore(path)
+    bank = _AchAtTheBank(status)
+    client = sandbox_client(
+        SENTINEL_KEY, httpx.Client(transport=httpx.MockTransport(bank))
+    )
+    rail = IncreaseRail(client, ACCOUNTS)
+    now[0] = RELEASE + 3600
+    again = _desk(store, nonce_from=101, bank=rail, now=now)
+    report = again.reconcile()
+    assert (report.resolved, report.pending) == ((), ("q:000001",))
+    assert report.unbacked == (bank.ach["id"],)
+    assert again.intent_receipt("i:000001")["status"] == "unsettled"
+    assert len(store.records("pending")) == 1
+    assert ("GET", "/ach_transfers", {"idempotency_key": KEY}) in bank.asked
+    assert [
+        a for a in bank.asked if a[1] not in ("/account_transfers", "/ach_transfers")
+    ] == []
+    store.close()

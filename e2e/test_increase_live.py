@@ -13,11 +13,17 @@ from increase import (
     InvalidOperationError,
 )
 
+from bank.ach import simulate
 from bank.api import PaymentRequest
 from bank.conftest import DOC_EVENT, FIXTURES
 from bank.credentials import BANK_KEY_ENV
 from bank.events import BankEvents
-from bank.increase import IncreaseRail, ensure_accounts, sandbox_client
+from bank.increase import (
+    IncreaseRail,
+    ensure_account_number,
+    ensure_accounts,
+    sandbox_client,
+)
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from gate.consent import Consent, sign_approval
@@ -455,4 +461,134 @@ def test_a_two_step_payment_waits_at_the_bank_until_the_certified_confirm(
     assert f"{expired['quote_id']} -> hold canceled" in report.resolved
     assert client.account_transfers.retrieve(dropped).status == "canceled"
     assert (report.unbacked, report.error) == ((), None)
+    store.close()
+
+
+@pytest.mark.live
+def test_capture_ach_responses():
+    key = _key()
+    recorder = _Recorder()
+    http = httpx.Client(event_hooks={"response": [recorder]})
+    client = sandbox_client(key, http, max_retries=0)
+    accounts = ensure_accounts(client, CAPTURE, CAPTURE[0], 100000)
+    payer, payee = accounts[CAPTURE[0]], accounts[CAPTURE[1]]
+    saved = {}
+
+    def keep(name):
+        saved[name] = recorder.last
+
+    number = client.account_numbers.create(
+        account_id=payee,
+        name=f"{CAPTURE[1]} ach",
+        idempotency_key="mandate-capture-ach-number-payee",
+    )
+    client.account_numbers.list(account_id=payee, status={"in": ["active"]})
+    keep("account_numbers_active")
+    idem = f"mandate-capture-{secrets.token_hex(8)}"
+    fields = {
+        "account_id": payer,
+        "statement_descriptor": f"Mandate capture {idem}",
+        "account_number": number.account_number,
+        "routing_number": number.routing_number,
+        "funding": "checking",
+        "individual_name": CAPTURE[1],
+        "require_approval": False,
+    }
+    before = client.accounts.balance(payer).available_balance
+    sent = client.ach_transfers.create(amount=100, idempotency_key=idem, **fields)
+    keep("ach_transfer")
+    assert sent.status == "pending_submission"
+    # The bank holds the amount at once: a pending transaction.
+    assert client.accounts.balance(payer).available_balance == before - 100
+    again = client.ach_transfers.create(amount=100, idempotency_key=idem, **fields)
+    keep("ach_transfer_replayed")
+    assert again.id == sent.id
+    assert saved["ach_transfer_replayed"]["replayed"] == "true"
+    with pytest.raises(IdempotencyKeyAlreadyUsedError):
+        client.ach_transfers.create(amount=101, idempotency_key=idem, **fields)
+    keep("ach_idempotency_conflict")
+    client.ach_transfers.list(idempotency_key=idem)
+    keep("ach_transfers_by_key")
+    with pytest.raises(APIStatusError):
+        client.simulations.ach_transfers.return_(
+            sent.id,
+            reason="insufficient_fund",
+            idempotency_key=f"mandate-capture-early-return-{sent.id}",
+        )
+    keep("ach_return_refused")
+    client.simulations.ach_transfers.submit(
+        sent.id, idempotency_key=f"mandate-simulate-submit-{sent.id}"
+    )
+    keep("ach_transfer_submitted")
+    settled = client.simulations.ach_transfers.settle(
+        sent.id, idempotency_key=f"mandate-simulate-settle-{sent.id}"
+    )
+    keep("ach_transfer_settled")
+    assert settled.status == "submitted" and settled.settlement is not None
+    returned = client.simulations.ach_transfers.return_(
+        sent.id,
+        reason="insufficient_fund",
+        idempotency_key=f"mandate-simulate-return-{sent.id}",
+    )
+    keep("ach_transfer_returned")
+    assert returned.status == "returned" and returned.return_ is not None
+    assert returned.return_.raw_return_reason_code == "R01"
+    # The return offsets the original: the 100 is back.
+    assert client.accounts.balance(payer).available_balance == before
+    client.ach_transfers.retrieve(sent.id)
+    keep("ach_transfer_retrieved")
+    available = client.accounts.balance(payer).available_balance
+    with pytest.raises(InvalidOperationError):
+        client.ach_transfers.create(
+            amount=available + 1,
+            idempotency_key=f"mandate-capture-{secrets.token_hex(8)}",
+            **fields,
+        )
+    keep("ach_insufficient_balance")
+    for name, record in saved.items():
+        text = json.dumps(record, indent=2, sort_keys=True) + "\n"
+        assert key not in text
+        if os.environ.get("MANDATE_CAPTURE") == "1":
+            (FIXTURES / f"{name}.json").write_text(text)
+        else:
+            body = json.loads((FIXTURES / f"{name}.json").read_text())["body"]
+            assert set(record["body"]) == set(body), name
+
+
+@pytest.mark.live
+def test_an_ach_payment_settles_is_returned_and_the_registry_says_so(tmp_path):
+    client = sandbox_client(_key())
+    accounts = ensure_accounts(client, LIVE, LIVE[0], 1_000_000)
+    ensure_account_number(client, accounts[LIVE[1]], LIVE[1])
+    rail = IncreaseRail.connect(client, ach=True)
+    gate_key, gate_pub = generate_keypair()
+    holder_key, holder_pub = generate_keypair()
+    store = StateStore(tmp_path / "state.db")
+    desk = PaymentDesk(
+        source=LIVE[0],
+        bank=rail,
+        verifier=Verifier(gate_pub, state=store),
+        gate_key=gate_key,
+        clock=lambda: int(time.time()),
+        nonces=lambda: secrets.token_hex(16),
+        state=store,
+    )
+    desk.register_holder(holder_pub)
+    intent = Intent(100, "USD", LIVE[1], "A-ACH")
+    iid = desk.record_intent(intent, sign_intent(holder_key, intent))["intent_id"]
+    quoted = desk.quote(LIVE[1], 100, "USD", "A-ACH", intent_id=iid)
+    consent = Consent(**quoted["consent"], signature=b"")
+    desk.approve(quoted["quote_id"], sign_approval(holder_key, consent))
+    paid = desk.confirm(quoted["quote_id"])
+    pid = paid["payment_id"]
+    assert paid["status"] == "confirmed"
+    assert pid.startswith(("ach_transfer_", "sandbox_ach_transfer_"))
+    simulate(client, "settle", pid)
+    assert desk.track_ach(pid) == "settled"
+    simulate(client, "return", pid)
+    report = desk.reconcile()
+    assert f"{pid} -> returned R01 (SIMULATED RETURN)" in report.resolved
+    assert desk.intent_receipt(iid)["status"] == "returned"
+    assert desk.lifecycle(pid)["label"] == "SIMULATED RETURN"
+    assert desk.reconcile().resolved == ()
     store.close()

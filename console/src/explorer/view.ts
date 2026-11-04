@@ -1,11 +1,12 @@
 import { fromBase64, type Bytes } from "./bytes";
 import { anonymityText, exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
 import { classify } from "./input";
+import { fetchLifecycle, lifecycleRows } from "./lifecycle";
 import { carries, receiptHash } from "./lookup";
 import { presentation } from "./present";
 import { fetchByHash, fetchKeys, fetchReceipt, type Fetch, type PublishedKeys } from "./publish";
 import { parseReceipt, ReceiptError, type Receipt } from "./receipt";
-import { disclosedOf, GROUPS, verdictOf, verifyCertificate, verifyReceipt, type Group, type Status, type StepResult, type Trust } from "./verify";
+import { disclosedOf, GROUPS, isAchTransfer, verdictOf, verifyCertificate, verifyReceipt, type Group, type Status, type StepResult, type Trust } from "./verify";
 
 /** The mounted explorer; each method is what its button does. */
 export interface Explorer {
@@ -66,6 +67,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
   const verdict = byId(doc, "verdict");
   const steps = byId(doc, "steps");
   const reveals = byId(doc, "reveals");
+  const lifecycle = byId(doc, "lifecycle");
   const output = byId<HTMLTextAreaElement>(doc, "presentation");
 
   let published: PublishedKeys | null = null;
@@ -92,6 +94,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     verdict.replaceChildren();
     steps.replaceChildren();
     reveals.replaceChildren();
+    lifecycle.replaceChildren();
     return () => ticket === runs;
   }
 
@@ -99,6 +102,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     showVerdict("CANNOT VERIFY", reason);
     steps.replaceChildren();
     reveals.replaceChildren();
+    lifecycle.replaceChildren();
   }
 
   function trust(): Trust | null {
@@ -144,7 +148,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     value: unknown,
     t: Trust,
     current: () => boolean,
-  ): Promise<{ receipt: Receipt | null; bound: boolean } | "superseded"> {
+  ): Promise<{ receipt: Receipt | null; bound: boolean; banked: boolean } | "superseded"> {
     let receipt: Receipt | null = null;
     try {
       receipt = parseReceipt(value);
@@ -156,7 +160,24 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     if (!current()) return "superseded";
     showSteps(results);
     reveals.replaceChildren(...rows);
-    return { receipt, bound: results.some((r) => r.step === "Receipt disclosures" && r.status === "pass") };
+    return {
+      receipt,
+      bound: results.some((r) => r.step === "Receipt disclosures" && r.status === "pass"),
+      banked: results.some((r) => r.step === "Bank transfer" && r.status === "pass"),
+    };
+  }
+
+  // What the bank did after the receipt was sealed, read from the server and verified here; only for an ACH
+  // payment whose receipt verified up to its bank transfer, so a broken receipt never borrows a lifecycle.
+  async function showLifecycle(receipt: Receipt | null, banked: boolean, t: Trust, current: () => boolean): Promise<void> {
+    if (receipt === null || !banked || !isAchTransfer(receipt.payment_id)) return;
+    const d = await disclosedOf(receipt, t.gateKey);
+    if (d === null || !current()) return;
+    const value = await fetchLifecycle(receipt.payment_id, fetchFn);
+    if (!current()) return;
+    const rows = await lifecycleRows(value, receipt, d, t.gateKey);
+    if (!current()) return;
+    lifecycle.replaceChildren(...rows.flatMap(([term, text]) => [element(doc, "dt", term), element(doc, "dd", text)]));
   }
 
   async function lookUp(id: string, t: Trust, full: boolean, current: () => boolean, hash: string | null = null): Promise<void> {
@@ -184,6 +205,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     shown = checked.receipt;
     lookedUp = id;
     lookedHash = hash;
+    await showLifecycle(checked.receipt, checked.banked, t, current);
   }
 
   async function findByHash(hash: string, t: Trust, current: () => boolean): Promise<void> {
@@ -213,6 +235,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
       lookedUp = checked.receipt.payment_id;
       lookedHash = hash;
     }
+    await showLifecycle(checked.receipt, checked.banked, t, current);
   }
 
   async function verify(): Promise<void> {

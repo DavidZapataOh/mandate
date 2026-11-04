@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { HOSTILE } from "../wire/__fixtures__/lines";
+import { HOSTILE, RETURNED, SETTLED } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { attack, bill, confirmed, desk, gateEvent, hook, NARRATIVE, SPARK_META, SUMMARY } from "./__fixtures__/cases";
 import { cueFor } from "./cues";
@@ -112,4 +112,12 @@ test("a forged holder approval is a forger the gate refuses at the consent", () 
 
 test("a forged approval without a gate event names the gate as its layer", () => {
   expect(cueFor(attack("forged_approval", "holder->gate")).alert).toBe("denied · forged approval · at the gate");
+});
+
+test("never animates a settle line", () => {
+  const settled = cueFor(parseLine(SETTLED));
+  const returned = cueFor(parseLine(RETURNED));
+  expect([settled.outcome, settled.seal, settled.route]).toEqual(["note", null, "none"]);
+  expect(returned.bubble.startsWith("SIMULATED RETURN · Pay 200.00 USD")).toBe(true);
+  expect(returned.outcome).toBe("note");
 });

@@ -524,7 +524,8 @@ main {
   min-height: 136px;
 }
 
-#reveals {
+#reveals,
+#lifecycle {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 8px 12px;
@@ -533,11 +534,13 @@ main {
   line-height: 1.35;
 }
 
-#reveals dt {
+#reveals dt,
+#lifecycle dt {
   font: 700 16px/1.35 var(--sans);
 }
 
-#reveals dd {
+#reveals dd,
+#lifecycle dd {
   font: 400 16px/1.35 var(--mono);
   overflow-wrap: anywhere;
 }
@@ -554,6 +557,15 @@ main {
 }
 
 #reveals:not(:empty) + .empty {
+  display: none;
+}
+
+/* Only an ACH payment looked up on this server has a bank lifecycle; otherwise the heading stays out of the panel. */
+.lifecycle {
+  margin-top: 24px;
+}
+
+.lifecycle:has(#lifecycle:empty) {
   display: none;
 }
 

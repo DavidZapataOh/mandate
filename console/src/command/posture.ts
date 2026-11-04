@@ -67,6 +67,8 @@ export interface Posture {
   readonly rails: readonly { readonly rail: string; readonly count: number; readonly seqs: readonly number[] }[];
   /** Events the bank itself reported, and the verified sandbox payments whose transfer id one of them names. */
   readonly bankEvents: { readonly events: Count; readonly reported: Count };
+  /** Seqs of the settle lines saying the bank returned a payment; that payment leaves its rail. */
+  readonly returned: readonly number[];
 }
 
 export type MetricKey =
@@ -114,7 +116,7 @@ export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
   layers:
     "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
   rails:
-    "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED).",
+    "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED). A payment the bank later returned in this window leaves its rail and is counted as returned (it stays in Verified: the gate did certify it); on the sandbox every return is one Mandate's own simulation caused, so it reads SIMULATED RETURN.",
   bankEvents:
     "Events the bank itself reported in this window, read from its own event list (Increase List Events, oldest first) on the sandbox rail; each line names the bank's event id and the object it belongs to. They are observations: they never count as decisions, verified payments or denials. Reported: of the verified sandbox payments in this window, those whose transfer id a bank event names.",
   unbacked:
@@ -156,6 +158,8 @@ export function layerOf(line: ConsoleLine): string {
           return "holder intent";
         case "quote":
           return "desk";
+        case "settle":
+          return "bank";
         default: {
           const unreachable: never = line.subject.step;
           return unreachable;
@@ -168,10 +172,10 @@ export function layerOf(line: ConsoleLine): string {
   }
 }
 
-/** "SANDBOX 1 · SIMULATED 2", or a plain statement when no verified payment names a rail. */
+/** "SANDBOX 1 · SIMULATED 2", or a plain statement when no verified payment names a rail; returned payments follow, labelled. */
 export function railsText(p: Posture): string {
-  if (p.rails.length === 0) return "no verified payments in this window";
-  return p.rails.map((r) => `${r.rail.toUpperCase()} ${r.count}`).join(" · ");
+  const rails = p.rails.length === 0 ? "no verified payments in this window" : p.rails.map((r) => `${r.rail.toUpperCase()} ${r.count}`).join(" · ");
+  return p.returned.length === 0 ? rails : `${rails} · ${p.returned.length} returned (SIMULATED RETURN)`;
 }
 
 /** How many events the bank reported, and how many verified sandbox payments one of them names. */
@@ -268,6 +272,9 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
   const bankEvents = bucket();
   const bankObjects = new Set<string>();
   const sandboxPaid: { seq: number; transferId: string }[] = [];
+  const railed: { rail: string; seq: number; paymentId: string | null }[] = [];
+  const returned: number[] = [];
+  const returnedIds = new Set<string>();
   const attacks = new Map<string, AttackAcc>(
     ATTACK_KINDS.map((kind) => [kind, { kind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] }]),
   );
@@ -290,11 +297,15 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
       push(bankEvents, line.seq);
       bankObjects.add(line.subject.object_id);
     }
+    if (line.source === "desk" && line.subject.step === "settle" && line.subject.status === "returned") {
+      returned.push(line.seq);
+      if (line.subject.payment_id !== null) returnedIds.add(line.subject.payment_id);
+    }
     if (outcome === "pass") {
       push(verified, line.seq);
       const rail = railOf(line);
-      if (rail !== null) rails.set(rail, [...(rails.get(rail) ?? []), line.seq]);
       const transferId = line.source === "desk" ? line.subject.payment_id : null;
+      if (rail !== null) railed.push({ rail, seq: line.seq, paymentId: transferId });
       if (rail === "sandbox" && transferId !== null) sandboxPaid.push({ seq: line.seq, transferId });
     }
     if (outcome === "deny") push(denied, line.seq);
@@ -338,9 +349,12 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
     }
   }
 
+  // A return may follow its payment anywhere in the window, so the rails are counted once the whole window is read.
+  const standing = (paymentId: string | null) => paymentId === null || !returnedIds.has(paymentId);
+  for (const r of railed) if (standing(r.paymentId)) rails.set(r.rail, [...(rails.get(r.rail) ?? []), r.seq]);
   // A bank event may arrive before or after the payment it names, so the match waits for the whole window.
   const reported = bucket();
-  for (const paid of sandboxPaid) if (bankObjects.has(paid.transferId)) push(reported, paid.seq);
+  for (const paid of sandboxPaid) if (standing(paid.transferId) && bankObjects.has(paid.transferId)) push(reported, paid.seq);
   const sorted = latencies.map((l) => l.us).sort((a, b) => a - b);
   return {
     window: { first: lines[0]?.seq ?? null, last: lines[lines.length - 1]?.seq ?? null, lines: lines.length },
@@ -369,5 +383,6 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([rail, seqs]) => ({ rail, count: seqs.length, seqs })),
     bankEvents: { events: bankEvents, reported },
+    returned,
   };
 }

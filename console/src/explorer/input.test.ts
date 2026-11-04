@@ -16,6 +16,12 @@ describe("classify", () => {
     });
   });
   it.each([
+    ["ach_transfer_uoxatyh3lt5evrsdvo7q", "payment"],
+    ["sandbox_ach_transfer_x1", "payment"],
+  ])("reads the ACH transfer id %j as a payment id", (text, kind) => {
+    expect(classify(text)).toEqual({ kind, id: text });
+  });
+  it.each([
     ["73fb45625595a413f1f2ee4ec0a19acb4bdf4709a1927856a9ee2f31a4c0391f", "73fb45625595a413f1f2ee4ec0a19acb4bdf4709a1927856a9ee2f31a4c0391f"],
     [" 52E9B189B7DB1F410229E8BB9A3A4A99D34E30523C3507480821839A3845069B\n", "52e9b189b7db1f410229e8bb9a3a4a99d34e30523c3507480821839a3845069b"],
     ["1".repeat(64), "1".repeat(64)],

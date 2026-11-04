@@ -1,9 +1,11 @@
-"""Increase sandbox rail: certified payments become account transfers."""
+"""Increase sandbox rail: certified payments become account or ACH transfers."""
 
 import argparse
+import datetime
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 import httpx
 from increase import (
@@ -17,12 +19,20 @@ from increase import (
     PermissionDeniedError,
     RateLimitError,
 )
-from increase.types import AccountTransfer
+from increase.types import AccountTransfer, ACHTransfer
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
 from bank.credentials import BANK_KEY_ENV, take_bank_key
 from bank.rail import NO_TRANSFER, SANDBOX
-from bank.reconcile import CANCELED, PENDING_APPROVAL, BankTransfer
+from bank.reconcile import (
+    CANCELED,
+    IN_FLIGHT,
+    NO_MONEY,
+    PENDING_APPROVAL,
+    RETURNED,
+    AchState,
+    BankTransfer,
+)
 
 SANDBOX_URL = "https://sandbox.increase.com"
 PROVIDER = "increase"
@@ -31,6 +41,9 @@ DEMO_FUND_CENTS = 1_000_000
 
 # Increase rejects longer transfer descriptions.
 _DESCRIPTION_MAX = 200
+# Increase rejects longer ACH individual names.
+_INDIVIDUAL_NAME_MAX = 22
+_TIME = "%Y-%m-%dT%H:%M:%SZ"
 
 # The desk holds its lock through the bank call, so each call is bounded:
 # 5 s to connect, 10 s for each read or write. The SDK retries nothing by
@@ -82,22 +95,53 @@ def _open_accounts(client: Increase) -> dict[str, str]:
     }
 
 
+@dataclass(frozen=True)
+class AchDestination:
+    """Where an ACH transfer to a payee goes.
+
+    Args:
+        account_number: The payee's account number.
+        routing_number: The routing number of the payee's bank.
+    """
+
+    account_number: str
+    routing_number: str
+
+
 class IncreaseRail:
     """Bank rail that moves money as Increase sandbox account transfers.
+
+    On an ACH rail (``destinations`` given) each payment leaves as an ACH
+    transfer to the payee's account number instead. Money counts as moved
+    once the bank accepted the transfer, because the bank holds the full
+    amount from then on; its later settlement or return is read by
+    ``ach_state``.
 
     Args:
         client: Increase client pinned to the sandbox.
         accounts: Mandate account name to Increase account id.
         two_step: When True, ``execute`` approves a transfer ``hold`` made
             under the same key instead of creating one.
+        destinations: Mandate payee name to its ACH destination; when given,
+            ``execute`` pays by ACH.
+
+    Raises:
+        ValueError: If both ``two_step`` and ``destinations`` are given.
     """
 
     def __init__(
-        self, client: Increase, accounts: Mapping[str, str], two_step: bool = False
+        self,
+        client: Increase,
+        accounts: Mapping[str, str],
+        two_step: bool = False,
+        destinations: Mapping[str, AchDestination] | None = None,
     ) -> None:
+        if two_step and destinations is not None:
+            raise ValueError("ach and two-step are exclusive")
         self._client = client
         self._accounts = dict(accounts)
         self._two_step = two_step
+        self._destinations = None if destinations is None else dict(destinations)
         # Key to the held transfer id and the request it holds. Open quotes
         # do not survive a restart, so a certificate whose hold is not here
         # takes the one-step path, which the bank answers as a replay.
@@ -121,18 +165,32 @@ class IncreaseRail:
         """True when ``execute`` approves held transfers."""
         return self._two_step
 
+    @property
+    def ach(self) -> bool:
+        """True when ``execute`` pays by ACH transfer."""
+        return self._destinations is not None
+
     @classmethod
-    def connect(cls, client: Increase, two_step: bool = False) -> "IncreaseRail":
+    def connect(
+        cls, client: Increase, two_step: bool = False, ach: bool = False
+    ) -> "IncreaseRail":
         """Address every open Increase account by its name.
 
         Args:
             client: Increase client pinned to the sandbox.
             two_step: Whether ``execute`` approves held transfers.
+            ach: Whether ``execute`` pays by ACH; each open account is then
+                paid at its first active account number.
 
         Returns:
             The rail.
+
+        Raises:
+            ValueError: If both ``two_step`` and ``ach`` are set.
         """
-        return cls(client, _open_accounts(client), two_step=two_step)
+        accounts = _open_accounts(client)
+        destinations = _active_numbers(client, accounts) if ach else None
+        return cls(client, accounts, two_step=two_step, destinations=destinations)
 
     def holds(self, names: Sequence[str]) -> bool:
         """Tell whether the bank holds an open account for every name.
@@ -161,13 +219,32 @@ class IncreaseRail:
             raise ValueError(f"unknown account: {name}")
         return self._accounts[name]
 
+    def destination(self, name: str) -> AchDestination:
+        """Return where an ACH transfer to a payee goes.
+
+        Args:
+            name: Mandate account name of the payee.
+
+        Returns:
+            The payee's account and routing numbers.
+
+        Raises:
+            ValueError: If the payee has no ACH destination.
+        """
+        if self._destinations is None or name not in self._destinations:
+            raise ValueError(f"unknown account: {name}")
+        return self._destinations[name]
+
     def execute(
         self,
         request: PaymentRequest,
         action_hash: str,
         idempotency_key: str | None = None,
     ) -> Payment:
-        """Move the money as one account transfer under the idempotency key.
+        """Move the money as one transfer under the idempotency key.
+
+        The transfer is an account transfer, or an ACH transfer on an ACH
+        rail.
 
         The verifier spends the certificate before it calls the rail, so the
         bank can hold a transfer under this key only because this certificate
@@ -196,6 +273,8 @@ class IncreaseRail:
         """
         if idempotency_key is None:
             raise ValueError("sandbox transfers need an idempotency key")
+        if self._destinations is not None:
+            return self._send_ach(request, action_hash, idempotency_key)
         # One pop, never check-then-pop: `release` runs outside the desk lock.
         entry = self._holding.pop(idempotency_key, None) if self._two_step else None
         if entry is not None:
@@ -232,8 +311,11 @@ class IncreaseRail:
                 answer nor the lookup finds the transfer; ``bank: transfer
                 differs`` or ``bank: not held for approval`` for a transfer
                 the bank did not hold as asked.
-            ValueError: If an account is unknown or funds are insufficient.
+            ValueError: If an account is unknown or funds are insufficient, or
+                the rail pays by ACH.
         """
+        if self._destinations is not None:
+            raise ValueError("ach and two-step are exclusive")
         answer = self._create(request, idempotency_key, require_approval=True)
         if not isinstance(answer, AccountTransfer):
             answer = self._by_key(idempotency_key)
@@ -425,14 +507,23 @@ class IncreaseRail:
     ) -> Payment | None:
         """Look up the transfer the bank holds under an idempotency key.
 
+        The account transfers are read first and the ACH transfers only when
+        none is listed under the key, on every rail: a journal left by a run
+        of the other kind is never released while its transfer exists. Off an
+        ACH rail an ACH transfer under the key that moved money (or still may)
+        cannot be compared with any destination, so it is ``bank: not
+        complete`` and stays unsettled.
+
         Args:
             request: The payment the key was sent for.
             action_hash: Salted hash of the action the payment settles.
             idempotency_key: Key the transfer was requested under.
 
         Returns:
-            The payment when the bank holds a matching complete transfer;
-            None when it holds no transfer under the key.
+            The payment when the bank holds a matching complete transfer (or,
+            on an ACH rail, one the bank accepted); None when it holds no
+            transfer under the key, or only this key's ACH transfer that moved
+            nothing (canceled or rejected, or returned off an ACH rail).
 
         Raises:
             RailError: ``bank: outcome unknown`` when the lookup itself gets
@@ -449,11 +540,158 @@ class IncreaseRail:
         # Only a list read as transfers can say the bank holds none.
         if not isinstance(held, list):
             raise RailError("bank: outcome unknown")
+        if held:
+            if not isinstance(held[0], AccountTransfer):
+                raise RailError("bank: outcome unknown")
+            return self._paid(held[0], request, action_hash, idempotency_key)
+        return self._reconcile_ach(request, action_hash, idempotency_key)
+
+    def _send_ach(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment:
+        """Pay by one keyed ACH transfer; refusals and lost answers as for one."""
+        destination = self.destination(request.to_acct)
+        source = self.account_id(request.from_acct)
+        descriptor = f"Mandate {request.ref} {idempotency_key}"[:_DESCRIPTION_MAX]
+        try:
+            answer: object = self._client.ach_transfers.create(
+                account_id=source,
+                amount=request.amount_cents,
+                statement_descriptor=descriptor,
+                account_number=destination.account_number,
+                routing_number=destination.routing_number,
+                funding="checking",
+                individual_name=request.to_acct[:_INDIVIDUAL_NAME_MAX],
+                require_approval=False,
+                idempotency_key=idempotency_key,
+            )
+        except APIStatusError as exc:
+            refused = self._refused(exc, request, idempotency_key)
+            if refused is not None:
+                raise refused from None
+            answer = None
+        except Exception:
+            # No answer, or one the SDK could not read: the bank may still
+            # have accepted the transfer.
+            answer = None
+        if isinstance(answer, ACHTransfer):
+            return self._ach_paid(answer, request, action_hash, idempotency_key)
+        found = self.reconcile(request, action_hash, idempotency_key)
+        if found is None:
+            raise RailError("bank: outcome unknown")
+        return found
+
+    def _reconcile_ach(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment | None:
+        """The ACH transfer under a key as this payment; None if nothing moved."""
+        try:
+            found = self._ach_by_key(idempotency_key)
+        except TypeError:
+            raise RailError("bank: outcome unknown") from None
+        if found is None:
+            return None
+        status = getattr(found, "status", None)
+        # Only this key's own transfer can say nothing moved under it.
+        if getattr(found, "idempotency_key", None) != idempotency_key:
+            raise RailError("bank: transfer differs")
+        if status in NO_MONEY:
+            return None
+        if self._destinations is None:
+            # The payment may still be this one; a returned one moved money
+            # once, so its intent must never be freed to pay again.
+            raise RailError("bank: not complete")
+        return self._ach_paid(found, request, action_hash, idempotency_key)
+
+    def _ach_by_key(self, idempotency_key: str) -> ACHTransfer | None:
+        """The one ACH transfer listed under a key; None when none is.
+
+        Raises:
+            TypeError: If the listing cannot be read, is not ACH transfers,
+                or lists more than one under the key.
+        """
+        try:
+            held: object = self._client.ach_transfers.list(
+                idempotency_key=idempotency_key
+            ).data
+        except Exception:
+            raise TypeError("no listing") from None
+        # The bank keeps one transfer per key; more is an answer it never gives.
+        if not isinstance(held, list) or len(held) > 1:
+            raise TypeError("not one listing")
         if not held:
             return None
-        if not isinstance(held[0], AccountTransfer):
-            raise RailError("bank: outcome unknown")
-        return self._paid(held[0], request, action_hash, idempotency_key)
+        if not isinstance(held[0], ACHTransfer):
+            raise TypeError("not an ACH transfer")
+        return held[0]
+
+    def _ach_paid(
+        self,
+        transfer: ACHTransfer,
+        request: PaymentRequest,
+        action_hash: str,
+        idempotency_key: str,
+    ) -> Payment:
+        destination = self.destination(request.to_acct)
+        held = (
+            transfer.amount,
+            transfer.currency,
+            transfer.account_id,
+            transfer.account_number,
+            transfer.routing_number,
+            transfer.idempotency_key,
+        )
+        asked = (
+            request.amount_cents,
+            request.currency,
+            self.account_id(request.from_acct),
+            destination.account_number,
+            destination.routing_number,
+            idempotency_key,
+        )
+        if held != asked:
+            raise RailError("bank: transfer differs")
+        if transfer.status in NO_MONEY:
+            raise RailError("bank: refused")
+        # The bank holds the full amount from acceptance on, so an accepted
+        # ACH is the payment; a return is recorded later, never undone here.
+        if transfer.status not in (*IN_FLIGHT, RETURNED):
+            raise RailError("bank: not complete")
+        return Payment(
+            payment_id=transfer.id,
+            from_acct=request.from_acct,
+            to_acct=request.to_acct,
+            amount_cents=request.amount_cents,
+            currency=request.currency,
+            ref=request.ref,
+            action_hash=action_hash,
+            rail=SANDBOX,
+            provider=PROVIDER,
+            status=transfer.status,
+            idempotency_key=idempotency_key,
+        )
+
+    def ach_state(self, transfer_id: str) -> AchState:
+        """Read where an ACH transfer stands with one read by its id.
+
+        Args:
+            transfer_id: The bank's id for the ACH transfer.
+
+        Returns:
+            Its status, and when it settled or was returned and why.
+
+        Raises:
+            RailError: If the bank cannot be read, or its answer is not this
+                ACH transfer in a readable state (``bank: unavailable``).
+        """
+        try:
+            answer: object = self._client.ach_transfers.retrieve(transfer_id)
+        except Exception:
+            raise RailError("bank: unavailable") from None
+        state = _ach_state(answer)
+        if state.transfer_id != transfer_id:
+            raise RailError("bank: unavailable")
+        return state
 
     def _paid(
         self,
@@ -510,7 +748,9 @@ class IncreaseRail:
     def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
         """List the transfers that left an account since a time.
 
-        Reads only: the listing follows every page and writes nothing.
+        Reads only: the listing follows every page and writes nothing. The
+        ACH transfers follow the account transfers on every rail, so an ACH
+        no certificate explains is named whichever mode the desk runs in.
 
         Args:
             from_acct: Mandate account name.
@@ -528,7 +768,7 @@ class IncreaseRail:
         # Any answer that does not read as transfers (a proxy's page, an odd
         # body, a dropped connection) leaves the listing unknown.
         try:
-            return [
+            listed = [
                 _held(transfer)
                 for transfer in self._client.account_transfers.list(
                     account_id=account_id,
@@ -536,11 +776,23 @@ class IncreaseRail:
                     limit=100,
                 )
             ]
+            listed += [
+                _held_ach(transfer)
+                for transfer in self._client.ach_transfers.list(
+                    account_id=account_id,
+                    created_at={"on_or_after": since},
+                    limit=100,
+                )
+            ]
         except Exception:
             raise RailError("bank: unavailable") from None
+        return listed
 
     def transfer_by_key(self, key: str) -> BankTransfer | None:
         """Return the transfer the bank holds under an idempotency key.
+
+        The ACH transfers are read when no account transfer is listed under
+        the key, on every rail.
 
         Args:
             key: Idempotency key.
@@ -557,7 +809,10 @@ class IncreaseRail:
             held: object = page.data
             if not isinstance(held, list):
                 raise TypeError("not a list")
-            return _held(held[0]) if held else None
+            if held:
+                return _held(held[0])
+            ach = self._ach_by_key(key)
+            return None if ach is None else _held_ach(ach)
         except Exception:
             raise RailError("bank: unavailable") from None
 
@@ -594,6 +849,53 @@ def _held(transfer: object) -> BankTransfer:
     )
 
 
+def _held_ach(transfer: object) -> BankTransfer:
+    """The bank's ACH transfer, read field by field; TypeError when not one."""
+    if not isinstance(transfer, ACHTransfer):
+        raise TypeError("not an ACH transfer")
+    return BankTransfer(
+        transfer.id,
+        transfer.amount,
+        transfer.status,
+        transfer.idempotency_key,
+        _stamp(transfer.created_at),
+    )
+
+
+def _stamp(moment: object) -> str:
+    """A bank time in UTC as ``YYYY-MM-DDTHH:MM:SSZ``; TypeError if it is none."""
+    if not isinstance(moment, datetime.datetime) or moment.tzinfo is None:
+        raise TypeError("not a time")
+    return moment.astimezone(datetime.UTC).strftime(_TIME)
+
+
+def _ach_state(transfer: object) -> AchState:
+    """An ACH transfer's lifecycle; ``bank: unavailable`` when it cannot be read.
+
+    The SDK builds a transfer from any body without validating it, so a
+    return is read only from a ``returned`` transfer that carries one.
+    """
+    if not isinstance(transfer, ACHTransfer):
+        raise RailError("bank: unavailable")
+    returned = transfer.return_
+    if (transfer.status == RETURNED) != (returned is not None):
+        raise RailError("bank: unavailable")
+    try:
+        if not isinstance(transfer.id, str) or not isinstance(transfer.status, str):
+            raise TypeError("not a transfer")
+        settlement = transfer.settlement
+        settled_at = None if settlement is None else _stamp(settlement.settled_at)
+        code = reason = returned_at = None
+        if returned is not None:
+            code, reason = returned.raw_return_reason_code, returned.return_reason_code
+            if not isinstance(code, str) or not isinstance(reason, str):
+                raise TypeError("not a return")
+            returned_at = _stamp(returned.created_at)
+    except Exception:
+        raise RailError("bank: unavailable") from None
+    return AchState(transfer.id, transfer.status, settled_at, code, reason, returned_at)
+
+
 _RELEASED = frozenset({PENDING_APPROVAL, CANCELED, "complete"})
 
 
@@ -612,6 +914,23 @@ def _hold_of(
     if transfer_id is not None and answer.id != transfer_id:
         return None
     return answer
+
+
+def _active_numbers(
+    client: Increase, accounts: Mapping[str, str]
+) -> dict[str, AchDestination]:
+    """Each open account's name to its first active account number."""
+    names = {account_id: name for name, account_id in accounts.items()}
+    found: dict[str, AchDestination] = {}
+    for number in client.account_numbers.list(status={"in": ["active"]}):
+        name = names.get(number.account_id)
+        if name is None or name in found or number.status != "active":
+            continue
+        account_number, routing_number = number.account_number, number.routing_number
+        # The SDK builds a number from any body; an empty field can never pay.
+        if all(isinstance(v, str) and v for v in (account_number, routing_number)):
+            found[name] = AchDestination(account_number, routing_number)
+    return found
 
 
 def _refusal(exc: APIStatusError) -> bool:
@@ -661,8 +980,47 @@ def ensure_accounts(
     return accounts
 
 
+def ensure_account_number(
+    client: Increase, account_id: str, name: str
+) -> AchDestination:
+    """Return an account's first active account number, opening one if none.
+
+    The number is opened under a fixed idempotency key, so running it again
+    opens nothing twice.
+
+    Args:
+        client: Increase client pinned to the sandbox.
+        account_id: Increase id of the account an ACH transfer pays into.
+        name: Mandate name of that account.
+
+    Returns:
+        The account's ACH destination.
+
+    Raises:
+        ValueError: If the bank's number cannot receive an ACH transfer.
+    """
+    listed = client.account_numbers.list(
+        account_id=account_id, status={"in": ["active"]}
+    )
+    number = next(iter(listed), None)
+    if number is None:
+        number = client.account_numbers.create(
+            account_id=account_id,
+            name=f"{name} ach",
+            idempotency_key=f"mandate-setup-ach-number-{name}",
+        )
+    account_number, routing_number = number.account_number, number.routing_number
+    # The SDK builds a number from any body; an empty field can never pay.
+    if not all(isinstance(v, str) and v for v in (account_number, routing_number)):
+        raise ValueError(f"no ACH number for {name}")
+    return AchDestination(account_number, routing_number)
+
+
 def setup_cli(argv: list[str] | None = None) -> None:
     """Open and fund the demo accounts in the Increase sandbox.
+
+    With ``--ach`` it also opens the payee's account number, so a console
+    started with ``--ach`` can pay it by ACH transfer.
 
     Args:
         argv: Command-line arguments; ``sys.argv[1:]`` when None.
@@ -672,6 +1030,11 @@ def setup_cli(argv: list[str] | None = None) -> None:
         description="Open and fund the demo accounts in the Increase sandbox.",
     )
     parser.add_argument("--fund-cents", type=int, default=DEMO_FUND_CENTS)
+    parser.add_argument(
+        "--ach",
+        action="store_true",
+        help="also open an account number for the payee to receive ACH transfers",
+    )
     args = parser.parse_args(argv)
     key = take_bank_key(os.environ)
     if key is None:
@@ -679,12 +1042,20 @@ def setup_cli(argv: list[str] | None = None) -> None:
         raise SystemExit(2)
     client = sandbox_client(key)
     payer = DEMO_ACCOUNTS[0]
+    payee = DEMO_ACCOUNTS[1]
     try:
-        ensure_accounts(client, DEMO_ACCOUNTS, payer, args.fund_cents)
+        accounts = ensure_accounts(client, DEMO_ACCOUNTS, payer, args.fund_cents)
+        if args.ach:
+            ensure_account_number(client, accounts[payee], payee)
     except (AuthenticationError, PermissionDeniedError):
         sys.stderr.write("bank rail unavailable: the sandbox refused the key\n")
+        raise SystemExit(2) from None
+    except ValueError as error:
+        sys.stderr.write(f"bank rail unavailable: {error}\n")
         raise SystemExit(2) from None
     rail = IncreaseRail.connect(client)
     available = rail.get_balance(payer)
     print(f"Sandbox accounts ready: {', '.join(DEMO_ACCOUNTS)}")
     print(f"{payer} available: {available} cents")
+    if args.ach:
+        print(f"ACH payee ready: {payee}")

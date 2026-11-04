@@ -84,3 +84,11 @@ export const SANDBOX_CONFIRM = patch(
   },
   { payment_id: "sandbox_account_transfer_MANDATE_FIXTURE" },
 );
+
+/** The bank settled an ACH payment, byte for byte the Python golden settle line. */
+export const SETTLED =
+  '{"v":3,"seq":7,"source":"desk","event":null,"meta":null,"subject":{"step":"settle","quote_id":"q:000001","status":"settled","summary":"Pay 200.00 USD to acme-991 (ref A-991) from checking-881","payment_id":"ach_transfer_t1","reason":"ok: settled at the bank"},"forensic":null}';
+
+/** The bank returned an ACH payment (a sandbox return Mandate's own simulation caused), byte for byte the Python golden. */
+export const RETURNED =
+  '{"v":3,"seq":8,"source":"desk","event":null,"meta":null,"subject":{"step":"settle","quote_id":"q:000001","status":"returned","summary":"Pay 200.00 USD to acme-991 (ref A-991) from checking-881","payment_id":"ach_transfer_t1","reason":"bank: returned R01 insufficient_fund (SIMULATED RETURN)"},"forensic":null}';
