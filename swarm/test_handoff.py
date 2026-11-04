@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import re
 import time
 
 import anyio
@@ -244,7 +245,7 @@ async def test_no_holder_secret_reaches_the_agent_or_a_line(
         "50000",
         "balance_cents",
     )
-    assert [s for s in secrets if s in agent_side or s in wire] == []
+    assert [s for s in secrets if _leaks(s, agent_side) or _leaks(s, wire)] == []
     assert "i:000001" in agent_side
     assert desk.bank.get_balance("acme-991") == 20000
 
@@ -331,3 +332,16 @@ async def test_the_holder_page_hears_why_an_unsettled_intent_cannot_run(
         refused = await http.post("/api/agent/start", **_start_request(holder))
     assert (refused.status_code, refused.json()) == (409, {"error": UNSETTLED_DETAIL})
     assert meta.requests == []
+
+
+def _leaks(secret: str, text: str) -> bool:
+    # A number leaks only as itself, not as digits inside a timestamp or hash.
+    if secret.isdigit():
+        return re.search(rf"(?<![0-9a-fA-F]){secret}(?![0-9a-fA-F])", text) is not None
+    return secret in text
+
+
+def test_a_number_leaks_only_as_itself():
+    assert _leaks("50000", '{"balance_cents": 50000}')
+    assert not _leaks("50000", '{"ts": 1762273650000, "hash": "ab50000f"}')
+    assert _leaks("COOKIE-SECRET-7", "x COOKIE-SECRET-7 y")

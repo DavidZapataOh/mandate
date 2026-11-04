@@ -42,7 +42,8 @@ jobs:
           node-version: "24"
       - run: pip install -r requirements-dev.txt
       - run: pip install -e .
-      - run: coverage run -m pytest
+      - run: coverage run -m pytest --deselect gate/test_perf.py::test_perf_within_budgets
+      - run: pytest -q gate/test_perf.py
       - run: coverage report
   console:
     runs-on: ubuntu-latest
