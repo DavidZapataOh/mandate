@@ -358,11 +358,14 @@ def _sandbox_key(
 
 
 def _sandbox(
-    parser: argparse.ArgumentParser, key: str, names: tuple[str, ...]
+    parser: argparse.ArgumentParser,
+    key: str,
+    names: tuple[str, ...],
+    two_step: bool = False,
 ) -> tuple[IncreaseRail, Increase]:
     try:
         client = sandbox_client(key)
-        rail = IncreaseRail.connect(client)
+        rail = IncreaseRail.connect(client, two_step=two_step)
     except (AuthenticationError, PermissionDeniedError):
         parser.exit(2, "bank rail unavailable: the sandbox refused the key\n")
     except IncreaseError:
@@ -608,7 +611,8 @@ def cli(argv: list[str] | None = None) -> None:
     (needs ``--state-dir``) stamps the store's seals through public
     OpenTimestamps calendars at start and every ``ANCHOR_EVERY_S``. On the
     sandbox rail the console also shows the bank's own events every
-    ``BANK_EVENTS_EVERY_S``. Template attacks
+    ``BANK_EVENTS_EVERY_S``. ``--two-step`` (needs ``--rail sandbox``) holds
+    each quote at the bank until the certified confirm approves it. Template attacks
     always run on a simulated bank of their own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
@@ -629,6 +633,14 @@ def cli(argv: list[str] | None = None) -> None:
         help=(
             "start Mandate's notary so the holder can prove the sandbox balance; "
             "needs --rail sandbox and MANDATE_ZKTLS_BIN"
+        ),
+    )
+    parser.add_argument(
+        "--two-step",
+        action="store_true",
+        help=(
+            "hold each quote at the bank as a transfer awaiting approval; "
+            "the certified confirm approves it; needs --rail sandbox"
         ),
     )
     parser.add_argument(
@@ -693,6 +705,8 @@ def cli(argv: list[str] | None = None) -> None:
         ),
     )
     args = parser.parse_args(argv)
+    if args.two_step and args.rail != "sandbox":
+        parser.exit(2, "--two-step needs --rail sandbox\n")
     bank_key = take_bank_key(os.environ)
     # The holder proves in its own process; the value is never read here.
     take_holder_key(os.environ)
@@ -727,7 +741,9 @@ def cli(argv: list[str] | None = None) -> None:
                     {args.source: _DEMO_BALANCE_CENTS, "acme-991": 0}, state=state
                 )
         else:
-            rail, client = _sandbox(parser, sandbox_key, (args.source, "acme-991"))
+            rail, client = _sandbox(
+                parser, sandbox_key, (args.source, "acme-991"), args.two_step
+            )
         notary, zktls = (
             _zktls(parser, rail, args.source) if args.zktls else (None, None)
         )

@@ -21,8 +21,8 @@ from increase.types import AccountTransfer
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
 from bank.credentials import BANK_KEY_ENV, take_bank_key
-from bank.rail import SANDBOX
-from bank.reconcile import BankTransfer
+from bank.rail import NO_TRANSFER, SANDBOX
+from bank.reconcile import CANCELED, PENDING_APPROVAL, BankTransfer
 
 SANDBOX_URL = "https://sandbox.increase.com"
 PROVIDER = "increase"
@@ -88,11 +88,20 @@ class IncreaseRail:
     Args:
         client: Increase client pinned to the sandbox.
         accounts: Mandate account name to Increase account id.
+        two_step: When True, ``execute`` approves a transfer ``hold`` made
+            under the same key instead of creating one.
     """
 
-    def __init__(self, client: Increase, accounts: Mapping[str, str]) -> None:
+    def __init__(
+        self, client: Increase, accounts: Mapping[str, str], two_step: bool = False
+    ) -> None:
         self._client = client
         self._accounts = dict(accounts)
+        self._two_step = two_step
+        # Key to the held transfer id and the request it holds. Open quotes
+        # do not survive a restart, so a certificate whose hold is not here
+        # takes the one-step path, which the bank answers as a replay.
+        self._holding: dict[str, tuple[str, PaymentRequest]] = {}
 
     def __repr__(self) -> str:
         return f"IncreaseRail(sandbox, accounts={sorted(self._accounts)})"
@@ -107,17 +116,23 @@ class IncreaseRail:
         """Bank that holds the transfers: always Increase."""
         return PROVIDER
 
+    @property
+    def two_step(self) -> bool:
+        """True when ``execute`` approves held transfers."""
+        return self._two_step
+
     @classmethod
-    def connect(cls, client: Increase) -> "IncreaseRail":
+    def connect(cls, client: Increase, two_step: bool = False) -> "IncreaseRail":
         """Address every open Increase account by its name.
 
         Args:
             client: Increase client pinned to the sandbox.
+            two_step: Whether ``execute`` approves held transfers.
 
         Returns:
             The rail.
         """
-        return cls(client, _open_accounts(client))
+        return cls(client, _open_accounts(client), two_step=two_step)
 
     def holds(self, names: Sequence[str]) -> bool:
         """Tell whether the bank holds an open account for every name.
@@ -181,47 +196,229 @@ class IncreaseRail:
         """
         if idempotency_key is None:
             raise ValueError("sandbox transfers need an idempotency key")
-        source = self.account_id(request.from_acct)
-        destination = self.account_id(request.to_acct)
-        description = f"Mandate {request.ref} {idempotency_key}"[:_DESCRIPTION_MAX]
-        # `from None` keeps SDK messages, which echo the request, out of
-        # tracebacks shown to users.
-        try:
-            answer: object = self._client.account_transfers.create(
-                account_id=source,
-                amount=request.amount_cents,
-                description=description,
-                destination_account_id=destination,
-                require_approval=False,
-                idempotency_key=idempotency_key,
-            )
-        except APIStatusError as exc:
-            if not _refusal(exc):
-                answer = None
-            elif isinstance(exc, IdempotencyKeyAlreadyUsedError):
-                raise ReplayError(idempotency_key) from None
-            elif isinstance(exc, InvalidOperationError):
-                if self.get_balance(request.from_acct) < request.amount_cents:
-                    raise ValueError(
-                        f"insufficient funds: {request.from_acct}"
-                    ) from None
-                raise RailError("bank: refused") from None
-            elif isinstance(
-                exc, (AuthenticationError, PermissionDeniedError, RateLimitError)
-            ):
-                raise RailError("bank: unavailable") from None
-            else:
-                raise RailError("bank: refused") from None
-        except Exception:
-            # No answer, or one the SDK could not read: the bank may still
-            # have committed the transfer.
-            answer = None
+        # One pop, never check-then-pop: `release` runs outside the desk lock.
+        entry = self._holding.pop(idempotency_key, None) if self._two_step else None
+        if entry is not None:
+            return self._approve(request, action_hash, idempotency_key, entry)
+        answer = self._create(request, idempotency_key, require_approval=False)
         if isinstance(answer, AccountTransfer):
             return self._paid(answer, request, action_hash, idempotency_key)
         found = self.reconcile(request, action_hash, idempotency_key)
         if found is None:
             raise RailError("bank: outcome unknown")
         return found
+
+    def hold(self, request: PaymentRequest, idempotency_key: str) -> str:
+        """Hold one account transfer for approval under the certificate's key.
+
+        The hold is the only bank write made before a certificate exists. It
+        moves no money (the bank creates the transactions only on approval),
+        but it holds the amount on the source account until the transfer is
+        approved or canceled. Refusals map as ``execute`` maps them; no usable
+        answer is settled by one lookup of the key.
+
+        Args:
+            request: The payment the certificate will authorize.
+            idempotency_key: ``mandate-cert-<jti>`` for the coming certificate.
+
+        Returns:
+            The bank's id for the held transfer.
+
+        Raises:
+            ReplayError: If the bank holds the key for a transfer with other
+                parameters.
+            RailError: ``bank: unavailable`` or ``bank: refused`` for a
+                definite refusal; ``bank: outcome unknown`` when neither the
+                answer nor the lookup finds the transfer; ``bank: transfer
+                differs`` or ``bank: not held for approval`` for a transfer
+                the bank did not hold as asked.
+            ValueError: If an account is unknown or funds are insufficient.
+        """
+        answer = self._create(request, idempotency_key, require_approval=True)
+        if not isinstance(answer, AccountTransfer):
+            answer = self._by_key(idempotency_key)
+            if answer is None:
+                raise RailError("bank: outcome unknown")
+        if not self._matches(answer, request, idempotency_key):
+            raise RailError("bank: transfer differs")
+        if answer.status != PENDING_APPROVAL:
+            raise RailError("bank: not held for approval")
+        self._holding[idempotency_key] = (answer.id, request)
+        return answer.id
+
+    def release(self, idempotency_key: str, transfer_id: str | None = None) -> str:
+        """Cancel the transfer held under a key if it still awaits approval.
+
+        Release never approves and never creates: it cancels only a transfer
+        in ``pending_approval``, which cannot move money, and reports any
+        other status as it stands.
+
+        Args:
+            idempotency_key: Key the hold was requested under.
+            transfer_id: The hold's id when the bank answered with one; the
+                transfer is then read by id, never looked up by key.
+
+        Returns:
+            The transfer's final status (``canceled``, ``complete`` or
+            ``pending_approval``), or ``NO_TRANSFER`` when no id is known and
+            the bank lists none under the key.
+
+        Raises:
+            RailError: If the bank cannot be read, or its answers are not
+                transfers (``bank: unavailable``).
+        """
+        if transfer_id is not None:
+            # A transfer the bank answered for is read by its id: a listing
+            # that omits it must never make a hold that still holds look gone.
+            listed = _hold_of(self._read(transfer_id), idempotency_key, transfer_id)
+        else:
+            listed = self._listed_hold(idempotency_key)
+            if listed is None:
+                self._holding.pop(idempotency_key, None)
+                return NO_TRANSFER
+        if listed is None:
+            raise RailError("bank: unavailable")
+        transfer = listed
+        if transfer.status == PENDING_APPROVAL:
+            transfer_id = transfer.id
+            try:
+                answer: object = self._client.account_transfers.cancel(
+                    transfer_id, idempotency_key=f"mandate-cancel-{transfer_id}"
+                )
+            except Exception:
+                answer = None
+            cancel = _hold_of(answer, idempotency_key, transfer_id)
+            if cancel is None:
+                cancel = _hold_of(self._read(transfer_id), idempotency_key, transfer_id)
+                if cancel is None:
+                    raise RailError("bank: unavailable")
+            transfer = cancel
+        if transfer.status != PENDING_APPROVAL:
+            self._holding.pop(idempotency_key, None)
+        return str(transfer.status)
+
+    def _listed_hold(self, idempotency_key: str) -> AccountTransfer | None:
+        """The hold listed under a key; None when the bank lists none.
+
+        Raises:
+            RailError: If the listing cannot be read, or what it lists is not
+                this key's hold in a known status (``bank: unavailable``).
+        """
+        try:
+            page = self._client.account_transfers.list(idempotency_key=idempotency_key)
+            held: object = page.data
+        except Exception:
+            raise RailError("bank: unavailable") from None
+        if not isinstance(held, list):
+            raise RailError("bank: unavailable")
+        if not held:
+            return None
+        # Acting on any transfer but this key's own would cancel another
+        # quote's hold and report this one released while it still holds.
+        entry = self._holding.get(idempotency_key)
+        listed = _hold_of(held[0], idempotency_key, entry[0] if entry else None)
+        if listed is None:
+            raise RailError("bank: unavailable")
+        return listed
+
+    def _create(
+        self, request: PaymentRequest, idempotency_key: str, require_approval: bool
+    ) -> object:
+        """Send one keyed create; the answer, or None when it is no answer."""
+        source = self.account_id(request.from_acct)
+        destination = self.account_id(request.to_acct)
+        description = f"Mandate {request.ref} {idempotency_key}"[:_DESCRIPTION_MAX]
+        # `from None` keeps SDK messages, which echo the request, out of
+        # tracebacks shown to users.
+        try:
+            return self._client.account_transfers.create(
+                account_id=source,
+                amount=request.amount_cents,
+                description=description,
+                destination_account_id=destination,
+                require_approval=require_approval,
+                idempotency_key=idempotency_key,
+            )
+        except APIStatusError as exc:
+            refused = self._refused(exc, request, idempotency_key)
+            if refused is not None:
+                raise refused from None
+        except Exception:
+            # No answer, or one the SDK could not read: the bank may still
+            # have committed the transfer.
+            return None
+        return None
+
+    def _refused(
+        self, exc: APIStatusError, request: PaymentRequest, idempotency_key: str
+    ) -> Exception | None:
+        """The error a definite refusal of a create maps to; None otherwise."""
+        if not _refusal(exc):
+            return None
+        if isinstance(exc, IdempotencyKeyAlreadyUsedError):
+            return ReplayError(idempotency_key)
+        if isinstance(exc, InvalidOperationError):
+            if self.get_balance(request.from_acct) < request.amount_cents:
+                return ValueError(f"insufficient funds: {request.from_acct}")
+            return RailError("bank: refused")
+        if isinstance(
+            exc, (AuthenticationError, PermissionDeniedError, RateLimitError)
+        ):
+            return RailError("bank: unavailable")
+        return RailError("bank: refused")
+
+    def _approve(
+        self,
+        request: PaymentRequest,
+        action_hash: str,
+        idempotency_key: str,
+        entry: tuple[str, PaymentRequest],
+    ) -> Payment:
+        # The entry was popped before the call: whatever the answer, a second
+        # confirm under this key takes the one-step path, which the bank
+        # refuses as a replay.
+        transfer_id, held_for = entry
+        # Approving moves the money, so a certificate for any other payment
+        # must never reach the bank. Nothing is sent, so the hold stays
+        # pending until `release` cancels it.
+        if request != held_for:
+            raise RailError("bank: transfer differs")
+        try:
+            answer: object = self._client.account_transfers.approve(
+                transfer_id, idempotency_key=f"mandate-approve-{transfer_id}"
+            )
+        except Exception:
+            # A refusal, or no answer: the read below decides either way,
+            # because the approve may have committed.
+            answer = None
+        if not isinstance(answer, AccountTransfer):
+            answer = self._read(transfer_id)
+            if answer is None:
+                raise RailError("bank: outcome unknown")
+        if answer.id != transfer_id:
+            raise RailError("bank: transfer differs")
+        return self._paid(answer, request, action_hash, idempotency_key, held=True)
+
+    def _read(self, transfer_id: str) -> AccountTransfer | None:
+        """One read of a transfer by id; None when it gives no transfer."""
+        try:
+            answer: object = self._client.account_transfers.retrieve(transfer_id)
+        except Exception:
+            return None
+        return answer if isinstance(answer, AccountTransfer) else None
+
+    def _by_key(self, idempotency_key: str) -> AccountTransfer | None:
+        """The transfer listed under a key; None when none can be read."""
+        try:
+            held: object = self._client.account_transfers.list(
+                idempotency_key=idempotency_key
+            ).data
+        except Exception:
+            return None
+        if not isinstance(held, list) or not held:
+            return None
+        found = held[0]
+        return found if isinstance(found, AccountTransfer) else None
 
     def reconcile(
         self, request: PaymentRequest, action_hash: str, idempotency_key: str
@@ -264,24 +461,16 @@ class IncreaseRail:
         request: PaymentRequest,
         action_hash: str,
         idempotency_key: str,
+        held: bool = False,
     ) -> Payment:
-        # The receipt certifies what the bank holds, so it must be the request.
-        held = (
-            transfer.amount,
-            transfer.currency,
-            transfer.account_id,
-            transfer.destination_account_id,
-            transfer.idempotency_key,
-        )
-        asked = (
-            request.amount_cents,
-            request.currency,
-            self.account_id(request.from_acct),
-            self.account_id(request.to_acct),
-            idempotency_key,
-        )
-        if held != asked:
+        if not self._matches(transfer, request, idempotency_key):
             raise RailError("bank: transfer differs")
+        if held and transfer.status == CANCELED:
+            raise RailError("bank: canceled at the bank")
+        # A person's dashboard approval moved the money outside the gate, so
+        # it is never this certificate's payment.
+        if transfer.approval is not None and transfer.approval.approved_by is not None:
+            raise RailError("bank: approved outside the gate")
         if transfer.status != "complete":
             raise RailError("bank: not complete")
         return Payment(
@@ -297,6 +486,26 @@ class IncreaseRail:
             status=transfer.status,
             idempotency_key=idempotency_key,
         )
+
+    def _matches(
+        self, transfer: AccountTransfer, request: PaymentRequest, idempotency_key: str
+    ) -> bool:
+        # The receipt certifies what the bank holds, so it must be the request.
+        held = (
+            transfer.amount,
+            transfer.currency,
+            transfer.account_id,
+            transfer.destination_account_id,
+            transfer.idempotency_key,
+        )
+        asked = (
+            request.amount_cents,
+            request.currency,
+            self.account_id(request.from_acct),
+            self.account_id(request.to_acct),
+            idempotency_key,
+        )
+        return held == asked
 
     def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
         """List the transfers that left an account since a time.
@@ -383,6 +592,26 @@ def _held(transfer: object) -> BankTransfer:
         transfer.idempotency_key,
         transfer.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
+
+
+_RELEASED = frozenset({PENDING_APPROVAL, CANCELED, "complete"})
+
+
+def _hold_of(
+    answer: object, idempotency_key: str, transfer_id: str | None
+) -> AccountTransfer | None:
+    """The answer when it is the hold under the key in a known status; else None.
+
+    The SDK builds a transfer from any body without validating it, so the
+    key, the id (when known) and the status are checked here.
+    """
+    if not isinstance(answer, AccountTransfer):
+        return None
+    if answer.idempotency_key != idempotency_key or answer.status not in _RELEASED:
+        return None
+    if transfer_id is not None and answer.id != transfer_id:
+        return None
+    return answer
 
 
 def _refusal(exc: APIStatusError) -> bool:

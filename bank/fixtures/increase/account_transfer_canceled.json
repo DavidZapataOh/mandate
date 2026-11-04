@@ -1,0 +1,33 @@
+{
+  "body": {
+    "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+    "amount": 100,
+    "approval": null,
+    "cancellation": {
+      "canceled_at": "2026-11-04T17:47:16Z",
+      "canceled_by": null
+    },
+    "created_at": "2026-11-04T17:47:15Z",
+    "created_by": {
+      "api_key": {
+        "description": "Mandate bank verifier"
+      },
+      "category": "api_key"
+    },
+    "currency": "USD",
+    "description": "Mandate capture mandate-capture-1ed1a29b2aa89bd8",
+    "destination_account_id": "sandbox_account_l3oh3bxybri8accqq06i",
+    "destination_transaction_id": null,
+    "id": "sandbox_account_transfer_yc6f3exkjl5nh7jzvs6a",
+    "idempotency_key": "mandate-capture-1ed1a29b2aa89bd8",
+    "network": "account",
+    "path": "/transfers/sandbox_account_transfer_yc6f3exkjl5nh7jzvs6a",
+    "pending_transaction_id": "sandbox_pending_transaction_dg6jc6f8m284ztn5mwkg",
+    "status": "canceled",
+    "transaction_id": null,
+    "type": "account_transfer",
+    "unique_identifier": "mandate-capture-1ed1a29b2aa89bd8"
+  },
+  "replayed": null,
+  "status": 200
+}

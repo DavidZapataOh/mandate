@@ -1,3 +1,4 @@
+import argparse
 import base64
 import fcntl
 import itertools
@@ -1323,3 +1324,23 @@ def test_cli_simulated_console_starts_no_bank_feed(monkeypatch, capsys, dist):
 
     seen, _ = _run_cli(monkeypatch, capsys, "--console-dir", str(dist), serving=names)
     assert "bank-events" not in seen["served"]
+
+
+def test_cli_two_step_needs_the_sandbox_rail(monkeypatch, capsys, dist):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--two-step")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "--two-step needs --rail sandbox\n"
+
+
+def test_sandbox_rail_holds_only_when_asked(monkeypatch):
+    parser = argparse.ArgumentParser()
+    names = ("checking-881", "acme-991")
+    built = []
+    for two_step in (False, True):
+        cassette = Cassette(named_accounts(*names))
+        client = cassette.client()
+        monkeypatch.setattr(console, "sandbox_client", lambda key, c=client: c)
+        rail, _ = console._sandbox(parser, SENTINEL_KEY, names, two_step=two_step)
+        built.append(rail)
+    assert [rail.two_step for rail in built] == [False, True]

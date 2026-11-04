@@ -1,12 +1,14 @@
 """The seam between the bank verifier and whatever moves the money."""
 
 import re
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from bank.api import Payment, PaymentRequest
 
 SIMULATED = "simulated"
 SANDBOX = "sandbox"
+# What `release` reports when the bank holds no transfer under the key.
+NO_TRANSFER = "none"
 
 _KEY_PREFIX = "mandate-cert-"
 # Printable ASCII only, and short enough that the prefixed key stays within
@@ -73,6 +75,58 @@ class BankRail(Protocol):
 
         Returns:
             The balance.
+        """
+        ...
+
+
+@runtime_checkable
+class HoldingRail(Protocol):
+    """A bank rail that can hold a transfer for approval before it pays."""
+
+    @property
+    def two_step(self) -> bool:
+        """True when ``execute`` approves held transfers."""
+        ...
+
+    def hold(self, request: PaymentRequest, idempotency_key: str) -> str:
+        """Hold a transfer for approval under the certificate's key.
+
+        The hold is the only bank write made before a certificate exists. It
+        moves no money; it holds the amount until approved or canceled.
+
+        Args:
+            request: The payment the certificate will authorize.
+            idempotency_key: ``mandate-cert-<jti>`` for the coming certificate.
+
+        Returns:
+            The bank's id for the held transfer.
+
+        Raises:
+            ReplayError: If the bank holds the key for another transfer.
+            RailError: If the bank failed, refused, or did not hold the
+                transfer as asked; the message is the reason.
+            ValueError: If an account is unknown or funds are insufficient.
+        """
+        ...
+
+    def release(self, idempotency_key: str, transfer_id: str | None = None) -> str:
+        """Cancel the transfer held under a key if it still awaits approval.
+
+        Release never approves and never creates: it cancels a transfer in
+        ``pending_approval`` and reports any other status as it stands.
+
+        Args:
+            idempotency_key: Key the hold was requested under.
+            transfer_id: The hold's id when the bank answered with one; it is
+                then read by id, so a listing that omits it cannot drop it.
+
+        Returns:
+            The transfer's final status: ``canceled``, ``complete``,
+            ``pending_approval``, or ``NO_TRANSFER`` when no id is known and
+            the bank holds none under the key.
+
+        Raises:
+            RailError: If the bank cannot be read (``bank: unavailable``).
         """
         ...
 

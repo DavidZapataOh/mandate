@@ -11,8 +11,8 @@ from increase import Increase
 
 from bank.api import Payment, PaymentRequest, RailError
 from bank.increase import sandbox_client
-from bank.rail import SANDBOX
-from bank.reconcile import BankTransfer
+from bank.rail import NO_TRANSFER, SANDBOX
+from bank.reconcile import CANCELED, PENDING_APPROVAL, BankTransfer
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "increase"
 SENTINEL_KEY = "sandbox_key_SENTINEL_7f3a9c"
@@ -27,6 +27,11 @@ def recorded(name: str) -> dict[str, Any]:
 class RecordingRail:
     """Fake sandbox rail that records every call and answers as configured.
 
+    Unlike ``IncreaseRail``, ``execute`` completes a listed pending hold under
+    the key whatever the request, and creates a payment for a key it holds
+    nothing under; the real rail refuses a differing request before approving
+    and answers a create under a held key as a replay.
+
     Args:
         error: Raised by every ``execute`` after the call is recorded.
         balance: Returned (or raised) by every ``get_balance``.
@@ -34,6 +39,9 @@ class RecordingRail:
             payment ``execute`` would have made, None to answer from
             ``listed`` by the key as the sandbox does (nothing, a payment for
             a complete transfer, or ``bank: not complete``).
+        two_step: Whether the desk holds each quote here before it confirms.
+        hold_error: Raised by every ``hold`` after the call is recorded.
+        release_error: Raised by every ``release`` after the key is recorded.
     """
 
     def __init__(
@@ -41,8 +49,17 @@ class RecordingRail:
         error: Exception | None = None,
         balance: int | Exception = 0,
         found: bool | None | Exception = None,
+        two_step: bool = False,
+        hold_error: Exception | None = None,
+        release_error: Exception | None = None,
     ) -> None:
         self.error = error
+        self._two_step = two_step
+        self.holds: list[tuple[PaymentRequest, str]] = []
+        self.hold_error = hold_error
+        self.releases: list[str] = []
+        self.released_ids: list[str | None] = []
+        self.release_error = release_error
         self._balance = balance
         self.found = found
         self.calls: list[tuple[PaymentRequest, str, str | None]] = []
@@ -57,6 +74,46 @@ class RecordingRail:
         """Always the sandbox label."""
         return SANDBOX
 
+    @property
+    def two_step(self) -> bool:
+        """Whether the desk holds each quote here before it confirms."""
+        return self._two_step
+
+    def hold(self, request: PaymentRequest, idempotency_key: str) -> str:
+        """Record the call, then raise ``hold_error`` or list a pending hold."""
+        self.holds.append((request, idempotency_key))
+        if self.hold_error is not None:
+            raise self.hold_error
+        transfer_id = f"account_transfer_h{len(self.holds)}"
+        self.listed.append(
+            BankTransfer(
+                transfer_id,
+                request.amount_cents,
+                PENDING_APPROVAL,
+                idempotency_key,
+                "",
+            )
+        )
+        return transfer_id
+
+    def release(self, idempotency_key: str, transfer_id: str | None = None) -> str:
+        """Record the key and id, then cancel a pending hold or report its status.
+
+        The hold is found by its key in ``listed`` either way.
+        """
+        self.releases.append(idempotency_key)
+        self.released_ids.append(transfer_id)
+        if self.release_error is not None:
+            raise self.release_error
+        for n, listed in enumerate(self.listed):
+            if listed.idempotency_key != idempotency_key:
+                continue
+            if listed.status != PENDING_APPROVAL:
+                return listed.status
+            self.listed[n] = dataclasses.replace(listed, status=CANCELED)
+            return CANCELED
+        return NO_TRANSFER
+
     def execute(
         self,
         request: PaymentRequest,
@@ -67,7 +124,15 @@ class RecordingRail:
         self.calls.append((request, action_hash, idempotency_key))
         if self.error is not None:
             raise self.error
-        return self._payment(request, action_hash, idempotency_key)
+        paid = self._payment(request, action_hash, idempotency_key)
+        for n, listed in enumerate(self.listed):
+            if (
+                listed.idempotency_key == idempotency_key
+                and listed.status == PENDING_APPROVAL
+            ):
+                self.listed[n] = dataclasses.replace(listed, status="complete")
+                return dataclasses.replace(paid, payment_id=listed.transfer_id)
+        return paid
 
     def reconcile(
         self, request: PaymentRequest, action_hash: str, idempotency_key: str

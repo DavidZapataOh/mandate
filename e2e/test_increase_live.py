@@ -7,7 +7,11 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from increase import IdempotencyKeyAlreadyUsedError, InvalidOperationError
+from increase import (
+    APIStatusError,
+    IdempotencyKeyAlreadyUsedError,
+    InvalidOperationError,
+)
 
 from bank.api import PaymentRequest
 from bank.conftest import DOC_EVENT, FIXTURES
@@ -325,3 +329,130 @@ def test_capture_bank_events(tmp_path):
         (FIXTURES / "events_page.json").write_text(text)
     for body in record["body"]["data"] or [DOC_EVENT]:
         assert set(body) == set(DOC_EVENT)
+
+
+@pytest.mark.live
+def test_capture_two_step_responses():
+    key = _key()
+    recorder = _Recorder()
+    http = httpx.Client(event_hooks={"response": [recorder]})
+    client = sandbox_client(key, http, max_retries=0)
+    accounts = ensure_accounts(client, CAPTURE, CAPTURE[0], 100000)
+    payer, payee = accounts[CAPTURE[0]], accounts[CAPTURE[1]]
+    saved = {}
+
+    def keep(name):
+        saved[name] = recorder.last
+
+    def hold():
+        idem = f"mandate-capture-{secrets.token_hex(8)}"
+        return client.account_transfers.create(
+            account_id=payer,
+            amount=100,
+            description=f"Mandate capture {idem}",
+            destination_account_id=payee,
+            require_approval=True,
+            idempotency_key=idem,
+        )
+
+    before = client.accounts.balance(payer).available_balance
+    held = hold()
+    keep("account_transfer_pending")
+    assert (held.status, held.transaction_id) == ("pending_approval", None)
+    assert held.pending_transaction_id is not None
+    # A hold holds funds: the pending transaction lowers the available balance.
+    assert client.accounts.balance(payer).available_balance == before - 100
+    client.account_transfers.list(idempotency_key=held.idempotency_key)
+    keep("account_transfers_held")
+    approve = f"mandate-approve-{held.id}"
+    done = client.account_transfers.approve(held.id, idempotency_key=approve)
+    keep("account_transfer_approved")
+    assert done.status == "complete"
+    assert done.approval is not None and done.approval.approved_by is None
+    again = client.account_transfers.approve(held.id, idempotency_key=approve)
+    keep("account_transfer_approved_replayed")
+    assert again.id == held.id
+    assert saved["account_transfer_approved_replayed"]["replayed"] == "true"
+    with pytest.raises(APIStatusError):
+        client.account_transfers.approve(
+            held.id, idempotency_key=f"mandate-approve-again-{held.id}"
+        )
+    keep("approve_not_pending")
+    with pytest.raises(APIStatusError):
+        client.account_transfers.cancel(
+            held.id, idempotency_key=f"mandate-cancel-{held.id}"
+        )
+    keep("cancel_complete")
+    second = hold()
+    gone = client.account_transfers.cancel(
+        second.id, idempotency_key=f"mandate-cancel-{second.id}"
+    )
+    keep("account_transfer_canceled")
+    assert gone.status == "canceled" and gone.cancellation is not None
+    # The approved 100 left; the canceled hold gave its 100 back.
+    assert client.accounts.balance(payer).available_balance == before - 100
+    with pytest.raises(APIStatusError):
+        client.account_transfers.approve(
+            second.id, idempotency_key=f"mandate-approve-{second.id}"
+        )
+    keep("approve_canceled")
+    client.account_transfers.retrieve(second.id)
+    keep("account_transfer_retrieved")
+    for name, record in saved.items():
+        text = json.dumps(record, indent=2, sort_keys=True) + "\n"
+        assert key not in text
+        if os.environ.get("MANDATE_CAPTURE") == "1":
+            (FIXTURES / f"{name}.json").write_text(text)
+        else:
+            body = json.loads((FIXTURES / f"{name}.json").read_text())["body"]
+            assert set(record["body"]) == set(body), name
+
+
+@pytest.mark.live
+def test_a_two_step_payment_waits_at_the_bank_until_the_certified_confirm(
+    tmp_path,
+):
+    client = sandbox_client(_key())
+    ensure_accounts(client, LIVE, LIVE[0], 1_000_000)
+    rail = IncreaseRail.connect(client, two_step=True)
+    gate_key, gate_pub = generate_keypair()
+    holder_key, holder_pub = generate_keypair()
+    store = StateStore(tmp_path / "state.db")
+    time.sleep(1 - time.time() % 1)
+    desk = PaymentDesk(
+        source=LIVE[0],
+        bank=rail,
+        verifier=Verifier(gate_pub, state=store),
+        gate_key=gate_key,
+        clock=lambda: int(time.time()),
+        nonces=lambda: secrets.token_hex(16),
+        quote_ttl_s=10,
+        state=store,
+    )
+    desk.register_holder(holder_pub)
+
+    def held_quote(reference):
+        intent = Intent(100, "USD", LIVE[1], reference)
+        iid = desk.record_intent(intent, sign_intent(holder_key, intent))["intent_id"]
+        quoted = desk.quote(LIVE[1], 100, "USD", reference, intent_id=iid)
+        hold = json.loads(dict(store.records("hold"))[quoted["quote_id"]])
+        return quoted, hold["transfer_id"]
+
+    quoted, held = held_quote("A-991")
+    assert client.account_transfers.retrieve(held).status == "pending_approval"
+    consent = Consent(**quoted["consent"], signature=b"")
+    desk.approve(quoted["quote_id"], sign_approval(holder_key, consent))
+    paid = desk.confirm(quoted["quote_id"])
+    assert (paid["status"], paid["payment_id"]) == ("confirmed", held)
+    done = client.account_transfers.retrieve(held)
+    assert done.status == "complete" and done.approval is not None
+    assert done.approval.approved_by is None
+    bank = desk.proof_receipt(held)
+    assert bank is not None
+    expired, dropped = held_quote("A-992")
+    time.sleep(11)
+    report = desk.reconcile()
+    assert f"{expired['quote_id']} -> hold canceled" in report.resolved
+    assert client.account_transfers.retrieve(dropped).status == "canceled"
+    assert (report.unbacked, report.error) == ((), None)
+    store.close()

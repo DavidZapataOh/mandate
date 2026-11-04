@@ -7,6 +7,8 @@ from typing import Any, Protocol, runtime_checkable
 _KEY_PREFIX = "mandate-cert-"
 # A canceled transfer moved no money, so it has nothing to explain.
 CANCELED = "canceled"
+# A held transfer awaiting approval has moved no money yet.
+PENDING_APPROVAL = "pending_approval"
 
 
 @dataclass(frozen=True)

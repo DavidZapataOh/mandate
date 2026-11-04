@@ -1,0 +1,10 @@
+{
+  "body": {
+    "detail": "The account transfer isn't pending approval.",
+    "status": 409,
+    "title": "The action you specified can't be performed on the object in its current state.",
+    "type": "invalid_operation_error"
+  },
+  "replayed": null,
+  "status": 409
+}

@@ -10,12 +10,13 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
-from bank.api import Payment, PaymentRequest, RailError
-from bank.rail import SANDBOX, BankRail, idempotency_key
+from bank.api import Payment, PaymentRequest, RailError, ReplayError
+from bank.rail import NO_TRANSFER, SANDBOX, BankRail, HoldingRail, idempotency_key
 from bank.reconcile import (
     CANCELED,
+    PENDING_APPROVAL,
     BankTransfer,
     Reconciliation,
     TransferLedger,
@@ -70,7 +71,10 @@ _STATEMENT_TTL_S = 300
 # Rail outcomes after which the bank may hold a transfer under the key: the
 # bound intent pays nothing more until a lookup by the idempotency key settles it.
 _DIFFERS = "bank: transfer differs"
-_UNSETTLED = ("bank: outcome unknown", "bank: not complete", _DIFFERS)
+# A person approved the held transfer in the bank's dashboard: money moved,
+# but never as this certificate's payment.
+_OUTSIDE = "bank: approved outside the gate"
+_UNSETTLED = ("bank: outcome unknown", "bank: not complete", _DIFFERS, _OUTSIDE)
 # A lookup that finds nothing releases an intent only this long after its
 # certificate expired: a transfer whose answer was lost may still be
 # committing, or not yet listed, while the certificate lives and just after.
@@ -85,6 +89,15 @@ _UNPAIRED = "holder: unpaired"
 _ROUND_FAILED = "reconcile: failed"
 _STATE_DOWN = "state: unavailable"
 _BANK_DOWN = "bank: unavailable"
+_HELD = "intent: held at the bank"
+# Hold refusals after which the bank holds nothing under the key.
+_NOTHING_HELD = (
+    _BANK_DOWN,
+    "bank: refused",
+    "denied: insufficient funds",
+    "denied: unknown account",
+)
+_HOLD_FIELDS = ("intent_id", "idempotency_key", "transfer_id", "expires_at", "rail")
 # A journal another path settled while this round asked the bank.
 _GONE = ""
 _BYTE_FIELDS = ("signature", "consent_key", "key_signature")
@@ -99,6 +112,8 @@ class _Quote:
     result: dict[str, Any] | None = None
     intent_id: str | None = None
     holder: str | None = None
+    # The certificate's id, drawn at quote when the bank holds the transfer.
+    jti: str | None = None
 
 
 @dataclass(frozen=True)
@@ -194,6 +209,7 @@ class PaymentDesk:
         if zktls is not None and bank.rail != SANDBOX:
             raise ValueError("zktls needs the sandbox rail")
         self.bank = bank
+        self._two_step = isinstance(bank, HoldingRail) and bank.two_step
         self._zktls = zktls
         self._source = source
         self._verifier = verifier
@@ -236,6 +252,8 @@ class PaymentDesk:
         self._reconciliation: dict[str, Any] | None = None
         # Payment ids by intent, for every intent more than one transfer paid.
         self._paid_twice: dict[str, list[str]] = {}
+        # Transfers held at the bank for approval, by quote id.
+        self._holds: dict[str, dict[str, Any]] = {}
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
         # One reconciliation round at a time; it holds the desk lock only
@@ -274,6 +292,7 @@ class PaymentDesk:
         self._paid_twice = {
             k: _texts(json.loads(v)) for k, v in state.records("paid_twice")
         }
+        self._holds = {k: _hold_from(v) for k, v in state.records("hold")}
         for quote_id, value in state.records("pending"):
             journal = _journal_from(value)
             if quote_id not in self._closed:
@@ -547,12 +566,16 @@ class PaymentDesk:
     def reconcile(self) -> Reconciliation:
         """Reconcile the whole desk with the bank.
 
-        Settles every journaled payment (see ``_settle_found``), in quote
-        order, then compares the transfers the bank lists from the debit
-        account since the registry began with the sealed receipts. Reads
-        only; the bank is never asked to move money. The view is kept as the
-        latest reconciliation. A bank that cannot be read stops the settling
-        and is named in ``error``; the comparison then does not run and
+        First cancels every transfer held for approval that nothing can
+        approve any more (see ``_hold_due``); that cancel is the only bank
+        write it makes, and it cannot move money. Then settles every
+        journaled payment (see ``_settle_found``), in quote order, and
+        compares the transfers the bank lists from the debit account since
+        the registry began with the sealed receipts, leaving out a transfer
+        still awaiting approval under a key the desk holds. The bank is never
+        asked to move money. The view is kept as the latest reconciliation.
+        A bank that cannot be read stops the settling and is named in
+        ``error``; the comparison then does not run and
         writes nothing. A stored journal or receipt that cannot be read is
         named in ``unreadable`` and skipped.
 
@@ -585,11 +608,16 @@ class PaymentDesk:
             return None if latest is None else json.loads(json.dumps(latest))
 
     def _reconcile_bank(self, ledger: TransferLedger) -> Reconciliation:
+        released: tuple[str, ...] = ()
+        error: str | None = None
+        if self._holds and isinstance(self.bank, HoldingRail):
+            released, error = self._release_holds()
         with self._lock:
             journals = [] if self._state is None else self._state.records("pending")
-        resolved, pending, unreadable, error = self._settle_journals(
-            ledger, sorted(journals)
+        settled, pending, unreadable, error = self._settle_journals(
+            ledger, sorted(journals), error=error
         )
+        resolved = (*released, *settled)
         with self._lock:
             before = set(self._sealed(ledger.rail)[0])
         listed: list[BankTransfer] | None = None
@@ -606,6 +634,13 @@ class PaymentDesk:
             unbacked: tuple[str, ...] = ()
             missing: tuple[str, ...] = ()
             if listed is not None:
+                # A held transfer awaiting approval has moved no money.
+                held = {h["idempotency_key"] for h in self._holds.values()}
+                listed = [
+                    t
+                    for t in listed
+                    if t.status != PENDING_APPROVAL or t.idempotency_key not in held
+                ]
                 self._late_transfers(listed)
                 certified, unbacked, missing = compare(listed, sealed, ledger.rail)
                 missing = tuple(pid for pid in missing if pid in before)
@@ -719,11 +754,15 @@ class PaymentDesk:
         return sealed, bad
 
     def _settle_journals(
-        self, ledger: TransferLedger, journals: list[tuple[str, str]]
+        self,
+        ledger: TransferLedger,
+        journals: list[tuple[str, str]],
+        error: str | None = None,
     ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
         """Settle every journaled payment the bank can now answer for.
 
         Each lookup runs outside the desk lock; its settlement runs under it.
+        An ``error`` the round already met leaves every journal pending.
 
         Returns:
             The resolved and pending lists, the journals that do not read,
@@ -732,7 +771,6 @@ class PaymentDesk:
         resolved: list[str] = []
         pending: list[str] = []
         unreadable: list[str] = []
-        error: str | None = None
         for quote_id, value in journals:
             if error is not None:
                 pending.append(quote_id)
@@ -845,7 +883,8 @@ class PaymentDesk:
         try:
             held = self.bank.reconcile(request, _journal_hash(journal), key)
         except RailError as exc:
-            if str(exc) in (_DIFFERS, _NOT_COMPLETE):
+            # A dashboard approval is never this certificate's payment.
+            if str(exc) in (_DIFFERS, _NOT_COMPLETE, _OUTSIDE):
                 return None
             raise RailError(_BANK_DOWN) from None
         except ValueError:
@@ -919,9 +958,11 @@ class PaymentDesk:
             if twice is not None:
                 self._put("paid_twice", iid, twice)
             self._drop("pending", quote_id)
+            self._drop("hold", quote_id)
             return proof, receipt
 
         proof, receipt = self._durably(work)
+        self._holds.pop(quote_id, None)
         if twice is not None:
             self._note_twice(iid, twice)
         self._keep_receipt(payment.payment_id, receipt)
@@ -959,6 +1000,11 @@ class PaymentDesk:
         changes: dict[str, Any] = {}
         if bound is not None and _unsettled_by(bound, quote_id):
             changes = {"unsettled": None}
+        # The bank holds nothing under the key that could still complete.
+        hold = self._holds.get(quote_id)
+        held = (
+            hold is not None and hold["idempotency_key"] == journal["idempotency_key"]
+        )
 
         def work() -> None:
             self._append("denial", _result_body(result))
@@ -967,11 +1013,108 @@ class PaymentDesk:
                 self._put("intent", iid, _intent_record(_replace(bound, changes)))
             self._put("released", journal["idempotency_key"], iid)
             self._drop("pending", quote_id)
+            if held:
+                self._drop("hold", quote_id)
 
         self._durably(work)
+        if held:
+            del self._holds[quote_id]
         if bound is not None and changes:
             bound.unsettled = None
         self._close_quote(quote_id, result)
+
+    def _release_holds(self) -> tuple[tuple[str, ...], str | None]:
+        """Cancel at the bank every hold nothing can approve any more.
+
+        The due holds are chosen under the desk lock, released outside it,
+        and each answer is applied under it again only to a record that has
+        not changed since. A hold whose quote was confirmed is dropped with
+        no bank call. The first release that fails stops the rest.
+
+        Returns:
+            The resolved entries, and why the bank could not be read (or
+            None).
+        """
+        bank = cast(HoldingRail, self.bank)
+        due: list[tuple[str, dict[str, Any]]] = []
+        with self._lock:
+            now = self._clock()
+            for quote_id, hold in sorted(self._holds.items()):
+                if hold["rail"] != self.bank.rail:
+                    continue
+                if self._quote_paid(quote_id):
+                    self._drop_hold(quote_id)
+                elif self._hold_due(quote_id, hold, now):
+                    due.append((quote_id, hold))
+        answers: list[tuple[str, dict[str, Any], str]] = []
+        error: str | None = None
+        for quote_id, hold in due:
+            try:
+                status = bank.release(
+                    hold["idempotency_key"], transfer_id=hold["transfer_id"]
+                )
+                answers.append((quote_id, hold, status))
+            except RailError as exc:
+                error = str(exc)
+                break
+            except Exception as exc:
+                # Only the type: a message could carry keys.
+                _log.error("hold %s not released (%s)", quote_id, type(exc).__name__)
+                error = _BANK_DOWN
+                break
+        resolved: list[str] = []
+        with self._lock:
+            now = self._clock()
+            for quote_id, hold, status in answers:
+                if self._holds.get(quote_id) != hold:
+                    continue
+                outcome = None
+                if status == CANCELED:
+                    outcome = "hold canceled"
+                elif status == NO_TRANSFER and now >= _release_at(hold["expires_at"]):
+                    # Past this window no create under the key is in flight.
+                    outcome = "no hold at the bank"
+                if outcome is not None:
+                    self._drop_hold(quote_id)
+                    resolved.append(f"{quote_id} -> {outcome}")
+        return tuple(resolved), error
+
+    def _quote_paid(self, quote_id: str) -> bool:
+        record = self._quotes.get(quote_id)
+        result = self._closed.get(quote_id) if record is None else record.result
+        return result is not None and result.get("status") == "confirmed"
+
+    def _hold_due(self, quote_id: str, hold: dict[str, Any], now: int) -> bool:
+        """Whether nothing can approve a hold any more, so it may be canceled.
+
+        A journaled certificate may still be approving it until the
+        certificate expired and ``SETTLE_WINDOW_S`` more have passed; an open
+        quote may be approved until its consent expires. A quote closed
+        without money, or unknown after a restart, can approve nothing. A
+        journal that does not read keeps the hold. A desk without a store
+        keeps no journals, so a closed quote's hold is due at once.
+
+        The rule assumes the desk clock never steps back past a consent's
+        expiry; if it does, an approve and a cancel may both reach the bank,
+        which lets only one of them act on a transfer awaiting approval.
+        """
+        try:
+            journal = self._journal_of(quote_id)
+        except ValueError:
+            return False
+        if journal is not None:
+            return now >= _release_at(journal["expires_at"])
+        record = self._quotes.get(quote_id)
+        if record is not None and record.result is None:
+            return now > int(hold["expires_at"])
+        return True
+
+    def _drop_hold(self, quote_id: str) -> None:
+        def work() -> None:
+            self._drop("hold", quote_id)
+
+        self._durably(work)
+        del self._holds[quote_id]
 
     def _journal_of(self, quote_id: str) -> dict[str, Any] | None:
         """The quote's journal; ValueError when it is stored but does not read."""
@@ -1058,8 +1201,10 @@ class PaymentDesk:
             self._put("result", payment.payment_id, result)
             self._put("quote", quote_id, result)
             self._drop("pending", quote_id)
+            self._drop("hold", quote_id)
 
         self._durably(work)
+        self._holds.pop(quote_id, None)
         found.payment_id, found.unsettled = payment.payment_id, None
         self._receipts[payment.payment_id] = result
         self._close_quote(quote_id, result)
@@ -1123,12 +1268,18 @@ class PaymentDesk:
             intent_id: Recorded intent the quote is bound to, or None. A
                 bound quote is checked against that intent at the gate.
 
+        On a desk whose rail holds transfers for approval, the quote's amount
+        is held at the bank under its certificate's key before it is quoted.
+        Such a quote must name an intent with no hold, no payment and no
+        unsettled transfer; a hold the bank refuses denies the quote.
+
         Returns:
-            The quoted view, or a denied dict when a field is malformed or
-            the intent is unknown or names no holder.
+            The quoted view, or a denied dict when a field is malformed, the
+            intent is unknown or names no holder, or the hold is refused.
         """
         with self._lock:
-            refusal = self._unquotable(intent_id)
+            asked = Intent(amount_cents, currency, recipient, reference)
+            refusal = self._unquotable(intent_id, asked)
             if refusal is not None:
                 unknown = {
                     "status": "denied",
@@ -1161,14 +1312,41 @@ class PaymentDesk:
             self._seq += 1
             holder = None if intent_id is None else self._intents[intent_id].holder
             record = _Quote(self._seq, consent, intent_id=intent_id, holder=holder)
-            self._quotes[_quote_id(self._seq)] = record
+            quote_id = _quote_id(self._seq)
+            if self._two_step:
+                # Registered only after the hold: a quote whose hold failed,
+                # or raised, can never be approved, so it never pays through
+                # a transfer the holder did not see held.
+                record.jti, reason = self._hold_for(quote_id, intent_id or "", consent)
+                if reason is not None:
+                    record.status = "denied"
+                    record.result = {
+                        "status": "denied",
+                        "quote_id": quote_id,
+                        "reason": reason,
+                        "payment_id": None,
+                    }
+                    # Durable, so after a restart its kept hold reads as a
+                    # quote closed without money, not as an unknown one.
+                    self._put("quote", quote_id, record.result)
+                    self._quotes[quote_id] = record
+                    refused = {
+                        "status": "denied",
+                        "reason": reason,
+                        "intent_id": intent_id,
+                    }
+                    self._emit("quote", refused, consent)
+                    return refused
+            self._quotes[quote_id] = record
             view = self._quoted_view(record)
             self._emit("quote", view, consent)
             return view
 
-    def _unquotable(self, intent_id: str | None) -> str | None:
+    def _unquotable(self, intent_id: str | None, asked: Intent) -> str | None:
         if intent_id is None:
-            return None
+            # A hold is the one bank write no certificate authorizes, so it
+            # is made only for an intent the holder signed.
+            return "intent: missing" if self._two_step else None
         found = self._intents.get(intent_id)
         if found is None:
             return "intent: unknown"
@@ -1176,7 +1354,68 @@ class PaymentDesk:
         # find its signer by, so no approver may claim it.
         if found.holder is None:
             return "intent: holder unknown"
+        # Checked on every desk: one restarted without holding still owns
+        # the holds it stored, and any of them may yet complete.
+        if any(h["intent_id"] == intent_id for h in self._holds.values()):
+            return _HELD
+        if self._two_step and found.payment_id is not None:
+            return "intent: already used"
+        if self._two_step and found.unsettled is not None:
+            return "intent: unsettled"
+        # The hold shows in the bank's dashboard before any certificate, so
+        # it must be the payment the holder signed, not one the agent chose.
+        if self._two_step and asked != found.intent:
+            return "intent: differs"
         return None
+
+    def _hold_for(
+        self, quote_id: str, intent_id: str, consent: Consent
+    ) -> tuple[str, str | None]:
+        """Hold the quote's amount at the bank under its certificate's key.
+
+        The record is on disk before the bank is called, so a crash during
+        the call leaves the key the reconciler cancels by. Runs under the
+        desk lock: the rail makes at most two calls (the hold and one lookup),
+        each bounded by its timeouts, so about 30 s at worst.
+
+        Returns:
+            The certificate's id and the refusal reason, or None when held.
+        """
+        jti = self._nonces()
+        key = idempotency_key(jti)
+        hold: dict[str, Any] = {
+            "intent_id": intent_id,
+            "idempotency_key": key,
+            "transfer_id": None,
+            "expires_at": consent.expires_at,
+            "rail": self.bank.rail,
+        }
+        self._put("hold", quote_id, hold)
+        self._holds[quote_id] = hold
+        bank = cast(HoldingRail, self.bank)
+        reason: str | None = None
+        try:
+            transfer_id = bank.hold(_request_of(consent), key)
+        except ReplayError:
+            reason = "replay: bank idempotency key"
+        except RailError as exc:
+            reason = str(exc)
+        except Exception as exc:
+            reason = _rail_refusal(exc)
+            if reason is None:
+                # Only the type: a message could carry consent fields.
+                _log.error(
+                    "hold outcome unknown for %s (%s)", quote_id, type(exc).__name__
+                )
+                reason = _OUTCOME_UNKNOWN
+        if reason is None:
+            held = dict(hold, transfer_id=transfer_id)
+            self._put("hold", quote_id, held)
+            self._holds[quote_id] = held
+        elif reason in _NOTHING_HELD:
+            self._drop("hold", quote_id)
+            del self._holds[quote_id]
+        return jti, reason
 
     def expired(self, consent_expires_at: int) -> bool:
         """Whether the desk's clock is past a quote's deadline (the approve rule)."""
@@ -1555,7 +1794,7 @@ class PaymentDesk:
             private_key=self._gate_key,
             mode=Mode.ENFORCE,
             now=now,
-            nonce=self._nonces(),
+            nonce=record.jti or self._nonces(),
             timestamp=now,
             scope=PAY_SCOPE,
             salt=salt,
@@ -1621,6 +1860,8 @@ class PaymentDesk:
             # transfer stays visible to the reconciler.
             if outcome.reason not in _UNSETTLED:
                 self._drop("pending", quote_id)
+            if payment_id is not None:
+                self._drop("hold", quote_id)
             return proof, receipt
 
         try:
@@ -1632,6 +1873,7 @@ class PaymentDesk:
         record.status = result["status"]
         record.result = result
         if payment_id is not None:
+            self._holds.pop(quote_id, None)
             self._receipts[payment_id] = result
             if receipt is not None:
                 self._keep_receipt(payment_id, receipt)
@@ -1826,6 +2068,32 @@ def _request_of(consent: Consent) -> PaymentRequest:
         currency=consent.currency,
         ref=consent.reference,
     )
+
+
+def _rail_refusal(exc: Exception) -> str | None:
+    """The denial reason of an account or funds refusal, else None."""
+    message = str(exc) if isinstance(exc, ValueError) else ""
+    if message.startswith("insufficient funds"):
+        return "denied: insufficient funds"
+    if message.startswith("unknown account"):
+        return "denied: unknown account"
+    return None
+
+
+def _hold_from(value: str) -> dict[str, Any]:
+    """Read one stored hold; a row that does not read stops the start."""
+    hold = json.loads(value)
+    if not isinstance(hold, dict) or set(hold) != set(_HOLD_FIELDS):
+        raise ValueError(_UNREADABLE)
+    texts = (hold["intent_id"], hold["idempotency_key"], hold["rail"])
+    if not all(isinstance(text, str) for text in texts):
+        raise ValueError(_UNREADABLE)
+    if not isinstance(hold["transfer_id"], str | None):
+        raise ValueError(_UNREADABLE)
+    expires = hold["expires_at"]
+    if not isinstance(expires, int) or isinstance(expires, bool):
+        raise ValueError(_UNREADABLE)
+    return hold
 
 
 def _outcome_unknown(quote_id: str) -> dict[str, Any]:
