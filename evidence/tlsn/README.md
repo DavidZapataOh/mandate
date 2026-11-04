@@ -57,5 +57,6 @@ Without `TLSN_DIR` the live test skips cleanly.
 
 The proof attests the documented example JSON from
 `tlsn-server-fixture` (endpoint `tlsn-server-fixture`, content
-`example-json`); bank truth comes from the cooperative path; a bank
-TLS endpoint with a custom attestor is future work, out of scope for this evidence.
+`example-json`). A bank TLS endpoint is now proven by zktls/ (Mandate's own
+notary, sandbox.increase.com balance); this fixture proof stays as the
+documented reference run.

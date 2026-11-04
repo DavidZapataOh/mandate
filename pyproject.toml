@@ -50,6 +50,7 @@ module = [
     "e2e.test_anchor_live",
     "e2e.test_flow_a",
     "e2e.test_increase_live",
+    "e2e.test_zktls_live",
     "e2e.test_mcp_live",
     "e2e.test_redteam_live",
     "e2e.test_swarm_live",
