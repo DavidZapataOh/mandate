@@ -357,7 +357,7 @@ The curve `cubic-bezier(0.16, 1, 0.3, 1)` is the snap: fast in, a dead stop, no 
 ### Layout
 - **Top bar:** the wordmark (48–50px), the view name in Muted uppercase 17px Inter 700 with +0.1em tracking, and Export Markdown and Export JSON at the right. The bar closes on a 3px Muted rule, the only heavier rule on the page.
 - **Provenance strip:** one Bone mono 700 15px line on Raised naming the window, where it starts and the registry it rests on. An empty registry reads `registry empty`, never a root over 0 entries. Stream state and the link back to the live console sit at its right.
-- **Metric band:** nine equal cells, six to a row (three per row below 1100px), divided by hairlines, then a hairline under the band.
+- **Metric band:** thirteen cells in two full rows, divided by hairlines, then a hairline under the band: seven cells over six, the wider six holding the readings that run as sentences. The cells of a row share their label, value, Definition and drill tracks, so a label that wraps once more never drops its value out of line. Below 1100px, three cells to a row.
 - **Control register:** the framework table, grouped by framework.
 - **Compact tables:** attacks by kind and denials by layer side by side, split by a vertical hairline.
 - **Drill list:** under the tables, opened on demand.
@@ -370,13 +370,13 @@ The page gutter is `clamp(16px, 2.92vw, 48px)`. Columns are fluid from 1280 to 1
 - **Shares and gate time:**
   - Shares (consent, attribution) use `clamp(20px, 1.7vw, 28px)` and render as two unbreakable spans, the count then `· share`, so a line never ends on the dot.
   - Gate time sets its two percentiles on one line at 14px, with the Muted 14px sample count under them.
-  - The bank check reads as a 15px mono sentence (count, rail and time), in Alert only when a payment is unbacked.
+  - The bank check reads as a 15px mono sentence (count, rail and time), in Alert only when a payment is unbacked. The bank's own events beside it read the same way, and never in Alert: they are observations.
   - A value that says the window has none (`none in this window`) drops to a 15px Bone 82% sentence.
 - **Colour:** the verified value is always Verify. Attacks not blocked and Moved by attacks take Alert only when they are not zero (`data-zero="false"`). Every other value is Bone.
 - **Below the value:** the Definition disclosure, and a `Show the n lines` drill button in Muted 14px underlined mono.
 
 ### Definition disclosure
-A `summary` reading Definition, followed by an authored 14px info mark (ring, dot and stem, a data-URI mask filled with `currentcolor`). Opening it lays the exact definition, in Inter 14px, over the page in a 320px Ink box with a 40% Bone hairline, so the band never shifts. The last three cells open leftward. The attacks and layers tables carry the same disclosure beside their headings.
+A `summary` reading Definition, followed by an authored 14px info mark (ring, dot and stem, a data-URI mask filled with `currentcolor`). Opening it lays the exact definition, in Inter 14px, over the page in a 320px Ink box with a 40% Bone hairline, so the band never shifts. The last two cells of each row open leftward. The attacks and layers tables carry the same disclosure beside their headings.
 
 ### Control register
 - **Heading:** an uppercase Inter 700 18px heading tracked +0.08em, with `17 provisions` (singular for one) in Muted 14px mono under it.

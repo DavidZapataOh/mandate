@@ -23,6 +23,7 @@ export class LiveCues {
     fresh.reverse();
     const last = fresh.at(-1);
     if (last) this.watermark = last.seq;
-    return fresh;
+    // What the bank reports is read in the ledger; it never plays over a verdict.
+    return fresh.filter((line) => line.source !== "bank");
   }
 }

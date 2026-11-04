@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { attackLine, BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, SANDBOX_PAY, SANDBOX_REFUSED, WINDOW } from "./__fixtures__/window";
-import { computePosture, counted, DEFINITIONS, formatCents, formatShare, LAYERS, layerOf, nearestRank } from "./posture";
+import { patch } from "../wire/__fixtures__/lines";
+import { attackLine, BANK_OTHER, BANK_REPORT, BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, SANDBOX_PAY, SANDBOX_REFUSED, WINDOW } from "./__fixtures__/window";
+import { bankEventsText, computePosture, counted, DEFINITIONS, formatCents, formatShare, LAYERS, layerOf, nearestRank } from "./posture";
 
 const none = { count: 0, seqs: [] };
 const quiet = (kind: string) => ({ kind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] });
@@ -44,6 +45,7 @@ describe("computePosture", () => {
         ],
       },
       rails: [{ rail: "simulated", count: 2, seqs: [3, 9] }],
+      bankEvents: { events: none, reported: none },
     });
   });
 
@@ -54,6 +56,24 @@ describe("computePosture", () => {
       { rail: "simulated", count: 2, seqs: [3, 9] },
     ]);
     expect(computePosture([]).rails).toEqual([]);
+  });
+
+  it("bank events are counted on their own and match the payments they name", () => {
+    const base = computePosture(lines([...WINDOW, SANDBOX_PAY]));
+    const p = computePosture(lines([...WINDOW, SANDBOX_PAY, BANK_REPORT, BANK_OTHER]));
+    expect(p.bankEvents).toEqual({ events: { count: 2, seqs: [20, 21] }, reported: { count: 1, seqs: [18] } });
+    expect([p.decided, p.verified, p.denied, p.rails]).toEqual([base.decided, base.verified, base.denied, base.rails]);
+    expect(bankEventsText(p)).toBe("2 events · 1 of 1 sandbox payment reported by the bank");
+    expect(bankEventsText(computePosture(lines([BANK_OTHER])))).toBe("1 event");
+    expect(bankEventsText(computePosture(lines([...WINDOW, SANDBOX_PAY, BANK_OTHER])))).toBe(
+      "1 event · 0 of 1 sandbox payment reported by the bank",
+    );
+    expect(bankEventsText(computePosture([]))).toBe("no bank events in this window");
+  });
+
+  it("a bank event that comes before the payment it names still matches it", () => {
+    const p = computePosture(lines([patch(BANK_REPORT, { seq: 17 }), SANDBOX_PAY]));
+    expect(p.bankEvents.reported).toEqual({ count: 1, seqs: [18] });
   });
 
   it("an empty window has no window bounds, no samples and no shares", () => {

@@ -306,6 +306,11 @@ class PaymentDesk:
         """Account every quote debits."""
         return self._source
 
+    @property
+    def genesis(self) -> str:
+        """ISO 8601 UTC time the registry began; empty for an in-memory desk."""
+        return self._genesis
+
     def guarded(self, work: Callable[[BankRail, Verifier], _T]) -> _T:
         """Run ``work`` against the desk's bank and verifier under the desk lock.
 

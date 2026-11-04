@@ -8,6 +8,7 @@ export type Mode = "game" | "forensic";
 export function reasonOf(line: ConsoleLine): string {
   if (line.source === "attack" || line.source === "deploy") return line.subject.reason;
   if (line.source === "desk" && line.subject.reason) return line.subject.reason;
+  if (line.source === "bank") return line.subject.category;
   return line.event?.reason ?? "";
 }
 
@@ -64,6 +65,8 @@ export function gameText(line: ConsoleLine): string {
       return line.event?.verdict === "MET"
         ? `Bill paid ✓ ${line.subject.summary}`
         : `Bill denied: ${line.subject.summary}: ${reasonOf(line)}`;
+    case "bank":
+      return `Bank reports: ${line.subject.summary} · ${line.subject.object_id}`;
   }
 }
 
@@ -100,6 +103,7 @@ function clock(seconds: number): string {
 }
 
 function timeOf(line: ConsoleLine): string {
+  if (line.source === "bank") return line.subject.created_at.slice(11, 19);
   if (line.event) return clock(line.event.ts);
   const freshness = line.forensic?.cava["freshness"];
   if (typeof freshness === "object" && freshness !== null) {

@@ -19,11 +19,17 @@ from types import FrameType
 from typing import Any
 
 import uvicorn
-from increase import AuthenticationError, IncreaseError, PermissionDeniedError
+from increase import (
+    AuthenticationError,
+    Increase,
+    IncreaseError,
+    PermissionDeniedError,
+)
 from opentimestamps.calendar import RemoteCalendar
 
 from bank.api import Bank
 from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
+from bank.events import BankEvents
 from bank.increase import IncreaseRail, sandbox_client
 from bank.rail import SANDBOX, BankRail
 from bank.verifier import Verifier
@@ -47,7 +53,7 @@ from gate.policy import Intent
 from gate.shim import RawCall
 from gate.state import StateStore, load_gate_key
 from swarm.attacker import AttackerTrace
-from swarm.console_line import ConsoleLine, attack_line, deploy_line
+from swarm.console_line import ConsoleLine, attack_line, bank_line, deploy_line
 from swarm.desk import PaymentDesk
 from swarm.holders import MAX_HOLDERS, fingerprint
 from swarm.hub import EventHub
@@ -68,6 +74,7 @@ _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _GRACEFUL_SHUTDOWN_S = 2
 RECONCILE_EVERY_S = 60
 ANCHOR_EVERY_S = 600
+BANK_EVENTS_EVERY_S = 5
 # Best effort: a round that upgrades many proofs can outlast this; the store
 # closes under it and its write fails closed, logged by type.
 _ANCHOR_JOIN_S = CALENDAR_TIMEOUT_S * len(AGGREGATORS) + HEADER_TIMEOUT_S
@@ -352,16 +359,17 @@ def _sandbox_key(
 
 def _sandbox(
     parser: argparse.ArgumentParser, key: str, names: tuple[str, ...]
-) -> IncreaseRail:
+) -> tuple[IncreaseRail, Increase]:
     try:
-        rail = IncreaseRail.connect(sandbox_client(key))
+        client = sandbox_client(key)
+        rail = IncreaseRail.connect(client)
     except (AuthenticationError, PermissionDeniedError):
         parser.exit(2, "bank rail unavailable: the sandbox refused the key\n")
     except IncreaseError:
         parser.exit(2, "bank rail unavailable: the sandbox is unreachable\n")
     if not rail.holds(names):
         parser.exit(2, "bank accounts missing: run mandate-bank-setup\n")
-    return rail
+    return rail, client
 
 
 @contextmanager
@@ -509,6 +517,47 @@ def anchor_round(anchors: PublicAnchors) -> None:
         _log.warning("anchor round incomplete (%s)", done.error)
 
 
+def bank_events_every(
+    feed: BankEvents, hub: EventHub, every_s: float, stop: threading.Event
+) -> threading.Thread:
+    """Publish the bank's new events every ``every_s`` seconds until stopped.
+
+    A round that fails is logged by its type and retried at the next one from
+    the stored cursor.
+
+    Args:
+        feed: The bank's event feed.
+        hub: Hub that receives the bank lines.
+        every_s: Seconds between rounds; the first runs after one interval.
+        stop: Set to end the loop.
+
+    Returns:
+        The started daemon thread.
+    """
+
+    def loop() -> None:
+        while not stop.wait(every_s):
+            bank_events_round(feed, hub)
+
+    thread = threading.Thread(target=loop, name="bank-events", daemon=True)
+    thread.start()
+    return thread
+
+
+def bank_events_round(feed: BankEvents, hub: EventHub) -> None:
+    """Publish one round of the bank's new events; a failure is logged by type.
+
+    Args:
+        feed: The bank's event feed.
+        hub: Hub that receives the bank lines.
+    """
+    try:
+        feed.poll(lambda event: hub.publish(bank_line(event)))
+    except Exception as exc:
+        # Only the type: a message could carry the bank's text.
+        _log.error("bank events failed (%s)", type(exc).__name__)
+
+
 def _port_free(listen: str) -> bool:
     host, _, port = listen.rpartition(":")
     with socket.socket() as probe:
@@ -557,7 +606,9 @@ def cli(argv: list[str] | None = None) -> None:
     the sandbox rail requires it. The desk reconciles with its bank at start,
     and every ``RECONCILE_EVERY_S`` on the sandbox rail. ``--public-anchor``
     (needs ``--state-dir``) stamps the store's seals through public
-    OpenTimestamps calendars at start and every ``ANCHOR_EVERY_S``. Template attacks
+    OpenTimestamps calendars at start and every ``ANCHOR_EVERY_S``. On the
+    sandbox rail the console also shows the bank's own events every
+    ``BANK_EVENTS_EVERY_S``. Template attacks
     always run on a simulated bank of their own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
@@ -669,13 +720,14 @@ def cli(argv: list[str] | None = None) -> None:
             else _open_state(parser, args.state_dir, held)
         )
         rail: BankRail
+        client: Increase | None = None
         if sandbox_key is None:
             with _state_errors(parser):
                 rail = Bank(
                     {args.source: _DEMO_BALANCE_CENTS, "acme-991": 0}, state=state
                 )
         else:
-            rail = _sandbox(parser, sandbox_key, (args.source, "acme-991"))
+            rail, client = _sandbox(parser, sandbox_key, (args.source, "acme-991"))
         notary, zktls = (
             _zktls(parser, rail, args.source) if args.zktls else (None, None)
         )
@@ -700,7 +752,12 @@ def cli(argv: list[str] | None = None) -> None:
             if not desk.unpair_holder(holder_id):
                 parser.error(f"not a paired holder: {holder_id}")
             print(f"Unpaired holder {holder_id}.", flush=True)
-        _serve(parser, args, book, desk, gate_key, hub, held, anchors)
+        feed = (
+            BankEvents(client, state, desk.genesis, _now)
+            if client is not None and state is not None
+            else None
+        )
+        _serve(parser, args, book, desk, gate_key, hub, held, anchors, feed)
 
 
 def _desk(
@@ -739,6 +796,7 @@ def _serve(
     hub: EventHub,
     held: ExitStack,
     anchors: PublicAnchors | None,
+    feed: BankEvents | None,
 ) -> None:
     intake, agent = _spark(os.environ, book)
     tokens = tuple(secrets.token_urlsafe(16) for _ in range(args.holders))
@@ -771,6 +829,11 @@ def _serve(
         # Unwound first: a round still asking the bank ends before the store
         # closes.
         held.callback(_end_loop, stop, loop)
+    if feed is not None:
+        stop_feed = threading.Event()
+        feeding = bank_events_every(feed, hub, BANK_EVENTS_EVERY_S, stop_feed)
+        # Unwound before the store closes, like the reconcile loop.
+        held.callback(_end_loop, stop_feed, feeding)
     if anchors is not None:
         stop_anchoring = threading.Event()
         anchoring = anchor_every(anchors, ANCHOR_EVERY_S, stop_anchoring)

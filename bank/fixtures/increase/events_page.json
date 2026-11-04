@@ -1,0 +1,20 @@
+{
+  "body": {
+    "data": [
+      {
+        "associated_object_id": "sandbox_account_transfer_ylz0mq65s1u8da4vxzim",
+        "associated_object_type": "account_transfer",
+        "category": "account_transfer.created",
+        "created_at": "2026-11-04T17:33:02Z",
+        "id": "sandbox_event_001m6ksy3zytj8kkcs19ve7cx26",
+        "type": "event"
+      }
+    ],
+    "next_cursor": "eyJpZCI6InNhbmRib3hfZXZlbnRfMDAxbTZrc3kzenl0ajhra2NzMTl2ZTdjeDI2IiwidGltZXN0YW1wIjoiMjAyNi0xMS0wNFQxNzozMzowMi44MjE0OTRaIn0",
+    "response_metadata": {
+      "next_cursor": "eyJpZCI6InNhbmRib3hfZXZlbnRfMDAxbTZrc3kzenl0ajhra2NzMTl2ZTdjeDI2IiwidGltZXN0YW1wIjoiMjAyNi0xMS0wNFQxNzozMzowMi44MjE0OTRaIn0"
+    }
+  },
+  "replayed": null,
+  "status": 200
+}

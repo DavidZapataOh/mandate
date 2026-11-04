@@ -65,10 +65,12 @@ export interface Posture {
   };
   /** Verified payments that carry a bank record, grouped by the rail named there. */
   readonly rails: readonly { readonly rail: string; readonly count: number; readonly seqs: readonly number[] }[];
+  /** Events the bank itself reported, and the verified sandbox payments whose transfer id one of them names. */
+  readonly bankEvents: { readonly events: Count; readonly reported: Count };
 }
 
 export type MetricKey =
-  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails" | "unbacked" | "holders";
+  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails" | "bankEvents" | "unbacked" | "holders";
 
 export const LABELS: Readonly<Record<MetricKey, string>> = {
   decided: "Actions decided",
@@ -83,6 +85,7 @@ export const LABELS: Readonly<Record<MetricKey, string>> = {
   attacks: "Attacks by kind",
   layers: "Denials by layer",
   rails: "Payments by rail",
+  bankEvents: "Bank events",
   unbacked: "Transfers at the bank without a certificate",
   holders: "Paired holders",
 };
@@ -112,6 +115,8 @@ export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
     "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
   rails:
     "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED).",
+  bankEvents:
+    "Events the bank itself reported in this window, read from its own event list (Increase List Events, oldest first) on the sandbox rail; each line names the bank's event id and the object it belongs to. They are observations: they never count as decisions, verified payments or denials. Reported: of the verified sandbox payments in this window, those whose transfer id a bank event names.",
   unbacked:
     "Account transfers the bank itself lists from the desk's debit account since this registry began that carry no idempotency key naming a certificate this desk issued, or have no sealed execution entry in the registry. A read-only reconciler asks the bank's own API; 0 means every payment that left the account at the bank has a certificate and a receipt. A confirmed payment whose proof receipt could not be built counts as without. Sealed payments the bank does not list, or lists as canceled, are named in the evidence. An intent that more than one transfer paid is named as paid twice and flags the tile.",
   holders:
@@ -139,6 +144,8 @@ export function layerOf(line: ConsoleLine): string {
     case "hook":
     case "bill":
       return "gate";
+    case "bank":
+      return "bank";
     case "desk":
       switch (line.subject.step) {
         case "confirm":
@@ -165,6 +172,16 @@ export function layerOf(line: ConsoleLine): string {
 export function railsText(p: Posture): string {
   if (p.rails.length === 0) return "no verified payments in this window";
   return p.rails.map((r) => `${r.rail.toUpperCase()} ${r.count}`).join(" · ");
+}
+
+/** How many events the bank reported, and how many verified sandbox payments one of them names. */
+export function bankEventsText(p: Posture): string {
+  const n = p.bankEvents.events.count;
+  if (n === 0) return "no bank events in this window";
+  const events = counted(n, "event", "events");
+  const m = p.rails.find((r) => r.rail === "sandbox")?.count ?? 0;
+  if (m === 0) return events;
+  return `${events} · ${p.bankEvents.reported.count} of ${counted(m, "sandbox payment", "sandbox payments")} reported by the bank`;
 }
 
 /** Nearest-rank percentile of an ascending list; null when it is empty. */
@@ -248,6 +265,9 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
   const providers = new Map<string, number>();
   const rails = new Map<string, number[]>();
   const latencies: { us: number; seq: number }[] = [];
+  const bankEvents = bucket();
+  const bankObjects = new Set<string>();
+  const sandboxPaid: { seq: number; transferId: string }[] = [];
   const attacks = new Map<string, AttackAcc>(
     ATTACK_KINDS.map((kind) => [kind, { kind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] }]),
   );
@@ -266,10 +286,16 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
         providers.set(line.meta.provider, (providers.get(line.meta.provider) ?? 0) + 1);
       }
     }
+    if (line.source === "bank") {
+      push(bankEvents, line.seq);
+      bankObjects.add(line.subject.object_id);
+    }
     if (outcome === "pass") {
       push(verified, line.seq);
       const rail = railOf(line);
       if (rail !== null) rails.set(rail, [...(rails.get(rail) ?? []), line.seq]);
+      const transferId = line.source === "desk" ? line.subject.payment_id : null;
+      if (rail === "sandbox" && transferId !== null) sandboxPaid.push({ seq: line.seq, transferId });
     }
     if (outcome === "deny") push(denied, line.seq);
     if (outcome === "breach") push(line.source === "attack" ? breaches : stepsRan, line.seq);
@@ -312,6 +338,9 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
     }
   }
 
+  // A bank event may arrive before or after the payment it names, so the match waits for the whole window.
+  const reported = bucket();
+  for (const paid of sandboxPaid) if (bankObjects.has(paid.transferId)) push(reported, paid.seq);
   const sorted = latencies.map((l) => l.us).sort((a, b) => a - b);
   return {
     window: { first: lines[0]?.seq ?? null, last: lines[lines.length - 1]?.seq ?? null, lines: lines.length },
@@ -339,5 +368,6 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
     rails: [...rails.entries()]
       .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([rail, seqs]) => ({ rail, count: seqs.length, seqs })),
+    bankEvents: { events: bankEvents, reported },
   };
 }

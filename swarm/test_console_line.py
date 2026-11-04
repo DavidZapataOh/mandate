@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from bank.api import Bank
+from bank.events import BankEvent
 from bank.verifier import Verifier
 from gate.cava import CavaAction, Freshness
 from gate.certs import generate_keypair
@@ -16,6 +17,7 @@ from swarm.conftest import ARGS, REASONING, message, tool_call
 from swarm.console_line import (
     ConsoleLine,
     attack_line,
+    bank_line,
     bill_line,
     campaign_lines,
     console_line_json,
@@ -129,7 +131,7 @@ def test_reader_keeps_attacker_text_verbatim():
         json.dumps({"v": 2, "event": EVENT, "meta": None}),
         _v3(seq=0),
         _v3(seq=True),
-        _v3(source="bank"),
+        _v3(source="teller"),
         _v3(extra=1),
         _v3(subject={"agent": "a"}),
         _v3(event={**EVENT, "v": 2}),
@@ -603,3 +605,71 @@ def test_reader_keeps_a_sandbox_transfer():
     line = json.loads(GOLDEN_CONFIRM)
     line["forensic"]["bank"] = SANDBOX_VIEW
     assert read_console_line(json.dumps(line)).forensic["bank"] == SANDBOX_VIEW
+
+
+GOLDEN_BANK = (
+    '{"v":3,"seq":11,"source":"bank","event":null,"meta":null,"subj'
+    'ect":{"rail":"sandbox","event_id":"sandbox_event_001kmnw80hstc'
+    'eme2a6nzxcxzw7","category":"account_transfer.created","object_'
+    'type":"account_transfer","object_id":"sandbox_account_transfer'
+    '_tts2u0bmjgmgyp08br4d","created_at":"2026-11-04T08:58:56Z","su'
+    'mmary":"MANDATE_FIXTURE Account transfer created"},"forensic":'
+    "null}"
+)
+BANK_EVENT = BankEvent(
+    "sandbox_event_001kmnw80hstceme2a6nzxcxzw7",
+    "account_transfer.created",
+    "account_transfer",
+    "sandbox_account_transfer_tts2u0bmjgmgyp08br4d",
+    "2026-11-04T08:58:56Z",
+    "MANDATE_FIXTURE Account transfer created",
+)
+BANK = json.loads(GOLDEN_BANK)
+BANK_SUBJECT = BANK["subject"]
+
+
+def test_bank_line_is_the_golden():
+    line = bank_line(BANK_EVENT)
+    assert (line.seq, line.source, line.event, line.meta, line.forensic) == (
+        0,
+        "bank",
+        None,
+        None,
+        None,
+    )
+    published = dataclasses.replace(line, seq=11)
+    assert console_line_json(published) == GOLDEN_BANK
+    assert read_console_line(GOLDEN_BANK) == published
+
+
+def test_console_bank_fixture_is_the_python_golden():
+    test_console_fixtures_are_the_python_goldens("BANK", GOLDEN_BANK)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        {**BANK, "subject": {**BANK_SUBJECT, "rail": "simulated"}},
+        {**BANK, "subject": {**BANK_SUBJECT, "created_at": "2026-11-04 08:58:56"}},
+        {
+            **BANK,
+            "subject": {**BANK_SUBJECT, "created_at": "2026-11-04T08:58:56.123Z"},
+        },
+        {
+            **BANK,
+            "subject": {**BANK_SUBJECT, "created_at": "\u0662026-11-04T08:58:56Z"},
+        },
+        {**BANK, "subject": {**BANK_SUBJECT, "event_id": 7}},
+        {**BANK, "subject": {**BANK_SUBJECT, "amount": 20000}},
+        {
+            **BANK,
+            "subject": {k: v for k, v in BANK_SUBJECT.items() if k != "summary"},
+        },
+        {**BANK, "event": EVENT},
+        {**BANK, "meta": HOOK_META},
+        {**BANK, "forensic": json.loads(GOLDEN_CONFIRM)["forensic"]},
+    ],
+)
+def test_reader_refuses_a_malformed_bank_line(line):
+    with pytest.raises(ValueError, match="console line: malformed"):
+        read_console_line(json.dumps(line))

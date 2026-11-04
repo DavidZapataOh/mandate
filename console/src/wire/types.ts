@@ -1,4 +1,4 @@
-export type Source = "desk" | "attack" | "hook" | "bill" | "deploy";
+export type Source = "desk" | "attack" | "hook" | "bill" | "deploy" | "bank";
 
 export interface DecisionEvent {
   v: 1;
@@ -66,6 +66,17 @@ export interface DeploySubject {
   blocked: boolean;
 }
 
+/** What the bank itself reported: one event from its own event list. */
+export interface BankSubject {
+  rail: "sandbox";
+  event_id: string;
+  category: string;
+  object_type: string;
+  object_id: string;
+  created_at: string;
+  summary: string;
+}
+
 export interface RegistryProof {
   seq: number;
   root: string;
@@ -115,4 +126,5 @@ export type ConsoleLine =
   | LineOf<"attack", AttackSubject>
   | LineOf<"hook", HookSubject>
   | LineOf<"bill", BillSubject>
-  | LineOf<"deploy", DeploySubject>;
+  | LineOf<"deploy", DeploySubject>
+  | LineOf<"bank", BankSubject>;

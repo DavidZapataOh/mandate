@@ -18,8 +18,16 @@ import uvicorn
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bank.api import Bank
-from bank.conftest import SENTINEL_KEY, Cassette, RecordingRail, named_accounts
+from bank.conftest import (
+    SENTINEL_KEY,
+    Cassette,
+    RecordingRail,
+    event_body,
+    events_page,
+    named_accounts,
+)
 from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
+from bank.events import BankEvents
 from bank.verifier import Verifier
 from evidence.conftest import fake_binary
 from evidence.zktls import ZKTLS_BIN_ENV
@@ -1220,3 +1228,98 @@ def test_an_anchor_round_that_reports_an_error_logs_it(
     assert logged == [
         (logging.WARNING, "anchor round incomplete (anchor: 1 of 4 calendars answered)")
     ]
+
+
+SINCE = "2026-11-04T08:00:00Z"
+
+
+def _feed(store, *answers):
+    return BankEvents(Cassette(*answers).client(), store, SINCE, lambda: NOW)
+
+
+def test_a_bank_events_round_publishes_one_line_per_event(state_store):
+    page = events_page(event_body(1), event_body(2))
+    hub = EventHub()
+    console.bank_events_round(_feed(state_store, page), hub)
+    lines = hub.since(0)
+    assert [(x.seq, x.source, x.subject["event_id"]) for x in lines] == [
+        (1, "bank", "sandbox_event_000001"),
+        (2, "bank", "sandbox_event_000002"),
+    ]
+    assert lines[0].subject["summary"] == "Account transfer created"
+
+
+def test_a_failed_bank_events_round_is_logged_by_type(state_store, caplog):
+    hub = EventHub()
+    feed = _feed(state_store, httpx.ConnectError("bank down"))
+    with caplog.at_level(logging.ERROR):
+        console.bank_events_round(feed, hub)
+    assert hub.last_seq == 0
+    assert "bank events failed (RailError)" in caplog.text
+    assert "bank down" not in caplog.text
+
+
+def test_the_bank_events_loop_stops_when_asked(state_store):
+    stop = threading.Event()
+    thread = console.bank_events_every(_feed(state_store), EventHub(), 0.01, stop)
+    assert (thread.name, thread.daemon) == ("bank-events", True)
+    stop.set()
+    thread.join(1)
+    assert not thread.is_alive()
+
+
+async def _bank_lines(app, _printed):
+    async with _asgi(app) as http:
+        for _ in range(500):
+            served = (await http.get("/api/lines")).json()
+            found = [x for x in served if x["source"] == "bank"]
+            if found:
+                return found
+            await anyio.sleep(0.01)
+    return []
+
+
+def test_cli_sandbox_console_streams_the_banks_events(
+    monkeypatch, capsys, dist, tmp_path
+):
+    monkeypatch.setattr(console, "BANK_EVENTS_EVERY_S", 0.01)
+    state_dir = tmp_path / "state"
+    argv = ("--console-dir", str(dist), "--state-dir", str(state_dir))
+
+    def start(*events, cursor):
+        # Each run pops the key from its environment, as the real CLI does.
+        monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+        cassette = Cassette(
+            named_accounts("checking-881", "acme-991"),
+            "account_transfers_none",
+            events_page(*events, next_cursor=cursor),
+        )
+        monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+        return cassette
+
+    first = start(event_body(1), cursor="c1")
+    seen, _ = _run_cli(
+        monkeypatch, capsys, *argv, "--rail", "sandbox", serving=_bank_lines
+    )
+    again = start(event_body(1), event_body(2), cursor="c2")
+    later, _ = _run_cli(
+        monkeypatch, capsys, *argv, "--rail", "sandbox", serving=_bank_lines
+    )
+    shown = [x["subject"]["event_id"] for x in seen["served"] + later["served"]]
+    assert shown == ["sandbox_event_000001", "sandbox_event_000002"]
+    asked = [r.url.params for r in first.requests + again.requests]
+    events = [q for q in asked if "order_by.field" in q]
+    assert "cursor" not in events[0]
+    assert next(q for q in events if "cursor" in q)["cursor"] == "c1"
+    store = StateStore(state_dir / "state.db")
+    assert events[0]["created_at.on_or_after"] == store.get("genesis")
+    assert store.get("bank_events_cursor") == "c2"
+    store.close()
+
+
+def test_cli_simulated_console_starts_no_bank_feed(monkeypatch, capsys, dist):
+    async def names(_app, _printed):
+        return [t.name for t in threading.enumerate()]
+
+    seen, _ = _run_cli(monkeypatch, capsys, "--console-dir", str(dist), serving=names)
+    assert "bank-events" not in seen["served"]

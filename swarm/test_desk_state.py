@@ -374,3 +374,9 @@ def test_a_corrupt_holder_record_stops_the_start(state_store, value):
             _desk(store)
     finally:
         store.close()
+
+
+def test_the_desk_names_when_its_registry_began(state_store):
+    desk = _desk(state_store)
+    assert desk.genesis == "2027-01-15T08:16:40Z" == state_store.get("genesis")
+    assert _desk(None).genesis == ""

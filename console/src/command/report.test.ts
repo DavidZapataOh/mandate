@@ -36,6 +36,7 @@ describe("reportMarkdown", () => {
       "| Actions decided | 7 |",
       "| Moved by attacks | 0.00 |",
       "| Payments by rail | SIMULATED 2 |",
+      "| Bank events | no bank events in this window |",
       "| Transfers at the bank without a certificate | not reconciled yet |",
       "| Paired holders | 1 |",
       "| Holder consent on certified payments | 1 of 2 · 50.0% |",
@@ -187,12 +188,13 @@ describe("metricValue", () => {
   it("renders each tile", () => {
     const p = computePosture(window);
     expect(TILES.map((k) => metricValue(k, p, provenanceOf(window, parseProvenance(SERVER_BODY), null)))).toEqual([
-      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2", "not reconciled yet", "1",
+      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2", "no bank events in this window", "not reconciled yet", "1",
     ]);
   });
 
   it("says so when no verified payment names a rail", () => {
     expect(metricValue("rails", computePosture([]), provenanceOf([], null, null))).toBe("no verified payments in this window");
+    expect(metricValue("bankEvents", computePosture([]), provenanceOf([], null, null))).toBe("no bank events in this window");
   });
 });
 

@@ -119,6 +119,7 @@ function maxDeskSeq(lines: readonly ConsoleLine[]): number {
       case "hook":
       case "bill":
       case "deploy":
+      case "bank":
         break;
       default: {
         const unreachable: never = line;

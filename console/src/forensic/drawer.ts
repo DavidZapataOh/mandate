@@ -10,6 +10,7 @@ const show = (value: unknown): string =>
 function decision(line: ConsoleLine): string {
   if (line.event) return show(line.event);
   if (line.source === "attack") return `Decided by ${line.subject.layer}: ${line.subject.reason}`;
+  if (line.source === "bank") return "Reported by the bank; Mandate decided nothing here";
   return "No gate decision";
 }
 

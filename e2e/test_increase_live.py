@@ -3,14 +3,16 @@ import os
 import re
 import secrets
 import time
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 from increase import IdempotencyKeyAlreadyUsedError, InvalidOperationError
 
 from bank.api import PaymentRequest
-from bank.conftest import FIXTURES
+from bank.conftest import DOC_EVENT, FIXTURES
 from bank.credentials import BANK_KEY_ENV
+from bank.events import BankEvents
 from bank.increase import IncreaseRail, ensure_accounts, sandbox_client
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
@@ -266,3 +268,60 @@ def test_reconciler_names_every_live_transfer(tmp_path):
     )
     assert report.error is None
     store.close()
+
+
+def _until(deadline_s, check):
+    end = time.monotonic() + deadline_s
+    while time.monotonic() < end:
+        found = check()
+        if found:
+            return found
+        time.sleep(2)
+    return None
+
+
+@pytest.mark.live
+def test_capture_bank_events(tmp_path):
+    key = _key()
+    recorder = _Recorder()
+    client = sandbox_client(key, httpx.Client(event_hooks={"response": [recorder]}))
+    since = (datetime.now(UTC) - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payer = client.accounts.create(
+        name=CAPTURE[0], idempotency_key="mandate-capture-account-payer"
+    )
+    payee = client.accounts.create(
+        name=CAPTURE[1], idempotency_key="mandate-capture-account-payee"
+    )
+    transfer = client.account_transfers.create(
+        account_id=payer.id,
+        amount=100,
+        description="Mandate capture bank events",
+        destination_account_id=payee.id,
+        require_approval=False,
+        idempotency_key=f"mandate-capture-{secrets.token_hex(8)}",
+    )
+    path = tmp_path / "state" / "state.db"
+    store = StateStore(path)
+    feed = BankEvents(client, store, since, lambda: int(time.time()))
+    shown = []
+
+    def reported():
+        feed.poll(shown.append)
+        return [e for e in shown if e.object_id == transfer.id]
+
+    mine = _until(60, reported)
+    assert mine, "the sandbox listed no event for the transfer within 60 s"
+    assert mine[0].category == "account_transfer.created"
+    record = recorder.last
+    store.close()
+    again = StateStore(path)
+    repeat = []
+    BankEvents(client, again, since, lambda: int(time.time())).poll(repeat.append)
+    again.close()
+    assert not {e.event_id for e in repeat} & {e.event_id for e in shown}
+    text = json.dumps(record, indent=2, sort_keys=True) + "\n"
+    assert key not in text
+    if os.environ.get("MANDATE_CAPTURE") == "1":
+        (FIXTURES / "events_page.json").write_text(text)
+    for body in record["body"]["data"] or [DOC_EVENT]:
+        assert set(body) == set(DOC_EVENT)

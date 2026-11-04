@@ -40,6 +40,7 @@ show_error_codes = true
 [[tool.mypy.overrides]]
 module = [
     "bank.test_credentials",
+    "bank.test_events",
     "bank.test_increase",
     "bank.test_rail",
     "bank.test_reconcile",

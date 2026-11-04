@@ -23,6 +23,7 @@ function deskOf(line: ConsoleLine): DeskLine | null {
     case "hook":
     case "bill":
     case "deploy":
+    case "bank":
       return null;
     default: {
       const unreachable: never = line;

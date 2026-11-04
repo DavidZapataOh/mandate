@@ -181,3 +181,45 @@ class Cassette:
         else:
             status, body = answer
         return httpx.Response(status, json=body, headers=headers)
+
+
+DOC_EVENT: dict[str, str] = {
+    "associated_object_id": "account_in71c4amph0vgo2qllky",
+    "associated_object_type": "account",
+    "category": "account.created",
+    "created_at": "2020-01-31T23:59:59Z",
+    "id": "event_001dzz0r20rzr4zrhrr1364hy80",
+    "type": "event",
+}
+
+
+def event_body(
+    n: int,
+    category: str = "account_transfer.created",
+    object_id: str | None = None,
+    created_at: str = "2026-11-04T08:58:56Z",
+) -> dict[str, Any]:
+    """Build the documented List Events item as event ``n`` of ``category``.
+
+    Args:
+        n: Numbers the event id and, unless given, the object id.
+        category: Event category; its prefix is the object type.
+        object_id: Associated object id; defaults to one numbered by ``n``.
+        created_at: Event time as the bank writes it.
+    """
+    object_type = category.split(".")[0]
+    return dict(
+        DOC_EVENT,
+        id=f"sandbox_event_{n:06d}",
+        category=category,
+        associated_object_type=object_type,
+        associated_object_id=object_id or f"sandbox_{object_type}_{n:06d}",
+        created_at=created_at,
+    )
+
+
+def events_page(
+    *events: dict[str, Any], next_cursor: str | None = "c1"
+) -> tuple[int, dict[str, Any]]:
+    """Answer a List Events page holding ``events`` in order."""
+    return 200, {"data": list(events), "next_cursor": next_cursor}

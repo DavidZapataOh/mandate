@@ -75,6 +75,8 @@ const FORENSIC = shape({
   bank: nullable(BANK),
 });
 
+const UTC_SECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+
 const SUBJECTS: Record<Source, Check> = {
   desk: shape({
     step: oneOf("intent", "quote", "approve", "confirm"),
@@ -108,6 +110,15 @@ const SUBJECTS: Record<Source, Check> = {
     reason: str,
     blocked: bool,
   }),
+  bank: shape({
+    rail: oneOf("sandbox"),
+    event_id: str,
+    category: str,
+    object_type: str,
+    object_id: str,
+    created_at: (value) => typeof value === "string" && UTC_SECONDS.test(value),
+    summary: str,
+  }),
 };
 
 const LINE_KEYS = ["v", "seq", "source", "event", "meta", "subject", "forensic"];
@@ -132,11 +143,13 @@ export function parseLine(text: string): ConsoleLine {
     typeof value.seq === "number" &&
     Number.isSafeInteger(value.seq) &&
     value.seq >= 1 &&
-    oneOf("desk", "attack", "hook", "bill", "deploy")(source) &&
+    oneOf("desk", "attack", "hook", "bill", "deploy", "bank")(source) &&
     nullable(EVENT)(value.event) &&
     nullable(META)(value.meta) &&
     SUBJECTS[source as Source](value.subject) &&
-    nullable(FORENSIC)(value.forensic);
+    nullable(FORENSIC)(value.forensic) &&
+    // The bank's own report carries no gate decision, model call or evidence of ours.
+    (source !== "bank" || (value.event === null && value.meta === null && value.forensic === null));
   if (!valid) throw new WireError("wire: malformed line");
   return value as unknown as ConsoleLine;
 }

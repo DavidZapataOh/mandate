@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ATTACK, CONFIRM, patch } from "./__fixtures__/lines";
+import { ATTACK, BANK, CONFIRM, HOSTILE, patch } from "./__fixtures__/lines";
 import { parseHello, parseLine, WireError } from "./parse";
 
 describe("parseLine", () => {
@@ -32,7 +32,7 @@ describe("parseLine", () => {
     ["v2", patch(ATTACK, { v: 2 }), "wire: malformed line"],
     ["seq 0", patch(ATTACK, { seq: 0 }), "wire: malformed line"],
     ["fractional seq", patch(ATTACK, { seq: 1.5 }), "wire: malformed line"],
-    ["unknown source", patch(ATTACK, { source: "bank" }), "wire: malformed line"],
+    ["unknown source", patch(ATTACK, { source: "teller" }), "wire: malformed line"],
     ["extra key", patch(ATTACK, { extra: 1 }), "wire: malformed line"],
     ["blocked as text", patch(ATTACK, {}, { blocked: "true" }), "wire: malformed line"],
     ["unknown origin", patch(ATTACK, {}, { origin: "human" }), "wire: malformed line"],
@@ -96,5 +96,31 @@ describe("bank transfer block", () => {
   it("refuses a forensic block without the bank key", () => {
     const { bank: _, ...rest } = forensic;
     expect(() => parseLine(patch(CONFIRM, { forensic: rest }))).toThrow("wire: malformed line");
+  });
+});
+
+describe("bank lines on the wire", () => {
+  it("accepts the line Python writes", () => {
+    const line = parseLine(BANK);
+    expect(line.source === "bank" && [line.subject.rail, line.subject.event_id, line.subject.object_id]).toEqual([
+      "sandbox",
+      "sandbox_event_001kmnw80hstceme2a6nzxcxzw7",
+      "sandbox_account_transfer_tts2u0bmjgmgyp08br4d",
+    ]);
+  });
+
+  it.each([
+    ["a simulated rail", patch(BANK, {}, { rail: "simulated" })],
+    ["a time with a space", patch(BANK, {}, { created_at: "2026-11-04 08:58:56" })],
+    ["a time with fractions", patch(BANK, {}, { created_at: "2026-11-04T08:58:56.123Z" })],
+    ["a numeric event id", patch(BANK, {}, { event_id: 7 })],
+    ["an extra subject key", patch(BANK, {}, { amount: 20000 })],
+    ["a missing subject key", patch(BANK, {}, { summary: undefined })],
+    ["a gate event", patch(BANK, { event: JSON.parse(ATTACK).event })],
+    ["a model call", patch(BANK, { meta: JSON.parse(HOSTILE).meta })],
+    ["a forensic block", patch(BANK, { forensic: JSON.parse(CONFIRM).forensic })],
+  ])("rejects %s", (_name, text) => {
+    expect(() => parseLine(text)).toThrow(WireError);
+    expect(() => parseLine(text)).toThrow("wire: malformed line");
   });
 });

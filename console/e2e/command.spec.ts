@@ -119,8 +119,9 @@ test("the register fades at its foot until it is scrolled to its end", async ({ 
 });
 
 test("attacks not blocked and deploy steps that ran are separate tiles", async ({ page }) => {
-  await expect(page.locator("#tiles article")).toHaveCount(12);
+  await expect(page.locator("#tiles article")).toHaveCount(13);
   await expect(page.locator('[data-metric="rails"] h3')).toHaveText("Payments by rail");
+  await expect(page.locator('[data-metric="bankEvents"] h3')).toHaveText("Bank events");
   await expect(page.locator('[data-metric="unbacked"] h3')).toHaveText("Transfers at the bank without a certificate");
   await expect(page.locator('[data-metric="holders"] h3')).toHaveText("Paired holders");
   await expect(page.locator('[data-metric="breaches"] h3')).toHaveText("Attacks not blocked");

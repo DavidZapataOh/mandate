@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -21,6 +22,7 @@ from swarm.nimbus import AGENT, SUMMARIES, StepOutcome
 
 if TYPE_CHECKING:
     from bank.api import Payment
+    from bank.events import BankEvent
     from gate.consent import Consent
     from gate.events import DecisionEvent
     from gate.policy import Policy
@@ -29,7 +31,7 @@ if TYPE_CHECKING:
     from swarm.flow import BillRun
     from swarm.redteam import AttackOutcome, AttackPlan
 
-SOURCES = ("desk", "attack", "hook", "bill", "deploy")
+SOURCES = ("desk", "attack", "hook", "bill", "deploy", "bank")
 
 _LINE_KEYS = ("v", "seq", "source", "event", "meta", "subject", "forensic")
 _EVENT_KEYS = frozenset(
@@ -65,6 +67,17 @@ _SUBJECT_KEYS = {
     "hook": frozenset(("agent", "tool", "targets", "tool_use_id")),
     "bill": frozenset(("proposal_call_id", "summary", "confirmation", "report_error")),
     "deploy": frozenset(("step", "agent", "summary", "layer", "reason", "blocked")),
+    "bank": frozenset(
+        (
+            "rail",
+            "event_id",
+            "category",
+            "object_type",
+            "object_id",
+            "created_at",
+            "summary",
+        )
+    ),
 }
 _DESK_STEPS = ("intent", "quote", "approve", "confirm")
 _RECORD_KEYS = frozenset(("agent", "tool", "targets", "event", "tool_use_id"))
@@ -81,6 +94,7 @@ _CONSENT_FIELDS = (
 )
 _BANK_KEYS = frozenset(("rail", "provider", "transfer_id", "status", "idempotency_key"))
 _RAILS = ("simulated", "sandbox")
+_BANK_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 _Check = Callable[[object], bool]
 
 
@@ -90,7 +104,7 @@ class ConsoleLine:
 
     Args:
         seq: Publication number, at least 1; 0 until published.
-        source: One of ``SOURCES``: desk, attack, hook, bill or deploy.
+        source: One of ``SOURCES``: desk, attack, hook, bill, deploy or bank.
         event: Gate decision event object, or None when the gate did not decide.
         meta: Attribution object of the model call, or None.
         subject: Source-specific facts.
@@ -208,6 +222,18 @@ def _forensic_ok(forensic: object) -> bool:
     )
 
 
+def _bank_line_ok(obj: dict[str, Any]) -> bool:
+    subject = obj["subject"]
+    return (
+        obj["event"] is None
+        and obj["meta"] is None
+        and obj["forensic"] is None
+        and all(_is_str(value) for value in subject.values())
+        and subject["rail"] == "sandbox"
+        and _BANK_TIME.fullmatch(subject["created_at"]) is not None
+    )
+
+
 def _loads(text: str) -> Any:
     def refuse(name: str) -> None:
         raise ValueError(name)
@@ -275,6 +301,7 @@ def _v3_line(obj: dict[str, Any]) -> ConsoleLine:
         or not (obj["event"] is None or _event_ok(obj["event"]))
         or not _meta_ok(obj["meta"])
         or not _forensic_ok(forensic)
+        or (source == "bank" and not _bank_line_ok(obj))
     ):
         raise ValueError(_MALFORMED)
     return ConsoleLine(seq, source, obj["event"], obj["meta"], subject, forensic)
@@ -601,3 +628,25 @@ def deploy_line(outcome: StepOutcome, gate_pub: bytes) -> ConsoleLine:
     )
     event = json.loads(outcome.event.to_json())
     return ConsoleLine(0, "deploy", event, None, subject, forensic)
+
+
+def bank_line(event: BankEvent) -> ConsoleLine:
+    """Build the line for one event the bank reported.
+
+    Args:
+        event: The bank event.
+
+    Returns:
+        An unpublished bank line: an observation, with no gate event, model
+        call or forensic block.
+    """
+    subject = {
+        "rail": "sandbox",
+        "event_id": event.event_id,
+        "category": event.category,
+        "object_type": event.object_type,
+        "object_id": event.object_id,
+        "created_at": event.created_at,
+        "summary": event.summary,
+    }
+    return ConsoleLine(0, "bank", None, None, subject, None)

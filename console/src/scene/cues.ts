@@ -182,5 +182,8 @@ function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
         bank: false,
       };
     }
+    case "bank":
+      // An observation: no walker route and no seal, so it never takes the stage from a verdict.
+      return { ...base, actor: "agent", tag: "bank", route: "none", seal: null, outcome: "note", bubble: clip(`Bank reports: ${line.subject.summary}`) };
   }
 }

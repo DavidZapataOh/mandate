@@ -1,5 +1,5 @@
 // Test data only; the bundle gate fails the build if this marker ships.
-import { ATTACK, CONFIRM, DEPLOY, patch, SANDBOX_CONFIRM } from "../../wire/__fixtures__/lines";
+import { ATTACK, BANK, CONFIRM, DEPLOY, patch, SANDBOX_CONFIRM } from "../../wire/__fixtures__/lines";
 import { parseLine } from "../../wire/parse";
 import type { Attribution, ConsoleLine } from "../../wire/types";
 
@@ -92,6 +92,22 @@ export const SANDBOX_REFUSED = patch(
   CONFIRM,
   { seq: 19, forensic: { ...confirm.forensic, bank: null } },
   { status: "denied", payment_id: null, reason: "denied: insufficient funds" },
+);
+
+/** The bank's own event naming the sandbox payment's transfer id. */
+export const BANK_REPORT = patch(BANK, { seq: 20 }, { object_id: "sandbox_account_transfer_MANDATE_FIXTURE" });
+
+/** A bank event naming an object no payment in the window carries. */
+export const BANK_OTHER = patch(
+  BANK,
+  { seq: 21 },
+  {
+    event_id: "sandbox_event_MANDATE_FIXTURE_2",
+    category: "inbound_ach_transfer.created",
+    object_type: "inbound_ach_transfer",
+    object_id: "sandbox_inbound_ach_transfer_MANDATE_FIXTURE",
+    summary: "MANDATE_FIXTURE Inbound ACH transfer created",
+  },
 );
 
 export function lines(texts: readonly string[]): ConsoleLine[] {

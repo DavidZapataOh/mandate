@@ -49,6 +49,7 @@ function subjectReason(line: ConsoleLine): string | null {
       return line.subject.reason ?? line.subject.status;
     case "hook":
     case "bill":
+    case "bank":
       return null;
     default: {
       const never: never = line;
@@ -65,6 +66,7 @@ function layerOf(line: ConsoleLine): string | null {
     case "desk":
     case "hook":
     case "bill":
+    case "bank":
       return null;
     default: {
       const never: never = line;

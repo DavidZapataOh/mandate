@@ -1,6 +1,6 @@
 import { formatLatency } from "../shared/format";
 import {
-  type AttackRow, counted, DEFINITIONS, formatCents, formatShare, LABELS,
+  type AttackRow, bankEventsText, counted, DEFINITIONS, formatCents, formatShare, LABELS,
   type MetricKey, type Posture, railsText,
 } from "./posture";
 import { bankText, holdersText, type BankCheck, type Provenance } from "./provenance";
@@ -23,7 +23,7 @@ export interface Report {
   readonly controls: readonly ReportControl[];
 }
 
-export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "unbacked", "holders"] as const;
+export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "bankEvents", "unbacked", "holders"] as const;
 
 /** Builds the report for a window; every field is derived from the posture and provenance given. */
 export function buildReport(posture: Posture, provenance: Provenance, generatedAtMs: number): Report {
@@ -87,6 +87,7 @@ export function metricValue(key: (typeof TILES)[number], p: Posture, prov: Prove
     case "moved": return formatCents(p.movedCents);
     case "consent": return formatShare(p.consent.withConsent.count, p.consent.certified.count);
     case "rails": return railsText(p);
+    case "bankEvents": return bankEventsText(p);
     case "unbacked": return bankText(prov);
     case "holders": return holdersText(prov);
     case "attribution": return formatShare(p.attribution.attributed.count, p.decided.count);
