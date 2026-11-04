@@ -228,6 +228,37 @@ def test_targets_reject_shell_workdir_escape(workdir):
         targets_for(call)
 
 
+@pytest.mark.parametrize(
+    "workdir",
+    [
+        ".mandate",
+        ".muse",
+        ".MUSE",
+        ".muse/worktrees/x",
+        "payments/../.Mandate/x",
+        WT + "/.muse",
+        WT + "/x/.MANDATE",
+    ],
+)
+def test_targets_reject_protected_shell_workdir(workdir):
+    call = _call("bash", {"command": "cat hooks.json", "workdir": workdir})
+    with pytest.raises(ScopeError, match="scope: protected path"):
+        targets_for(call)
+
+
+def test_targets_lead_cannot_work_in_a_child_worktree():
+    call = ToolCall(
+        session_id="lead-1",
+        tool="bash",
+        tool_input={"command": "ls", "workdir": ".muse/worktrees/subagent-v2-1"},
+        cwd="/repo",
+        model="muse-wonder-1.0",
+        tool_use_id="call_1",
+    )
+    with pytest.raises(ScopeError, match="scope: protected path"):
+        targets_for(call)
+
+
 @pytest.mark.parametrize("workdir", ["", "payments", WT, WT + "/payments"])
 def test_targets_shell_workdir_inside_cwd_ok(workdir):
     call = _call("bash", {"command": "ls", "workdir": workdir})

@@ -297,3 +297,36 @@ def test_unknown_shell_tool_fields_are_refused(extra):
 def test_pinned_shell_tool_fields_are_read():
     tool_input = {"command": "ls", "description": "list", "workdir": ""}
     assert targets_for(_call("bash", tool_input), GOVERNED) == ("cmd:ls",)
+
+
+# The shell expands these before the command runs, so a path check on the
+# typed word does not see the paths the program receives: `.*` matches `..` in
+# bash before 5.2 and in sh, and `.m*` matches `.muse` and `.mandate`.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cat .*/authority/state.json",
+        "cat .?/x",
+        "ls .*",
+        "cat .m*/hooks.json",
+        "cat .[.]/authority/state.json",
+        "cat .[m]use/hooks.json",
+        "cat RUNBOOK.md && ls .*",
+        "ls RUNBOOK.m]",
+        "cat ^RUNBOOK.md",
+        "cat RUNBOOK.md~x",
+        "cat RUN#",
+        "ls # comment",
+    ],
+)
+def test_glob_characters_are_refused_anywhere(command):
+    with pytest.raises(ScopeError, match=re.escape(SUBST)):
+        _atoms(command)
+
+
+# zsh expands a word that starts with `=` to the program's path on PATH
+# (EQUALS), which is outside the worktree.
+@pytest.mark.parametrize("command", ["cat =ls", "ls RUNBOOK.md =nimbus", "cat '=ls'"])
+def test_equals_expansion_is_refused(command):
+    with pytest.raises(ScopeError, match=re.escape(SUBST)):
+        _atoms(command)

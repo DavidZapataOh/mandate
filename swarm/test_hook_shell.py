@@ -2,12 +2,17 @@
 
 Recorder executables stand in for every program on PATH and log the argv they
 were started with. For every command the reader accepts within the allowed
-atoms, the programs the shell runs must be exactly the reader's atoms, and an
-allowed governed command must run its argv once. Each command runs twice, with
-recorders that succeed and with recorders that fail, so both sides of `&&` and
-`||` run at least once.
+atoms, the programs the shell runs must be exactly the reader's atoms, every
+argv must be one the reader parsed, every argument must stay inside the
+worktree and outside its protected directories, and an allowed governed
+command must run its argv once. Each command runs twice, with recorders that
+succeed and with recorders that fail, so both sides of `&&` and `||` run at
+least once. Commands the reader refuses never reach a shell here; their
+reasons are pinned by the reader's own tests.
 """
 
+import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,7 +21,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from swarm.hookio import ScopeError, targets_for
+from swarm.hookio import _SEGMENTS, ScopeError, targets_for
 from swarm.test_hookio import _call
 
 GOVERNED = frozenset({"nimbus"})
@@ -28,9 +33,33 @@ ALLOWED = frozenset(
         "cmd:ls",
     }
 )
+
+
+def _shell(label, path, kind, same_as=None):
+    found = shutil.which(path)
+    duplicate = bool(found and same_as and found == shutil.which(same_as))
+    duplicate = duplicate or bool(
+        found
+        and same_as
+        and shutil.which(same_as)
+        and os.path.realpath(found) == os.path.realpath(shutil.which(same_as))
+    )
+    return pytest.param(
+        (found, kind),
+        id=label,
+        marks=pytest.mark.skipif(
+            not found or duplicate, reason=f"{label}: absent or same as {same_as}"
+        ),
+    )
+
+
+# bash on PATH is often a newer build than /bin/bash (macOS ships 3.2, where
+# `.*` still matches `..`), so both run.
 SHELLS = [
-    pytest.param(name, marks=pytest.mark.skipif(not shutil.which(name), reason=name))
-    for name in ("bash", "zsh", "sh")
+    _shell("bash", "bash", "bash"),
+    _shell("/bin/bash", "/bin/bash", "bash", same_as="bash"),
+    _shell("zsh", "zsh", "zsh"),
+    _shell("sh", "sh", "sh"),
 ]
 FLAGS = {"bash": ["--noprofile", "--norc"], "zsh": ["-f"], "sh": []}
 # One append per record, so programs in a pipeline cannot interleave records.
@@ -47,6 +76,7 @@ RECORDER = "\n".join(
 ODD_BLANKS = ("\x0b", "\x0c", "\x1c", "\x85", "\xa0", " ", "　")
 PROGRAMS = ("nimbus", "cat", "ls", *ODD_BLANKS)
 DECOYS = ("api-v2", "api-vX", "prod-eu", "RUNBOOK.md")
+PROTECTED = frozenset({".mandate", ".muse"})
 STATUSES = ("0", "1")
 
 
@@ -63,6 +93,11 @@ def sandbox(tmp_path_factory):
     work.mkdir()
     for name in DECOYS:
         (work / name).write_text("")
+    # The live layout: authority state beside the worktree, Mandate and Muse
+    # Code configuration inside it.
+    for rel in ("authority/state.json", "work/.mandate/gate.key", "work/.muse/x"):
+        (base / rel).parent.mkdir(parents=True, exist_ok=True)
+        (base / rel).write_text("")
     # Empty startup-file directory: no rc file can alias or reconfigure.
     home = base / "home"
     home.mkdir()
@@ -73,8 +108,9 @@ def _run(shell, args, stdin, sandbox, status):
     log = sandbox / "exec.log"
     log.write_bytes(b"")
     home = sandbox / "home"
+    path, kind = shell
     subprocess.run(  # noqa: S603
-        [shutil.which(shell), *FLAGS[shell], *args],
+        [path, *FLAGS[kind], *args],
         input=stdin.encode(),
         cwd=sandbox / "work",
         env={
@@ -120,12 +156,32 @@ def _governed(atoms):
     return [a for a in atoms if a.split(" ", 1)[0].casefold() == "cmd:nimbus"]
 
 
-def _assert_ran_exactly(atoms, runs, context):
+def _parsed(command):
+    return [argv for seg in _SEGMENTS.split(command) if (argv := shlex.split(seg))]
+
+
+def _contained(word, work):
+    for part in (word, *word.replace(":", "=").split("=")):
+        path = os.path.normpath(work / part)
+        rel = os.path.relpath(path, work)
+        if rel == ".." or rel.startswith("../"):
+            return False
+        if any(seg.casefold() in PROTECTED for seg in rel.split("/")):
+            return False
+    return True
+
+
+def _assert_ran_exactly(atoms, argvs, runs, context, sandbox):
+    work = sandbox / "work"
     ran = {status: [_atom(argv) for argv in argv_list] for status, argv_list in runs}
     for status, ran_atoms in ran.items():
         assert set(ran_atoms) <= set(atoms), (context, status, ran_atoms)
         assert _governed(ran_atoms) == _governed(atoms), (context, status, ran_atoms)
     assert set().union(*ran.values()) == set(atoms), (context, ran)
+    for status, argv_list in runs:
+        for argv in argv_list:
+            assert argv in argvs, (context, status, argv, argvs)
+            assert all(_contained(w, work) for w in argv[1:]), (context, argv)
 
 
 def _check(shell, command, sandbox):
@@ -133,7 +189,7 @@ def _check(shell, command, sandbox):
     if atoms is None:
         return
     runs = [(s, _executed(shell, command, sandbox, s)) for s in STATUSES]
-    _assert_ran_exactly(atoms, runs, command)
+    _assert_ran_exactly(atoms, _parsed(command), runs, command, sandbox)
 
 
 def _check_session(shell, lines, sandbox):
@@ -141,8 +197,9 @@ def _check_session(shell, lines, sandbox):
     if any(atoms is None for atoms in read):
         return
     atoms = [atom for line_atoms in read for atom in line_atoms]
+    argvs = [argv for line in lines for argv in _parsed(line)]
     runs = [(s, _session(shell, lines, sandbox, s)) for s in STATUSES]
-    _assert_ran_exactly(atoms, runs, lines)
+    _assert_ran_exactly(atoms, argvs, runs, lines, sandbox)
 
 
 WORDS = [
@@ -161,6 +218,16 @@ WORDS = [
     "!#",
     "^ls^nimbus",
     *ODD_BLANKS,
+    "..",
+    ".*",
+    ".?",
+    ".m*",
+    ".mandate",
+    ".MUSE/x",
+    "../authority/state.json",
+    "x=..",
+    "--f=.muse",
+    "./RUNBOOK.md",
 ]
 TWISTS = [
     lambda w: w,
@@ -203,7 +270,21 @@ def near_deploy(draw):
     return words[0] + "".join(j + w for j, w in zip(joins, words[1:], strict=True))
 
 
+# Each of these passed the reader before globs were refused; on bash 3.2 and
+# sh the first one hands `cat` the authority state beside the worktree.
+GLOB_ESCAPES = [
+    "cat .*/authority/state.json",
+    "cat .?/authority/state.json",
+    "ls .*",
+    "cat .m*/gate.key",
+    "cat .[m]use/x",
+]
 CORPUS = [
+    *GLOB_ESCAPES,
+    "cat =ls",
+    "cat x=.. RUNBOOK.md",
+    "cat --f=.muse",
+    "cat ./RUNBOOK.md",
     "nimbus deploy api-v2 prod-eu",
     "  nimbus\tdeploy  api-v2 prod-eu ",
     "nimbus status prod-eu",
@@ -259,6 +340,28 @@ def test_tab_completion_shapes_are_refused(command):
     assert _allowed(command) is None
 
 
+@pytest.mark.parametrize("command", GLOB_ESCAPES)
+def test_glob_escapes_are_refused(command):
+    assert _allowed(command) is None
+
+
+@pytest.mark.parametrize("shell", SHELLS)
+def test_argument_check_sees_what_a_glob_reaches(shell, sandbox):
+    # Without this the containment check could pass on a harness where no glob
+    # ever reached outside the worktree.
+    ran = _executed(shell, "cat .*/authority/state.json", sandbox)
+    if ran != [["cat", "../authority/state.json"]]:
+        pytest.skip(f"{shell[0]}: `.*` does not match `..` here")
+    assert not _contained(ran[0][1], sandbox / "work")
+
+
+def test_argument_check_refuses_escapes_and_protected_dirs(tmp_path):
+    for word in ("../x", "/etc/passwd", ".MUSE/x", "--f=.mandate/k", "a:../b"):
+        assert not _contained(word, tmp_path), word
+    for word in ("RUNBOOK.md", "./api-v2", "--f=x", "deploy"):
+        assert _contained(word, tmp_path), word
+
+
 @pytest.mark.parametrize("shell", SHELLS)
 def test_canonical_deploy_runs_exactly_its_argv(shell, sandbox):
     assert _executed(shell, "nimbus deploy api-v2 prod-eu", sandbox) == [
@@ -270,7 +373,7 @@ def test_canonical_deploy_runs_exactly_its_argv(shell, sandbox):
 def test_interactive_session_expands_history_across_lines(shell, sandbox):
     # Without this the session checks could pass on a shell that never
     # expanded history. dash (sh on Debian and Ubuntu) has no history expansion.
-    if Path(shutil.which(shell)).resolve().name == "dash":
+    if Path(shell[0]).resolve().name == "dash":
         pytest.skip("dash has no history expansion")
     lines = ["cat RUNBOOK.md | cat", "cat !!:2 ls"]
     assert ["ls"] in _session(shell, lines, sandbox, "0")

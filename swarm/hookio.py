@@ -15,6 +15,9 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 _SEGMENTS = re.compile(r"&&|\|\||;|\|")
 # `!` is history expansion in interactive bash, zsh and sh.
 _SHELL_FORBIDDEN = frozenset("\n\r\x00<>`$(){}!")
+# Glob and extended-glob characters: the shell expands them into paths the
+# path checks never saw (`.*` can match `..`, `.m*` matches `.muse`).
+_GLOB = frozenset("*?[]^~#")
 _PLAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 _PLAIN_ARG = re.compile(r"-{0,2}[A-Za-z0-9][A-Za-z0-9._:=+-]*")
 _BLANKS = re.compile(r" +")
@@ -273,8 +276,11 @@ def _check_workdir(workdir: object, cwd: str) -> None:
         base = posixpath.normpath(cwd)
         if path != base and not path.startswith(base.rstrip("/") + "/"):
             raise ScopeError("scope: shell path escapes worktree")
+        path = posixpath.relpath(path, base)
     elif path == ".." or path.startswith("../"):
         raise ScopeError("scope: shell path escapes worktree")
+    if _protected(path):
+        raise ScopeError("scope: protected path")
 
 
 def argv_atom(argv: Sequence[str]) -> str:
@@ -356,6 +362,10 @@ def _shell_atoms(
             atoms[f"cmd:{name}"] = None
     if any(_other_blank(char) for char in command):
         raise ScopeError("scope: unparseable shell command")
+    # zsh replaces a word starting with `=` by the program's absolute path.
+    equals = any(word.startswith("=") for _, argv in commands for word in argv)
+    if equals or _GLOB.intersection(command):
+        raise ScopeError("scope: shell redirection or substitution")
     if not atoms:
         raise ScopeError("scope: missing tool target")
     return tuple(atoms)

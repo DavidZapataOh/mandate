@@ -69,10 +69,9 @@ export function gameText(line: ConsoleLine): string {
       return `${s.blocked ? "Blocked" : "NOT BLOCKED:"} ${deployLabel(s.step)} at ${s.layer}: ${s.reason}`;
     }
     case "hook": {
-      const who = line.subject.agent;
-      return line.event?.verdict === "MET"
-        ? `${who} ran ${line.subject.tool}`
-        : `${who} denied ${line.subject.tool}: ${reasonOf(line)}`;
+      const s = line.subject;
+      const what = [s.tool, ...s.targets].join(" ");
+      return line.event?.verdict === "MET" ? `${s.agent} allowed ${what}` : `${s.agent} denied ${what}: ${reasonOf(line)}`;
     }
     case "bill":
       return line.event?.verdict === "MET"

@@ -91,7 +91,7 @@ describe("gameText", () => {
       patch(ATTACK, {}, { blocked: false, reason: "ok: executed" }),
       "NOT BLOCKED: payee swap at model->gate: ok: executed",
     ],
-    ["hook allowed", hook("MET"), "child-1 ran edit_file"],
+    ["hook allowed", hook("MET"), "child-1 allowed edit_file"],
     ["hook denied", hook("NOT_MET"), "child-1 denied edit_file: scope: target outside delegation"],
     ["bill paid", bill("MET"), "Bill paid ✓ Pay 200.00 USD to acme-991 (ref A-991) from checking-881"],
     [

@@ -24,6 +24,26 @@ function icon(outcome: keyof typeof ICONS): SVGSVGElement {
   return svg;
 }
 
+/** The provenance badge of a line: LIVE for Muse Code hook decisions, SCENARIO for pinned Nimbus steps. */
+export function originOf(line: ConsoleLine): string | null {
+  switch (line.source) {
+    case "hook":
+      return "LIVE";
+    case "deploy":
+      return "SCENARIO";
+    case "attack":
+      return line.subject.origin.toUpperCase();
+    case "desk":
+    case "bill":
+    case "bank":
+      return null;
+    default: {
+      const unreachable: never = line;
+      return unreachable;
+    }
+  }
+}
+
 function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTMLLIElement {
   const item = document.createElement("li");
   const button = document.createElement("button");
@@ -35,9 +55,9 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
   button.dataset.outcome = cells.outcome;
   const sentence = mode === "game" ? gameText(line) : forensicText(line);
   const name: string[] = [];
-  if (line.source === "attack" || line.source === "deploy") {
-    button.dataset.blocked = String(line.subject.blocked);
-    const origin = line.source === "deploy" ? "SCENARIO" : line.subject.origin.toUpperCase();
+  if (line.source === "attack" || line.source === "deploy") button.dataset.blocked = String(line.subject.blocked);
+  const origin = originOf(line);
+  if (origin !== null) {
     button.append(cell("span", "origin", origin), " ");
     name.push(origin);
   }
