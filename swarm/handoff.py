@@ -90,7 +90,7 @@ class AgentHandoff:
         """
         receipt = self._desk.intent_receipt(intent_id)
         if receipt.get("status") == "unsettled":
-            receipt = self._desk.reconcile(intent_id)
+            receipt = self._desk.reconcile_intent(intent_id)
         if receipt.get("status") == "unsettled":
             return {"error": receipt["detail"]}
         if receipt.get("status") == "paid":

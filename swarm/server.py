@@ -6,9 +6,11 @@ import binascii
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
+import sqlite3
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -97,6 +99,9 @@ _HEARTBEAT_S = 15.0
 _NOT_FOUND = {"error": "not found"}
 _SEND_TIMEOUT_S = 10.0
 _NOT_PAIRED_DEVICE = {"error": "not the paired device"}
+_RECONCILE_UNAVAILABLE = {"error": "reconcile unavailable"}
+_STATE_UNAVAILABLE = {"error": "state: unavailable"}
+_log = logging.getLogger(__name__)
 _VOICE_SIG = re.compile(r"[A-Za-z0-9_-]{86}")
 _PAGE_HEADERS = {
     "permissions-policy": "microphone=(self), camera=(), geolocation=()",
@@ -704,6 +709,16 @@ state is returned."""
             provenance(hub, desk), headers={"cache-control": "no-store"}
         )
 
+    async def reconcile(request: Request) -> Response:
+        if await _fields(request) != {}:
+            return _bad_request()
+        try:
+            # The bank answers over the network; the event loop keeps serving.
+            report = await anyio.to_thread.run_sync(desk.reconcile)
+        except ValueError:
+            return JSONResponse(dict(_RECONCILE_UNAVAILABLE), status_code=409)
+        return JSONResponse(report.view(), headers={"cache-control": "no-store"})
+
     async def attack(request: Request) -> Response:
         body = await _fields(request, "kind")
         try:
@@ -760,6 +775,7 @@ state is returned."""
         ("/api/keys", "GET", keys),
         ("/api/registry", "GET", registry),
         ("/api/receipt/{payment_id}", "GET", receipt),
+        ("/api/reconcile", "POST", reconcile),
         ("/api/voice", "POST", voice_text),
         ("/api/intent", "POST", sign_intent),
         ("/api/intent/funds-challenge", "POST", funds_challenge),
@@ -868,7 +884,13 @@ def _host_guard(handler: _Handler, allowed: tuple[str, ...]) -> _Handler:
     async def guarded(request: Request) -> Response:
         if request.url.hostname not in allowed:
             return _bad_request()
-        return await handler(request)
+        try:
+            return await handler(request)
+        except sqlite3.Error as exc:
+            # A refused write is the store's fault, not the request's: the
+            # client gets a reason, the operator the cause.
+            _log.error("state: %s", exc)
+            return JSONResponse(dict(_STATE_UNAVAILABLE), status_code=503)
 
     return guarded
 

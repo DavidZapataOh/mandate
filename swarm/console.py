@@ -1,14 +1,18 @@
 """Mandate console: desk, event hub, template attacks, Nimbus steps, console."""
 
 import argparse
+import fcntl
 import itertools
 import json
+import logging
 import os
 import secrets
 import socket
+import sqlite3
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -19,7 +23,7 @@ from increase import AuthenticationError, IncreaseError, PermissionDeniedError
 from bank.api import Bank
 from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
 from bank.increase import IncreaseRail, sandbox_client
-from bank.rail import BankRail
+from bank.rail import SANDBOX, BankRail
 from bank.verifier import Verifier
 from evidence.notary import (
     NOTARY_LISTEN,
@@ -32,6 +36,7 @@ from evidence.zktls import ZKTLS_BIN_ENV, BankProofSetup, find_verifier
 from gate.certs import generate_keypair, public_key_of
 from gate.policy import Intent
 from gate.shim import RawCall
+from gate.state import StateStore, load_gate_key
 from swarm.attacker import AttackerTrace
 from swarm.console_line import ConsoleLine, attack_line, deploy_line
 from swarm.desk import PaymentDesk
@@ -51,6 +56,10 @@ DEMO_PAYEES = Path(__file__).resolve().parent.parent / "demo" / "payees.json"
 _DEMO_BALANCE_CENTS = 10000000
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _GRACEFUL_SHUTDOWN_S = 2
+RECONCILE_EVERY_S = 60
+_PRIVATE_DIR = 0o700
+_NEEDS_STATE_DIR = "bank rail needs --state-dir: receipts must outlive the process\n"
+_log = logging.getLogger(__name__)
 _INTENT = Intent(
     amount_cents=20000, currency="USD", recipient="acme-991", reference="A-991"
 )
@@ -102,11 +111,12 @@ class AttackRunner:
     """Applies the pinned template attacks to a simulated bank.
 
     Attacks draw counted nonces, which repeat across restarts, so they never
-    reach a real rail: they run against a simulated bank under the desk's
-    verifier and lock.
+    reach a real rail or the desk's durable fences: they run against a
+    simulated bank and an in-memory verifier of their own, under the desk's
+    lock.
 
     Args:
-        desk: Desk whose verifier and lock the attacks run under.
+        desk: Desk whose lock and debit account the attacks use.
         gate_key: Raw Ed25519 private key the gate signs with.
         hub: Hub that receives the attack lines.
         clock: Current unix time in seconds.
@@ -138,6 +148,7 @@ class AttackRunner:
         self._desk = desk
         self._gate_key = gate_key
         self._gate_pub = public_key_of(gate_key)
+        self._verifier = Verifier(self._gate_pub)
         self._hub = hub
         self._clock = clock
         self._nonces = nonces
@@ -171,13 +182,13 @@ class AttackRunner:
         now, nonce = self._clock(), self._nonces()
         salt = None if self._salts is None else self._salts()
         outcome = self._desk.guarded(
-            lambda _rail, verifier: apply_attack(
+            lambda _rail, _verifier: apply_attack(
                 plan,
                 self.legit_call(),
                 _INTENT,
                 self._gate_key,
                 self._bank,
-                verifier,
+                self._verifier,
                 self._desk.source,
                 now,
                 nonce,
@@ -282,11 +293,19 @@ def _spark(
     return intake, meta
 
 
-def _sandbox(
-    parser: argparse.ArgumentParser, key: str | None, names: tuple[str, ...]
-) -> IncreaseRail:
+def _sandbox_key(
+    parser: argparse.ArgumentParser, key: str | None, state_dir: Path | None
+) -> str:
     if key is None:
         parser.exit(2, f"bank rail unavailable: set {BANK_KEY_ENV}\n")
+    if state_dir is None:
+        parser.exit(2, _NEEDS_STATE_DIR)
+    return key
+
+
+def _sandbox(
+    parser: argparse.ArgumentParser, key: str, names: tuple[str, ...]
+) -> IncreaseRail:
     try:
         rail = IncreaseRail.connect(sandbox_client(key))
     except (AuthenticationError, PermissionDeniedError):
@@ -296,6 +315,87 @@ def _sandbox(
     if not rail.holds(names):
         parser.exit(2, "bank accounts missing: run mandate-bank-setup\n")
     return rail
+
+
+@contextmanager
+def _state_errors(parser: argparse.ArgumentParser) -> Iterator[None]:
+    """Turn a store that cannot serve into exit 2 with its reason."""
+    try:
+        yield
+    except ValueError as exc:
+        if not str(exc).startswith("state: "):
+            raise
+        parser.exit(2, f"{exc}\n")
+    except sqlite3.Error as exc:
+        parser.exit(2, f"state: {exc}\n")
+
+
+def _hold(path: Path) -> int:
+    """Lock a state directory for this process, creating it private.
+
+    Two desks on one store would each trust their own memory of it, so a
+    second process is refused instead of sharing the file.
+
+    Returns:
+        The descriptor holding the lock; closing it releases the directory.
+
+    Raises:
+        ValueError: If another process holds the directory.
+    """
+    if not path.exists():
+        path.mkdir(mode=_PRIVATE_DIR, parents=True)
+        path.chmod(_PRIVATE_DIR)
+    held = os.open(path / "lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(held)
+        raise ValueError("state: directory in use") from None
+    return held
+
+
+def _open_state(
+    parser: argparse.ArgumentParser, path: Path, held: ExitStack
+) -> tuple[StateStore, bytes]:
+    with _state_errors(parser):
+        try:
+            held.callback(os.close, _hold(path))
+            gate_key = load_gate_key(path / "gate.key")
+        except OSError as exc:
+            parser.exit(2, f"state: {path}: {exc.strerror}\n")
+        store = StateStore(path / "state.db")
+    # A start that fails closes the store; a server that ran leaves it to the
+    # process exit, since requests still in flight at shutdown may write.
+    held.push(lambda failed, *_: store.close() if failed else None)
+    return store, gate_key
+
+
+def reconcile_every(
+    desk: PaymentDesk, every_s: float, stop: threading.Event
+) -> threading.Thread:
+    """Reconcile the desk with its bank every ``every_s`` seconds until stopped.
+
+    A store that refuses a round is logged and tried again at the next one.
+
+    Args:
+        desk: Desk to reconcile.
+        every_s: Seconds between rounds; the first runs after one interval.
+        stop: Set to end the loop.
+
+    Returns:
+        The started daemon thread.
+    """
+
+    def loop() -> None:
+        while not stop.wait(every_s):
+            try:
+                desk.reconcile()
+            except sqlite3.Error as exc:
+                _log.error("state: %s", exc)
+
+    thread = threading.Thread(target=loop, name="reconcile", daemon=True)
+    thread.start()
+    return thread
 
 
 def _port_free(listen: str) -> bool:
@@ -340,7 +440,11 @@ def cli(argv: list[str] | None = None) -> None:
     and prints the pairing URL followed by the console URL. With
     ``--rail sandbox`` the desk pays through the Increase sandbox; the bank key
     leaves this process's environment either way, so nothing it spawns holds it.
-    Template attacks always run on a simulated bank.
+    With ``--state-dir`` the gate key, registry, receipts and fences live in
+    that directory, locked to this process; the sandbox rail requires it. The
+    desk reconciles with its bank at start, and every ``RECONCILE_EVERY_S`` on
+    the sandbox rail. Template attacks always run on a simulated bank of their
+    own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
         prog="mandate-console", description="Serve the Mandate live console."
@@ -360,6 +464,15 @@ def cli(argv: list[str] | None = None) -> None:
         help=(
             "start Mandate's notary so the holder can prove the sandbox balance; "
             "needs --rail sandbox and MANDATE_ZKTLS_BIN"
+        ),
+    )
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        help=(
+            "directory that keeps the gate key, the registry, receipts and "
+            "fences across restarts (keep it outside any repository, e.g. "
+            "~/.mandate-demo); needed by --rail sandbox; default: in memory"
         ),
     )
     parser.add_argument("--journal", type=Path, help="hook journal to follow")
@@ -403,45 +516,79 @@ def cli(argv: list[str] | None = None) -> None:
     book = _payee_book(args.payees)
     if book is None:
         parser.exit(2, f"payee book unreadable: {args.payees}\n")
-    simulated = Bank({args.source: _DEMO_BALANCE_CENTS, "acme-991": 0})
-    rail: BankRail = (
-        simulated
-        if args.rail == "simulated"
-        else _sandbox(parser, bank_key, (args.source, "acme-991"))
+    sandbox_key = (
+        _sandbox_key(parser, bank_key, args.state_dir)
+        if args.rail == "sandbox"
+        else None
     )
-    notary, zktls = _zktls(parser, rail, args.source) if args.zktls else (None, None)
-    try:
-        _serve(args, book, simulated, rail, zktls)
-    finally:
+    with ExitStack() as held:
+        state, gate_key = (
+            (None, generate_keypair()[0])
+            if args.state_dir is None
+            else _open_state(parser, args.state_dir, held)
+        )
+        rail: BankRail
+        if sandbox_key is None:
+            with _state_errors(parser):
+                rail = Bank(
+                    {args.source: _DEMO_BALANCE_CENTS, "acme-991": 0}, state=state
+                )
+        else:
+            rail = _sandbox(parser, sandbox_key, (args.source, "acme-991"))
+        notary, zktls = (
+            _zktls(parser, rail, args.source) if args.zktls else (None, None)
+        )
         if notary is not None:
-            notary.stop()
+            held.callback(notary.stop)
+        hub = EventHub()
+        if args.record is not None:
+            hub.record(args.record)
+        desk = _desk(parser, args.source, rail, gate_key, zktls, state, hub)
+        stop = threading.Event()
+        held.callback(stop.set)
+        _serve(parser, args, book, desk, gate_key, hub, stop)
+
+
+def _desk(
+    parser: argparse.ArgumentParser,
+    source: str,
+    rail: BankRail,
+    gate_key: bytes,
+    zktls: BankProofSetup | None,
+    state: StateStore | None,
+    hub: EventHub,
+) -> PaymentDesk:
+    # Loading the registry checks every stored seal; a store that fails it
+    # stops the start like any other store error.
+    with _state_errors(parser):
+        return PaymentDesk(
+            source=source,
+            bank=rail,
+            verifier=Verifier(public_key_of(gate_key), state=state),
+            gate_key=gate_key,
+            clock=_now,
+            nonces=_nonce,
+            publish=hub.publish,
+            zktls=zktls,
+            state=state,
+        )
 
 
 def _serve(
+    parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     book: PayeeBook,
-    simulated: Bank,
-    rail: BankRail,
-    zktls: BankProofSetup | None,
+    desk: PaymentDesk,
+    gate_key: bytes,
+    hub: EventHub,
+    stop: threading.Event,
 ) -> None:
     intake, agent = _spark(os.environ, book)
-    hub = EventHub()
-    if args.record is not None:
-        hub.record(args.record)
     token = secrets.token_urlsafe(16)
-    gate_key, gate_pub = generate_keypair()
-    desk = PaymentDesk(
-        source=args.source,
-        bank=rail,
-        verifier=Verifier(gate_pub),
-        gate_key=gate_key,
-        clock=_now,
-        nonces=_nonce,
-        publish=hub.publish,
-        zktls=zktls,
-    )
+    # Attacks move money on a bank of their own, never the desk's store.
+    attack_bank = Bank({args.source: _DEMO_BALANCE_CENTS, "acme-991": 0})
     runner = AttackRunner(
-        desk, gate_key, hub, _now, counted_nonces("atk"), bank=simulated
+        desk, gate_key, hub, _now, counted_nonces("atk"), bank=attack_bank
     )
     deploys = DeployRunner(gate_key, hub, _now, counted_nonces("dep"))
     allowed = (*_LOCAL_HOSTS, *args.public_host)
@@ -458,6 +605,10 @@ def _serve(
         intake=intake,
         agent=agent,
     ).streamable_http_app()
+    with _state_errors(parser):
+        desk.reconcile()
+    if desk.bank.rail == SANDBOX:
+        reconcile_every(desk, RECONCILE_EVERY_S, stop)
     if args.journal is not None:
         # A daemon thread: the process ends with the server.
         JournalTail(args.journal, hub).start()

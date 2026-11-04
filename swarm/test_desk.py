@@ -830,7 +830,7 @@ def test_a_bank_refusal_leaves_the_intent_signed(make_desk, sign_quote, reason):
 def test_reconciling_a_found_transfer_spends_the_intent(make_desk, sign_quote):
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote)
     rail.found = True
-    settled = desk.reconcile("i:000001")
+    settled = desk.reconcile_intent("i:000001")
     assert (settled["status"], settled["payment_id"]) == (
         "paid",
         "account_transfer_t1",
@@ -853,7 +853,7 @@ def test_reconciling_a_found_transfer_spends_the_intent(make_desk, sign_quote):
         ),
     )
     assert desk.latest_seal()["seq_to"] == desk.registry.size() == 2
-    assert desk.reconcile("i:000001") == settled
+    assert desk.reconcile_intent("i:000001") == settled
     assert len(rail.lookups) == 1
     again = _confirm_again(desk, holder, sign_quote)
     assert again["reason"] == "intent: already used"
@@ -890,7 +890,7 @@ def test_a_lookup_finding_a_differing_transfer_never_pays_or_releases(
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
     rail.found = RailError("bank: transfer differs")
     now[0] = NOW + 3600
-    view = desk.reconcile("i:000001")
+    view = desk.reconcile_intent("i:000001")
     assert (view["status"], view["payment_id"]) == ("unsettled", None)
     assert view["detail"] == OPERATOR_DETAIL
     assert desk.registry.size() == 1
@@ -904,7 +904,7 @@ def test_an_empty_lookup_inside_the_settle_window_releases_nothing(
     now = [NOW]
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
     now[0] = NOW + 59
-    view = desk.reconcile("i:000001")
+    view = desk.reconcile_intent("i:000001")
     assert (view["status"], view["detail"]) == ("unsettled", TOO_EARLY_DETAIL)
     assert len(rail.lookups) == 1
     assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
@@ -917,9 +917,9 @@ def test_an_empty_lookup_after_the_settle_window_releases_the_intent(
     now = [NOW]
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
     now[0] = NOW + 30
-    assert desk.reconcile("i:000001")["status"] == "unsettled"
+    assert desk.reconcile_intent("i:000001")["status"] == "unsettled"
     now[0] = NOW + 60
-    assert desk.reconcile("i:000001")["status"] == "signed"
+    assert desk.reconcile_intent("i:000001")["status"] == "signed"
     assert len(rail.lookups) == 2
     assert desk.registry.size() == 1
     rail.error = None
@@ -945,7 +945,7 @@ def test_a_lookup_that_cannot_settle_keeps_the_intent_unsettled(
 ):
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote)
     rail.found = answer
-    view = desk.reconcile("i:000001")
+    view = desk.reconcile_intent("i:000001")
     assert (view["status"], view["idempotency_key"]) == ("unsettled", FIRST_KEY)
     assert str(answer) in view["detail"]
     assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
@@ -955,8 +955,9 @@ def test_a_lookup_that_cannot_settle_keeps_the_intent_unsettled(
 def test_reconciling_a_settled_or_unknown_intent_calls_no_bank(make_desk):
     rail = RecordingRail(balance=50000)
     desk, _ = make_desk(intents=(DEMO_INTENT,), bank=rail)
-    assert desk.reconcile("i:000001")["status"] == "signed"
-    assert desk.reconcile("i:999999") == {"status": "unknown", "intent_id": "i:999999"}
+    assert desk.reconcile_intent("i:000001")["status"] == "signed"
+    unknown = {"status": "unknown", "intent_id": "i:999999"}
+    assert desk.reconcile_intent("i:999999") == unknown
     assert rail.lookups == []
 
 
@@ -1052,7 +1053,7 @@ def test_an_unexpected_error_paying_an_intent_leaves_it_unsettled(
     assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
     assert len(rail.calls) == 1
     rail.found = True
-    settled = desk.reconcile("i:000001")
+    settled = desk.reconcile_intent("i:000001")
     assert (settled["status"], settled["payment_id"]) == (
         "paid",
         "account_transfer_t1",

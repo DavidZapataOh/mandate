@@ -85,6 +85,7 @@ def test_provenance_of_an_empty_console(make_desk):
         "window": {"first_seq": 0, "last_seq": 0, "retained": 0},
         "registry": {"root": EMPTY_ROOT, "leaves": 0},
         "policies": POLICIES,
+        "bank": None,
     }
 
 
@@ -120,6 +121,7 @@ async def test_provenance_route(make_desk, sign_quote):
         "window": {"first_seq": 1, "last_seq": 3, "retained": 3},
         "registry": {"root": ROOT1, "leaves": 1},
         "policies": POLICIES,
+        "bank": None,
     }
     assert (foreign.status_code, foreign.json()) == (400, {"error": "bad request"})
 
@@ -130,3 +132,13 @@ async def test_provenance_route_absent_without_hub(make_desk):
     async with _asgi(build_server(desk, PAIR).streamable_http_app()) as http:
         resp = await http.get("/api/provenance")
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_provenance_carries_the_latest_reconciliation(make_desk, state_store):
+    hub = EventHub()
+    desk, _ = make_desk(publish=hub.publish, state=state_store)
+    desk.reconcile()
+    async with _asgi(build_server(desk, PAIR, hub=hub).streamable_http_app()) as http:
+        body = (await http.get("/api/provenance")).json()
+    assert (body["bank"]["rail"], body["bank"]["transfers"]) == ("simulated", 0)

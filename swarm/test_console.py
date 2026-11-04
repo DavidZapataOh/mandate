@@ -1,10 +1,12 @@
 import base64
+import fcntl
 import itertools
 import json
 import os
 import re
 import signal
 import socket
+import sqlite3
 import threading
 import time
 
@@ -19,6 +21,7 @@ from bank.verifier import Verifier
 from evidence.conftest import fake_binary
 from evidence.zktls import ZKTLS_BIN_ENV
 from gate.certs import generate_keypair
+from gate.state import StateStore
 from swarm import console
 from swarm.conftest import message
 from swarm.console import AttackRunner, DeployRunner
@@ -543,22 +546,28 @@ def test_attacks_need_a_simulated_bank_beside_a_sandbox_desk():
     assert rail.calls == []
 
 
-def test_cli_sandbox_rail_needs_the_key(monkeypatch, capsys, dist):
+def test_cli_sandbox_rail_needs_the_key(monkeypatch, capsys, dist, tmp_path):
     monkeypatch.delenv(BANK_KEY_ENV, raising=False)
     with pytest.raises(SystemExit) as stopped:
-        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+        )  # fmt: skip
     assert stopped.value.code == 2
     assert capsys.readouterr().err == (
         "bank rail unavailable: set INCREASE_SANDBOX_API_KEY\n"
     )
 
 
-def test_cli_sandbox_rail_needs_the_demo_accounts(monkeypatch, capsys, dist):
+def test_cli_sandbox_rail_needs_the_demo_accounts(monkeypatch, capsys, dist, tmp_path):
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
     cassette = Cassette("accounts_list")
     monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
     with pytest.raises(SystemExit) as stopped:
-        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+        )  # fmt: skip
     assert stopped.value.code == 2
     assert capsys.readouterr().err == "bank accounts missing: run mandate-bank-setup\n"
 
@@ -570,12 +579,15 @@ def test_cli_sandbox_rail_needs_the_demo_accounts(monkeypatch, capsys, dist):
         (403, {"type": "environment_mismatch_error", "status": 403}),
     ],
 )
-def test_cli_sandbox_rail_refused_key(monkeypatch, capsys, dist, refusal):
+def test_cli_sandbox_rail_refused_key(monkeypatch, capsys, dist, refusal, tmp_path):
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
     cassette = Cassette(refusal)
     monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
     with pytest.raises(SystemExit) as stopped:
-        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+        )  # fmt: skip
     assert stopped.value.code == 2
     err = capsys.readouterr().err
     assert err == "bank rail unavailable: the sandbox refused the key\n"
@@ -585,22 +597,29 @@ def test_cli_sandbox_rail_refused_key(monkeypatch, capsys, dist, refusal):
 @pytest.mark.parametrize(
     "failure", [httpx.ConnectError("down"), httpx.ReadTimeout("slow")]
 )
-def test_cli_sandbox_rail_unreachable(monkeypatch, capsys, dist, failure):
+def test_cli_sandbox_rail_unreachable(monkeypatch, capsys, dist, failure, tmp_path):
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
     cassette = Cassette(failure)
     monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
     with pytest.raises(SystemExit) as stopped:
-        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+        )  # fmt: skip
     assert stopped.value.code == 2
     err = capsys.readouterr().err
     assert err == "bank rail unavailable: the sandbox is unreachable\n"
 
 
 @pytest.mark.anyio
-async def test_cli_sandbox_console_keeps_attacks_simulated(monkeypatch, capsys, dist):
+async def test_cli_sandbox_console_keeps_attacks_simulated(
+    monkeypatch, capsys, dist, tmp_path
+):
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
     keys = []
-    cassette = Cassette(named_accounts("checking-881", "acme-991"))
+    cassette = Cassette(
+        named_accounts("checking-881", "acme-991"), "account_transfers_none"
+    )
 
     def client(key):
         keys.append(key)
@@ -608,15 +627,17 @@ async def test_cli_sandbox_console_keeps_attacks_simulated(monkeypatch, capsys, 
 
     monkeypatch.setattr(console, "sandbox_client", client)
     seen, _ = _run_cli(
-        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox"
-    )
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+    )  # fmt: skip
     assert keys == [SENTINEL_KEY]
     assert BANK_KEY_ENV not in os.environ
     async with _asgi(seen["app"]) as http:
         attack = await http.post("/api/attack", json={"kind": "replay"})
     bank = read_console_line(attack.text).forensic["bank"]
     assert (bank["rail"], bank["transfer_id"]) == ("simulated", "pay:000001")
-    assert [r.url.path for r in cassette.requests] == ["/accounts"]
+    paths = [r.url.path for r in cassette.requests]
+    assert paths == ["/accounts", "/account_transfers"]
 
 
 def test_cli_drops_the_holder_key(monkeypatch, capsys, dist):
@@ -641,7 +662,9 @@ FAKE_NOTARY = (
 
 def _sandbox(monkeypatch):
     monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
-    cassette = Cassette(named_accounts("checking-881", "acme-991"))
+    cassette = Cassette(
+        named_accounts("checking-881", "acme-991"), "account_transfers_none"
+    )
     monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
 
 
@@ -652,13 +675,13 @@ def test_cli_zktls_needs_the_sandbox_rail(monkeypatch, capsys, dist):
     assert capsys.readouterr().err == "zktls needs --rail sandbox\n"
 
 
-def test_cli_zktls_needs_the_binary(monkeypatch, capsys, dist):
+def test_cli_zktls_needs_the_binary(monkeypatch, capsys, dist, tmp_path):
     _sandbox(monkeypatch)
     monkeypatch.delenv(ZKTLS_BIN_ENV, raising=False)
     with pytest.raises(SystemExit) as stopped:
         _run_cli(
-            monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
-            "--zktls",
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"), "--rail", "sandbox", "--zktls",
         )  # fmt: skip
     assert stopped.value.code == 2
     assert capsys.readouterr().err == (
@@ -671,8 +694,8 @@ async def test_cli_sandbox_zktls_wires_the_notary(monkeypatch, capsys, dist, tmp
     _sandbox(monkeypatch)
     monkeypatch.setenv(ZKTLS_BIN_ENV, fake_binary(tmp_path, FAKE_NOTARY))
     seen, _ = _run_cli(
-        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
-        "--zktls",
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"), "--rail", "sandbox", "--zktls",
     )  # fmt: skip
     async with _asgi(seen["app"]) as http:
         answer = await http.post(
@@ -691,10 +714,167 @@ def test_cli_zktls_refuses_a_busy_notary_port(monkeypatch, capsys, dist, tmp_pat
         monkeypatch.setattr(console, "NOTARY_LISTEN", busy)
         with pytest.raises(SystemExit) as stopped:
             _run_cli(
-                monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+                monkeypatch, capsys, "--console-dir", str(dist),
+                "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
                 "--zktls",
             )  # fmt: skip
     assert stopped.value.code == 2
     assert capsys.readouterr().err == (
         f"zktls unavailable: notary: {busy} is already in use\n"
     )
+
+
+@pytest.mark.anyio
+async def test_cli_state_dir_keeps_the_gate_key_and_the_holder(
+    monkeypatch, capsys, dist, tmp_path
+):
+    state = ["--console-dir", str(dist), "--state-dir", str(tmp_path / "state")]
+    seen, out = _run_cli(monkeypatch, capsys, *state)
+    token = out[0].rsplit("#pair=", 1)[1]
+    holder = base64.b64encode(b"\x07" * 32).decode()
+    async with _asgi(seen["app"]) as http:
+        paired = await http.post(
+            "/api/holder", json={"public_key": holder, "pairing": token}
+        )
+        keys = (await http.get("/api/keys")).json()
+    assert paired.json() == {"registered": True}
+    again, _ = _run_cli(monkeypatch, capsys, *state)
+    async with _asgi(again["app"]) as http:
+        assert (await http.get("/api/keys")).json() == keys
+    assert keys["holder_keys"] == [holder]
+
+
+def test_cli_sandbox_rail_needs_a_state_dir(monkeypatch, capsys, dist):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "bank rail needs --state-dir: receipts must outlive the process\n"
+    )
+
+
+def test_cli_refuses_a_readable_gate_key(monkeypatch, capsys, dist, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "gate.key").write_bytes(b"\x01" * 32)
+    (state / "gate.key").chmod(0o644)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+        )
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "state: gate key must be private (chmod 600)\n"
+
+
+@pytest.mark.anyio
+async def test_attacks_never_touch_the_durable_fences(
+    monkeypatch, capsys, dist, tmp_path
+):
+    state = tmp_path / "state"
+    lines = []
+    for _ in range(2):
+        seen, _ = _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+        )
+        async with _asgi(seen["app"]) as http:
+            attack = await http.post("/api/attack", json={"kind": "replay"})
+        lines.append(attack.json())
+    assert [line["subject"]["reason"] for line in lines] == [
+        lines[0]["subject"]["reason"]
+    ] * 2
+    store = StateStore(state / "state.db")
+    assert not store.used("jti", "atk00000000000000000000000000001")
+    assert not store.used("idem", "mandate-cert-atk00000000000000000000000000001")
+    store.close()
+
+
+def test_cli_sandbox_rail_asks_for_the_key_before_the_state_dir(
+    monkeypatch, capsys, dist
+):
+    monkeypatch.delenv(BANK_KEY_ENV, raising=False)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "bank rail unavailable: set INCREASE_SANDBOX_API_KEY\n"
+    )
+
+
+def test_cli_refuses_a_state_dir_another_process_holds(
+    monkeypatch, capsys, dist, tmp_path
+):
+    state = tmp_path / "state"
+    _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state))
+    with (state / "lock").open("a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(SystemExit) as stopped:
+            _run_cli(
+                monkeypatch, capsys, "--console-dir", str(dist),
+                "--state-dir", str(state),
+            )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "state: directory in use\n"
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (sqlite3.OperationalError("database is locked"), "database is locked"),
+        (ValueError("state: schema v9 unsupported"), "schema v9 unsupported"),
+    ],
+)
+def test_cli_names_a_store_that_cannot_open(
+    monkeypatch, capsys, dist, tmp_path, failure, reason
+):
+    def refuse(path):
+        raise failure
+
+    monkeypatch.setattr(console, "StateStore", refuse)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--state-dir", str(tmp_path / "state"),
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == f"state: {reason}\n"
+
+
+def test_cli_refuses_a_corrupt_store(monkeypatch, capsys, dist, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    (state / "state.db").write_bytes(b"not a database" * 100)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+        )
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "state: store unreadable\n"
+
+
+@pytest.mark.anyio
+async def test_cli_reconciles_once_at_start(monkeypatch, capsys, dist, tmp_path):
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"),
+    )  # fmt: skip
+    async with _asgi(seen["app"]) as http:
+        bank = (await http.get("/api/provenance")).json()["bank"]
+    assert (bank["rail"], bank["transfers"], bank["error"]) == ("simulated", 0, None)
+
+
+def test_the_reconcile_loop_repeats_until_stopped(make_desk, monkeypatch):
+    desk, _ = make_desk()
+    runs = []
+    stop = threading.Event()
+
+    def counted():
+        runs.append(1)
+        if len(runs) == 3:
+            stop.set()
+        # A locked store skips one round; the next one tries again.
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(desk, "reconcile", counted)
+    console.reconcile_every(desk, 0.001, stop).join(timeout=5)
+    assert len(runs) == 3

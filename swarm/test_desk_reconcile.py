@@ -151,7 +151,7 @@ def test_a_transfer_found_after_the_intent_was_released_is_sealed(state_store):
     now = [NOW]
     desk, rail = _unknown(state_store, now=now)
     now[0] = NOW + 61
-    assert desk.reconcile("i:000001")["status"] == "signed"
+    assert desk.reconcile_intent("i:000001")["status"] == "signed"
     rail.listed = [_done()]
     report = desk.reconcile()
     assert report.resolved == ("q:000001 -> account_transfer_t1",)
@@ -161,7 +161,7 @@ def test_a_transfer_found_after_the_intent_was_released_is_sealed(state_store):
 def test_an_intent_settled_by_its_own_lookup_is_certified(state_store):
     desk, rail = _unknown(state_store)
     rail.listed = [_done()]
-    assert desk.reconcile("i:000001")["status"] == "paid"
+    assert desk.reconcile_intent("i:000001")["status"] == "paid"
     assert desk.proof_receipt("account_transfer_t1") is not None
     report = desk.reconcile()
     assert (report.certified, report.unbacked, report.resolved) == (1, (), ())

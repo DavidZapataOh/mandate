@@ -8,7 +8,7 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar, overload
+from typing import Any, TypeVar
 
 from bank.api import Payment, PaymentRequest, RailError
 from bank.rail import SANDBOX, BankRail, idempotency_key
@@ -204,8 +204,9 @@ class PaymentDesk:
         self._intent_hashes: set[str] = set()
         # Final results of quotes from an earlier process, by quote id.
         self._closed: dict[str, dict[str, Any]] = {}
-        # Transfers made before this registry existed are not its to explain.
-        self._genesis = iso_utc(clock())
+        # Transfers made before this registry existed are not its to explain;
+        # a desk without a store names no such boundary.
+        self._genesis = ""
         self._reconciliation: dict[str, Any] | None = None
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
@@ -215,9 +216,9 @@ class PaymentDesk:
     def _load(self, state: StateStore) -> None:
         genesis = state.get("genesis")
         if genesis is None:
-            state.put("genesis", self._genesis)
-        else:
-            self._genesis = genesis
+            genesis = iso_utc(self._clock())
+            state.put("genesis", genesis)
+        self._genesis = genesis
         reconciliation = state.get("reconciliation")
         if reconciliation is not None:
             self._reconciliation = json.loads(reconciliation)
@@ -460,39 +461,23 @@ class PaymentDesk:
             self._source,
         )
 
-    @overload
-    def reconcile(self) -> Reconciliation: ...
+    def reconcile(self) -> Reconciliation:
+        """Reconcile the whole desk with the bank.
 
-    @overload
-    def reconcile(self, intent_id: str) -> dict[str, Any]: ...
-
-    def reconcile(
-        self, intent_id: str | None = None
-    ) -> Reconciliation | dict[str, Any]:
-        """Reconcile the whole desk with the bank, or settle one intent.
-
-        Without an intent id: settles every journaled payment (see
-        ``_settle_journal``), in quote order, then compares the transfers the
-        bank lists from the debit account since the registry began with the
-        sealed receipts. Reads only; the bank is never asked to move money.
-        The view is kept as the latest reconciliation. A bank that cannot be
-        read stops the settling and is named in ``error``; the comparison then
-        does not run and writes nothing.
-
-        With an intent id: see ``_reconcile_intent``.
-
-        Args:
-            intent_id: Intent to settle, or None for the whole desk.
+        Settles every journaled payment (see ``_settle_journal``), in quote
+        order, then compares the transfers the bank lists from the debit
+        account since the registry began with the sealed receipts. Reads
+        only; the bank is never asked to move money. The view is kept as the
+        latest reconciliation. A bank that cannot be read stops the settling
+        and is named in ``error``; the comparison then does not run and
+        writes nothing.
 
         Returns:
-            The ``Reconciliation``, or the intent's view.
+            The ``Reconciliation``.
 
         Raises:
-            ValueError: Without an intent id, if the rail cannot list its
-                transfers.
+            ValueError: If the rail cannot list its transfers.
         """
-        if intent_id is not None:
-            return self._reconcile_intent(intent_id)
         ledger = self.bank
         if not isinstance(ledger, TransferLedger):
             raise ValueError("reconcile: the rail cannot list transfers")
@@ -740,7 +725,7 @@ class PaymentDesk:
         value = self._state.record("pending", quote_id)
         return None if value is None else dict(json.loads(value))
 
-    def _reconcile_intent(self, intent_id: str) -> dict[str, Any]:
+    def reconcile_intent(self, intent_id: str) -> dict[str, Any]:
         """Settle an unsettled intent by one bank lookup of its idempotency key.
 
         A transfer found complete and matching spends the intent: the quote
