@@ -33,7 +33,7 @@ async def test_live_spark_quotes_then_holder_approves_then_confirms(
     meta = _meta()
     desk, url = running_desk
     holder_priv, holder_pub = generate_keypair()
-    assert desk.register_holder(holder_pub) is True
+    assert desk.register_holder(holder_pub) is not None
     desk.record_intent(DEMO_INTENT, sign_intent(holder_priv, DEMO_INTENT))
     async with Client(f"{url}/mcp") as client:
         steps = await run_agent(
@@ -76,7 +76,7 @@ def test_live_muse_code_quotes_through_mcp(running_desk, governed_repo):
     desk, url = running_desk
     repo, _ = governed_repo
     holder_priv, holder_pub = generate_keypair()
-    assert desk.register_holder(holder_pub) is True
+    assert desk.register_holder(holder_pub) is not None
     desk.record_intent(DEMO_INTENT, sign_intent(holder_priv, DEMO_INTENT))
     server = {"transport": "streamable_http", "url": f"{url}/mcp"}
     run = subprocess.run(  # noqa: S603

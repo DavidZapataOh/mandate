@@ -1,6 +1,7 @@
 import base64
 import itertools
 import json
+import sqlite3
 
 import pytest
 
@@ -130,3 +131,18 @@ def test_a_single_holder_desk_state_is_carried_over(state_store):
     assert holders.holder_of(HOLDER) == "h:0000000000000001"
     assert state_store.get("holders") == "[]"
     assert [k for k, _ in state_store.records("holder")] == ["h:0000000000000001"]
+
+
+def test_a_failed_write_changes_no_holder(state_store, monkeypatch):
+    holders = HolderRegistry(_ids(), state=state_store)
+    first = holders.pair(_key(3))
+
+    def locked(*_args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(state_store, "put_record", locked)
+    with pytest.raises(sqlite3.OperationalError):
+        holders.pair(_key(4))
+    with pytest.raises(sqlite3.OperationalError):
+        holders.unpair(first)
+    assert holders.paired == ((first, _key(3)),)

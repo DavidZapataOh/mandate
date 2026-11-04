@@ -150,11 +150,12 @@ def test_expired_quote_cannot_be_approved(make_desk, sign_quote):
     assert desk.pending() == []
 
 
-def test_holder_registration_is_once(make_desk):
+def test_a_holder_key_registers_once(make_desk):
     desk, _ = make_desk()
     _, other = generate_keypair()
-    assert desk.register_holder(other) is False
-    assert other not in desk.holder_keys
+    assert desk.register_holder(other) == "h:0000000000000002"
+    assert desk.register_holder(other) is None
+    assert desk.holder_keys[1:] == (other,)
 
 
 def test_malformed_quote_denied(make_desk):

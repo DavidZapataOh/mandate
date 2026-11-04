@@ -87,6 +87,7 @@ async def test_a_failed_commit_answers_a_clean_error(
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(state_store, "put", locked)
+    monkeypatch.setattr(state_store, "put_record", locked)
     async with _asgi(app) as http:
         resp = await http.post(path, json=body)
     assert (resp.status_code, resp.json()) == (503, {"error": "state: unavailable"})

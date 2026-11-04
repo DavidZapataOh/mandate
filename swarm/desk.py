@@ -5,6 +5,7 @@ import dataclasses
 import json
 import logging
 import os
+import secrets
 import sqlite3
 import threading
 from collections.abc import Callable
@@ -36,8 +37,8 @@ from gate.consent import (
     Consent,
     ConsentLedger,
     HolderApproval,
+    certifying_key,
     consent_bytes,
-    verify_signature,
     with_approval,
 )
 from gate.events import DecisionEvent
@@ -47,6 +48,7 @@ from gate.shim import Mode, RawCall, canonize
 from gate.state import StateStore, iso_utc
 from mandate.client import RunRequest, RunResult, run_governed, to_proposed
 from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
+from swarm.holders import HolderRegistry, verify_unpair
 from swarm.intent import IntentError, confirmed_intent, intent_hash
 from swarm.meta_client import reasoning_commitment
 from swarm.receipt import proof_receipt, seal_view
@@ -78,6 +80,7 @@ _NOT_COMPLETE = "bank: not complete"
 _RECONCILED = "ok: reconciled at the bank"
 _NOT_PAID = "bank: no transfer under this certificate"
 _UNREADABLE = "state: store unreadable"
+_UNPAIRED = "holder: unpaired"
 _ROUND_FAILED = "reconcile: failed"
 _STATE_DOWN = "state: unavailable"
 _BANK_DOWN = "bank: unavailable"
@@ -94,6 +97,7 @@ class _Quote:
     status: str = "quoted"
     result: dict[str, Any] | None = None
     intent_id: str | None = None
+    holder: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +119,7 @@ class _Intent:
     payment_id: str | None = None
     unsettled: _Unsettled | None = None
     funds: dict[str, Any] | None = None
+    holder: str | None = None
 
 
 # The debit account stays out of the certificate: the salted action hash
@@ -155,9 +160,11 @@ class PaymentDesk:
             receipts, results, final quotes and registry from and writes
             through to; None keeps everything in memory. Open quotes are not
             kept. One process per store.
+        holder_ids: Source of opaque holder ids; random "h:" + 16 hex when None.
 
     Raises:
-        ValueError: If ``zktls`` is given for a rail other than the sandbox.
+        ValueError: If ``zktls`` is given for a rail other than the sandbox, or
+            ``state: store unreadable`` when a stored row does not read.
     """
 
     def __init__(
@@ -177,6 +184,7 @@ class PaymentDesk:
         require_intent: bool = False,
         zktls: BankProofSetup | None = None,
         state: StateStore | None = None,
+        holder_ids: Callable[[], str] | None = None,
     ) -> None:
         # A proof of an Increase balance says nothing about any other bank.
         if zktls is not None and bank.rail != SANDBOX:
@@ -201,7 +209,10 @@ class PaymentDesk:
         self._state = state
         self.registry = Registry(keypair=(gate_key, self._gate_pub), state=state)
         self._ledger = ConsentLedger(state=state)
-        self._holders: tuple[bytes, ...] = ()
+        try:
+            self._holders = HolderRegistry(holder_ids or _holder_id, state=state)
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise ValueError(_UNREADABLE) from exc
         self._quotes: dict[str, _Quote] = {}
         self._receipts: dict[str, dict[str, Any]] = {}
         # Holder copies: every Disclosure, the action salt included, so they
@@ -244,8 +255,6 @@ class PaymentDesk:
         reconciliation = state.get("reconciliation")
         if reconciliation is not None:
             self._reconciliation = json.loads(reconciliation)
-        holders = json.loads(state.get("holders") or "[]")
-        self._holders = tuple(base64.b64decode(k) for k in holders)
         self._seq = int(state.get("quote_seq") or "0")
         for intent_id, value in state.records("intent"):
             stored = _intent_from(json.loads(value))
@@ -313,18 +322,30 @@ class PaymentDesk:
 
     @property
     def holder_keys(self) -> tuple[bytes, ...]:
-        """Raw public keys trusted to approve quotes."""
+        """Raw public keys of the holders paired now, in pairing order."""
         with self._lock:
-            return self._holders
+            return self._holders.paired_keys
 
-    def register_holder(self, public_key: bytes) -> bool:
-        """Trust a holder key while none is registered.
+    @property
+    def all_holder_keys(self) -> tuple[bytes, ...]:
+        """Every key that ever paired, so receipts approved before an unpair verify."""
+        with self._lock:
+            return self._holders.all_keys
+
+    def paired_holders(self) -> tuple[tuple[str, bytes], ...]:
+        """(holder id, key) of each paired holder, for the operator only."""
+        with self._lock:
+            return self._holders.paired
+
+    def register_holder(self, public_key: bytes) -> str | None:
+        """Pair a new holder key.
 
         Args:
             public_key: Raw 32-byte Ed25519 public key.
 
         Returns:
-            True when stored, False when a holder already exists.
+            The new holder id; None when the key paired before or every
+            holder slot is taken.
 
         Raises:
             ValueError: If the key is not 32 bytes.
@@ -332,12 +353,35 @@ class PaymentDesk:
         if type(public_key) is not bytes or len(public_key) != _KEY_LEN:
             raise ValueError("holder key must be 32 bytes")
         with self._lock:
-            if self._holders:
-                return False
-            if self._state is not None:
-                self._state.put("holders", json.dumps([_b64(public_key)]))
-            self._holders = (public_key,)
-            return True
+            return self._holders.pair(public_key)
+
+    def unpair_holder(self, holder_id: str) -> bool:
+        """Retire a paired holder; its approved, unpaid payments are then denied.
+
+        Args:
+            holder_id: Id `register_holder` returned.
+
+        Returns:
+            True when the holder was paired; False otherwise.
+        """
+        with self._lock:
+            return self._holders.unpair(holder_id)
+
+    def unpair_device(self, public_key: bytes, signature: bytes) -> bool:
+        """Retire the paired holder whose key signed its own unpair request.
+
+        Args:
+            public_key: Raw Ed25519 public key of the device.
+            signature: Signature over `swarm.holders.unpair_bytes(public_key)`.
+
+        Returns:
+            True when the key was paired and signed the request; False otherwise.
+        """
+        if not verify_unpair(public_key, signature):
+            return False
+        with self._lock:
+            holder_id = self._holders.holder_of(public_key)
+            return holder_id is not None and self._holders.unpair(holder_id)
 
     def record_intent(self, intent: Intent, signature: bytes) -> dict[str, Any]:
         """Record a holder-signed intent and sign a funds statement for it.
@@ -1068,13 +1112,14 @@ class PaymentDesk:
 
         Returns:
             The quoted view, or a denied dict when a field is malformed or
-            the intent is unknown.
+            the intent is unknown or names no holder.
         """
         with self._lock:
-            if intent_id is not None and intent_id not in self._intents:
+            refusal = self._unquotable(intent_id)
+            if refusal is not None:
                 unknown = {
                     "status": "denied",
-                    "reason": "intent: unknown",
+                    "reason": refusal,
                     "intent_id": intent_id,
                 }
                 summary = pay_summary(
@@ -1101,11 +1146,24 @@ class PaymentDesk:
             if self._state is not None:
                 self._state.put("quote_seq", str(self._seq + 1))
             self._seq += 1
-            record = _Quote(self._seq, consent, intent_id=intent_id)
+            holder = None if intent_id is None else self._intents[intent_id].holder
+            record = _Quote(self._seq, consent, intent_id=intent_id, holder=holder)
             self._quotes[_quote_id(self._seq)] = record
             view = self._quoted_view(record)
             self._emit("quote", view, consent)
             return view
+
+    def _unquotable(self, intent_id: str | None) -> str | None:
+        if intent_id is None:
+            return None
+        found = self._intents.get(intent_id)
+        if found is None:
+            return "intent: unknown"
+        # An intent stored before holders were bound keeps no signature to
+        # find its signer by, so no approver may claim it.
+        if found.holder is None:
+            return "intent: holder unknown"
+        return None
 
     def expired(self, consent_expires_at: int) -> bool:
         """Whether the desk's clock is past a quote's deadline (the approve rule)."""
@@ -1145,7 +1203,12 @@ class PaymentDesk:
                 self._emit("approve", view, record.consent)
                 return view
             signed = with_approval(record.consent, approval)
-            if not verify_signature(signed, self._holders):
+            trusted = self._holders.paired_keys
+            if record.holder is not None:
+                bound_key = self._holders.key_of(record.holder)
+                trusted = () if bound_key is None else (bound_key,)
+            key = certifying_key(signed, trusted)
+            if key is None:
                 denied = {
                     "status": "denied",
                     "reason": "consent: bad signature",
@@ -1156,7 +1219,7 @@ class PaymentDesk:
             # Read-only: the gate stays the authority and consumes at confirm.
             if (
                 self._ledger.key_used(signed.consent_key)
-                or signed.consent_key in self._holders
+                or signed.consent_key in self._holders.all_keys
             ):
                 reused = {
                     "status": "denied",
@@ -1166,6 +1229,7 @@ class PaymentDesk:
                 self._emit("approve", reused, record.consent)
                 return reused
             record.consent = signed
+            record.holder = self._holders.holder_of(key)
             record.status = "approved"
             view = self._view(quote_id, record)
             self._emit("approve", view, signed)
@@ -1198,11 +1262,15 @@ class PaymentDesk:
                 return self._view(quote_id, record)
             iid = record.intent_id
             bound = None if iid is None else self._intents[iid]
+            holder = record.holder
+            holder_key = None if holder is None else self._holders.key_of(holder)
             refusal = None
             if self._require_intent and bound is None:
                 refusal = "intent: missing"
             elif bound is not None and bound.payment_id is not None:
                 refusal = "intent: already used"
+            elif holder_key is None:
+                refusal = _UNPAIRED
             elif bound is not None and bound.unsettled is not None:
                 refusal = "intent: unsettled"
             elif bound is not None and _proof_expired(bound, self._clock()):
@@ -1213,9 +1281,9 @@ class PaymentDesk:
                     "reason": "registry: full",
                     "quote_id": quote_id,
                 }
-            if refusal is not None:
-                return self._refuse(quote_id, record, refusal)
-            return self._execute(quote_id, record, bound)
+            if refusal is not None or holder_key is None:
+                return self._refuse(quote_id, record, refusal or _UNPAIRED)
+            return self._execute(quote_id, record, bound, holder_key)
 
     def status(self, quote_id: str) -> dict[str, Any]:
         """Latest view of a quote."""
@@ -1257,15 +1325,14 @@ class PaymentDesk:
     def _record_intent(
         self, intent: Intent, signature: bytes, summary: str
     ) -> dict[str, Any]:
-        if not self._holders:
+        if not self._holders.paired_keys:
             return _denied_intent("intent: no holder")
         try:
-            confirmed_intent(self._holders[0], intent, signature)
-        except IntentError as exc:
-            malformed = str(exc) == "intent: malformed"
-            return _denied_intent(
-                "intent: malformed" if malformed else "intent: bad signature"
-            )
+            holder = self._intent_signer(intent, signature)
+        except IntentError:
+            return _denied_intent("intent: malformed")
+        if holder is None:
+            return _denied_intent("intent: bad signature")
         digest = intent_hash(intent)
         if digest in self._intent_hashes:
             return _denied_intent("intent: already recorded")
@@ -1288,7 +1355,11 @@ class PaymentDesk:
         funds_ref = opaque_cooperative_ref(state)
         intent_id = f"i:{len(self._intents) + 1:06d}"
         stored = _Intent(
-            intent, digest, funds_ref, opaque_intent_ref(intent, signature)
+            intent,
+            digest,
+            funds_ref,
+            opaque_intent_ref(intent, signature),
+            holder=holder,
         )
         self._put("intent", intent_id, _intent_record(stored))
         self._intents[intent_id] = stored
@@ -1304,6 +1375,19 @@ class PaymentDesk:
             "state": statement,
             "bank_key": base64.b64encode(self._bank_pub).decode("ascii"),
         }
+
+    def _intent_signer(self, intent: Intent, signature: bytes) -> str | None:
+        """Id of the first paired holder whose key signed the intent, or None."""
+        for holder_id, key in self._holders.paired:
+            try:
+                confirmed_intent(key, intent, signature)
+            except IntentError as exc:
+                # A malformed intent fails the same way under every key.
+                if str(exc) == "intent: malformed":
+                    raise
+                continue
+            return holder_id
+        return None
 
     def _append(self, kind: str, body: str) -> tuple[int, Anchor]:
         # Every entry is sealed right away, so the newest seal covers the log.
@@ -1355,7 +1439,7 @@ class PaymentDesk:
         return dict(result)
 
     def _journal(
-        self, quote_id: str, record: _Quote
+        self, quote_id: str, record: _Quote, holder_key: bytes
     ) -> Callable[[str, CavaAction, bytes], None]:
         """Write-ahead record of an issued certificate, on disk before the bank."""
         state = self._state
@@ -1372,7 +1456,7 @@ class PaymentDesk:
                 "action": json.loads(canonical_bytes(action)),
                 "action_salt": salt.hex(),
                 "consent": _consent_record(c),
-                "holder_key": _b64(self._holder_of(c)),
+                "holder_key": _b64(holder_key),
                 "idempotency_key": idempotency_key(claims["jti"]),
                 "expires_at": claims["exp"],
                 # Only the bank that was called can say what it holds.
@@ -1382,11 +1466,12 @@ class PaymentDesk:
 
         return issued
 
-    def _holder_of(self, consent: Consent) -> bytes:
-        return next(k for k in self._holders if verify_signature(consent, (k,)))
-
     def _execute(
-        self, quote_id: str, record: _Quote, bound: _Intent | None
+        self,
+        quote_id: str,
+        record: _Quote,
+        bound: _Intent | None,
+        holder_key: bytes,
     ) -> dict[str, Any]:
         c = record.consent
         now = self._clock()
@@ -1425,14 +1510,17 @@ class PaymentDesk:
             reasoning_commitment=reasoning_commitment(()),
             revocation_index=record.number % _REVOCATION_BITS,
             consent=c,
-            holder_keys=self._holders,
+            holder_keys=(holder_key,),
             consents=self._ledger,
         )
         # The verifier runs outside any store transaction, so the certificate
         # id it spends is on disk before the bank is called.
         try:
             outcome = run_governed(
-                request, self.bank, self._verifier, self._journal(quote_id, record)
+                request,
+                self.bank,
+                self._verifier,
+                self._journal(quote_id, record, holder_key),
             )
         except Exception as exc:
             # Only the type: a message could carry consent fields or keys.
@@ -1467,7 +1555,7 @@ class PaymentDesk:
             if payment_id is not None:
                 entry = LogEntry(seq, kind, body)
                 receipt = self._receipt_of(
-                    payment_id, outcome, c, bound, entry, proof, seal
+                    payment_id, outcome, c, holder_key, bound, entry, proof, seal
                 )
                 self._put("result", payment_id, result)
                 if receipt is not None:
@@ -1518,6 +1606,7 @@ class PaymentDesk:
         payment_id: str,
         outcome: RunResult,
         c: Consent,
+        holder_key: bytes,
         bound: _Intent | None,
         entry: LogEntry,
         proof: InclusionProof,
@@ -1534,7 +1623,7 @@ class PaymentDesk:
                 outcome.action,
                 DESK_POLICY,
                 c,
-                self._holder_of(c),
+                holder_key,
                 entry,
                 proof,
                 seal,
@@ -1694,6 +1783,10 @@ def _outcome_unknown(quote_id: str) -> dict[str, Any]:
         "reason": _OUTCOME_UNKNOWN,
         "payment_id": None,
     }
+
+
+def _holder_id() -> str:
+    return "h:" + secrets.token_hex(8)
 
 
 def _b64(data: bytes) -> str:
@@ -1875,6 +1968,7 @@ def _intent_from(record: dict[str, Any]) -> _Intent:
         if pending is None
         else _Unsettled(**{**pending, "request": PaymentRequest(**pending["request"])}),
         funds=record["funds"],
+        holder=record.get("holder"),
     )
 
 

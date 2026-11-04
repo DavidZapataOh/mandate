@@ -571,8 +571,8 @@ state is returned."""
             return _bad_request()
         if not pairing.spend(body["pairing"]):
             return _bad_request()
-        registered = await anyio.to_thread.run_sync(desk.register_holder, key)
-        return JSONResponse({"registered": registered})
+        holder_id = await anyio.to_thread.run_sync(desk.register_holder, key)
+        return JSONResponse({"registered": holder_id is not None})
 
     async def keys(request: Request) -> Response:
         """Publish the gate key and the paired holder keys.

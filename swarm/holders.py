@@ -87,6 +87,10 @@ class HolderRegistry:
             registry in memory. A legacy `holders` key list in the store is
             paired once, in list order, and then emptied.
         max_paired: Bound on holders paired at once.
+
+    Raises:
+        ValueError: If a stored holder record is malformed (KeyError or
+            TypeError when it lacks a field or is not an object).
     """
 
     def __init__(
@@ -106,8 +110,15 @@ class HolderRegistry:
         stored = []
         for holder_id, text in state.records(_KIND):
             value = json.loads(text)
-            key = base64.b64decode(value["key"])
-            stored.append((value["number"], holder_id, key, value["paired"]))
+            key = base64.b64decode(value["key"], validate=True)
+            number, paired = value["number"], value["paired"]
+            if (
+                len(key) != _KEY_LEN
+                or type(number) is not int
+                or type(paired) is not bool
+            ):
+                raise ValueError("holder record malformed")
+            stored.append((number, holder_id, key, paired))
         # A record rewritten on unpair moves to the end; the number keeps order.
         for number, holder_id, key, paired in sorted(stored):
             self._holders[holder_id] = _Holder(key, paired, number)
@@ -161,8 +172,9 @@ class HolderRegistry:
         while holder_id in self._holders:
             holder_id = self._ids()
         holder = _Holder(public_key, True, len(self._holders) + 1)
-        self._holders[holder_id] = holder
+        # Written first: a failed write leaves memory as the store has it.
         self._save(holder_id, holder)
+        self._holders[holder_id] = holder
         return holder_id
 
     def unpair(self, holder_id: str) -> bool:
@@ -178,8 +190,9 @@ class HolderRegistry:
         holder = self._holders.get(holder_id)
         if holder is None or not holder.paired:
             return False
-        holder.paired = False
-        self._save(holder_id, holder)
+        retired = _Holder(holder.key, False, holder.number)
+        self._save(holder_id, retired)
+        self._holders[holder_id] = retired
         return True
 
     def key_of(self, holder_id: str) -> bytes | None:

@@ -99,6 +99,7 @@ module = [
     "swarm.test_holder_proof",
     "swarm.test_server_zktls",
     "swarm.test_flow",
+    "swarm.test_desk_holders",
     "swarm.test_holders",
     "swarm.test_hook",
     "swarm.test_nimbus",

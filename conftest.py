@@ -128,6 +128,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
         counter = itertools.count(1)
         salt = itertools.count(1)
         sd_salt = itertools.count(1)
+        holder_number = itertools.count(1)
         desk = PaymentDesk(
             source="checking-881",
             bank=bank or Bank({"checking-881": 50000, "acme-991": 0}, state=state),
@@ -142,6 +143,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             require_intent=require_intent,
             zktls=zktls,
             state=state,
+            holder_ids=lambda: f"h:{next(holder_number):016x}",
         )
         if not register:
             return desk, None

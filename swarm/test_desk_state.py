@@ -10,6 +10,7 @@ from bank.conftest import RecordingRail
 from bank.verifier import Verifier
 from gate.certs import public_key_of, read_claims
 from gate.consent import Consent, sign_approval
+from gate.policy import Intent
 from gate.state import StateStore
 from swarm.conftest import DEMO_INTENT
 from swarm.desk import (
@@ -91,7 +92,7 @@ def test_a_restarted_desk_keeps_its_holder(state_store):
     _desk(state_store)
     again, _ = _restart(state_store)
     assert again.holder_keys == (public_key_of(HOLDER),)
-    assert again.register_holder(b"\x07" * 32) is False
+    assert again.register_holder(public_key_of(HOLDER)) is None
 
 
 def test_an_intent_pays_once_across_a_restart(state_store):
@@ -315,3 +316,61 @@ def test_an_account_added_to_the_opening_balances_is_opened(tmp_path):
     )
     third = Bank({}, state=StateStore(path))
     assert third.get_balance("acme-991") == 7
+
+
+def test_a_restarted_desk_keeps_every_holder_and_each_intent_signer(
+    state_store, sign_quote
+):
+    desk = _desk(state_store)
+    second = public_key_of(b"\x03" * 32)
+    desk.register_holder(second)
+    bill = Intent(300, "USD", "acme-991", "B-204")
+    signed = desk.record_intent(bill, sign_intent(b"\x03" * 32, bill))
+    again, _ = _restart(state_store)
+    assert again.all_holder_keys == (public_key_of(HOLDER), second)
+    q = again.quote("acme-991", 300, "USD", "B-204", intent_id=signed["intent_id"])
+    refused = again.approve(q["quote_id"], sign_quote(HOLDER, q))
+    assert refused["reason"] == "consent: bad signature"
+    assert again.approve(q["quote_id"], sign_quote(b"\x03" * 32, q))["status"] == (
+        "approved"
+    )
+
+
+def test_a_stored_intent_without_a_holder_is_never_bound_by_its_approver(
+    state_store, sign_quote
+):
+    desk = _desk(state_store)
+    signed = desk.record_intent(DEMO_INTENT, sign_intent(HOLDER, DEMO_INTENT))
+    iid = signed["intent_id"]
+    record = json.loads(dict(state_store.records("intent"))[iid])
+    del record["holder"]
+    state_store.put_record("intent", iid, json.dumps(record))
+    again, _ = _restart(state_store)
+    assert again.quote("acme-991", 20000, "USD", "A-991", intent_id=iid) == {
+        "status": "denied",
+        "reason": "intent: holder unknown",
+        "intent_id": iid,
+    }
+    assert again.pending() == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "not json",
+        json.dumps([1]),
+        json.dumps({"key": base64.b64encode(b"\x05" * 32).decode(), "paired": True}),
+        json.dumps({"key": "AA==", "number": 2, "paired": True}),
+    ],
+)
+def test_a_corrupt_holder_record_stops_the_start(state_store, value):
+    _desk(state_store)
+    state_store.put_record("holder", "h:00000000000000ff", value)
+    path = state_store.path
+    state_store.close()
+    store = StateStore(path)
+    try:
+        with pytest.raises(ValueError, match="^state: store unreadable$"):
+            _desk(store)
+    finally:
+        store.close()
