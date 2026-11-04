@@ -18,11 +18,27 @@ export interface PolicyView {
   readonly rules: readonly RuleView[];
 }
 
+/** The desk's latest reconciliation of the bank's own transfer list with its sealed receipts. */
+export interface BankCheck {
+  readonly rail: "simulated" | "sandbox";
+  readonly provider: string | null;
+  readonly since: string;
+  readonly checked_at: number;
+  readonly transfers: number;
+  readonly certified: number;
+  readonly unbacked: readonly string[];
+  readonly missing: readonly string[];
+  readonly resolved: readonly string[];
+  readonly pending: readonly string[];
+  readonly error: string | null;
+}
+
 export interface ServerProvenance {
   readonly epoch: string;
   readonly window: { readonly first_seq: number; readonly last_seq: number; readonly retained: number };
   readonly registry: { readonly root: string; readonly leaves: number };
   readonly policies: readonly PolicyView[];
+  readonly bank: BankCheck | null;
 }
 
 export interface Provenance {
@@ -33,6 +49,8 @@ export interface Provenance {
   readonly evicted: boolean;
   readonly registry: { readonly root: string; readonly leaves: number; readonly from: string } | null;
   readonly policies: readonly PolicyView[] | null;
+  /** The server's last reconciliation; null for a replay, without the server, or before the first one. */
+  readonly bank: BankCheck | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -66,8 +84,27 @@ function validPolicy(v: unknown): boolean {
   );
 }
 
+const BANK_KEYS = [
+  "rail", "provider", "since", "checked_at", "transfers", "certified",
+  "unbacked", "missing", "resolved", "pending", "error",
+] as const;
+
+const texts = (v: unknown): boolean => Array.isArray(v) && v.every(text);
+
+function validBank(v: unknown): boolean {
+  return (
+    v === null ||
+    (exact(v, BANK_KEYS) &&
+      (v["rail"] === "simulated" || v["rail"] === "sandbox") &&
+      (v["provider"] === null || text(v["provider"])) &&
+      text(v["since"]) && count(v["checked_at"]) && count(v["transfers"]) && count(v["certified"]) &&
+      texts(v["unbacked"]) && texts(v["missing"]) && texts(v["resolved"]) && texts(v["pending"]) &&
+      (v["error"] === null || text(v["error"])))
+  );
+}
+
 function valid(v: unknown): v is ServerProvenance {
-  if (!exact(v, ["epoch", "window", "registry", "policies"])) return false;
+  if (!exact(v, ["epoch", "window", "registry", "policies", "bank"])) return false;
   const { window, registry, policies } = v;
   return (
     text(v["epoch"]) &&
@@ -75,7 +112,8 @@ function valid(v: unknown): v is ServerProvenance {
     count(window["first_seq"]) && count(window["last_seq"]) && count(window["retained"]) &&
     exact(registry, ["root", "leaves"]) &&
     text(registry["root"]) && /^[0-9a-f]{64}$/.test(registry["root"]) && count(registry["leaves"]) &&
-    Array.isArray(policies) && policies.every(validPolicy)
+    Array.isArray(policies) && policies.every(validPolicy) &&
+    validBank(v["bank"])
   );
 }
 
@@ -89,6 +127,18 @@ export function parseProvenance(body: string): ServerProvenance {
   }
   if (!valid(parsed)) throw new WireError("wire: malformed provenance");
   return parsed;
+}
+
+/** What the bank check says: the count without a certificate, or why there is none to show. */
+export function bankText(prov: Provenance): string {
+  if (prov.source === "replay") return "not reconciled in a replay";
+  if (prov.epoch === null) return "server provenance unavailable";
+  const b = prov.bank;
+  if (b === null) return "not reconciled yet";
+  if (b.error !== null) return `not checked: ${b.error}`;
+  const rail = b.provider === null ? b.rail.toUpperCase() : `${b.rail.toUpperCase()} ${b.provider}`;
+  const at = new Date(b.checked_at * 1000).toISOString().replace(".000", "");
+  return `${b.unbacked.length} of ${b.transfers} · ${rail} · checked ${at}`;
 }
 
 /** What a window rests on: epoch, bounds, registry root and policies, each with where it came from. */
@@ -122,5 +172,6 @@ export function provenanceOf(
     evicted: first !== null && first > 1,
     registry,
     policies: server?.policies ?? null,
+    bank: server?.bank ?? null,
   };
 }

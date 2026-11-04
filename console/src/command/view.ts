@@ -59,6 +59,8 @@ function metricSeqs(key: Tile, p: Posture): readonly number[] {
     case "attribution": return p.decided.seqs;
     case "latency": return p.latency.seqs;
     case "rails": return p.rails.flatMap((r) => r.seqs).sort((a, b) => a - b);
+    // The bank's list is not a set of console lines.
+    case "unbacked": return [];
   }
 }
 
@@ -292,12 +294,16 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
     setText(provenanceEl, provenanceSummary(prov));
 
     for (const [key, tile] of tiles) {
-      const value = metricValue(key, posture);
+      const value = metricValue(key, posture, prov);
       if (tile.value.textContent !== value) renderValue(key, tile.value, value, posture);
       const none = String(value.endsWith("in this window"));
       if (tile.article.dataset["none"] !== none) tile.article.dataset["none"] = none;
       const zero = String(value === "0" || value === "0.00");
       if (tile.article.dataset["zero"] !== zero) tile.article.dataset["zero"] = zero;
+      if (key === "unbacked") {
+        const alert = (prov.bank?.unbacked.length ?? 0) > 0;
+        if (tile.article.hasAttribute("data-alert") !== alert) tile.article.toggleAttribute("data-alert", alert);
+      }
       setText(tile.drill, showText(metricSeqs(key, posture).length));
     }
 

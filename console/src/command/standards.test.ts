@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SERVER_BODY } from "./__fixtures__/provenance";
+import { SERVER_BODY, SERVER_BODY_BANK } from "./__fixtures__/provenance";
 import { BREACH, DEPLOY_BREACH, lines, WINDOW } from "./__fixtures__/window";
 import { ATTACK_KINDS, computePosture } from "./posture";
 import { parseProvenance, provenanceOf } from "./provenance";
@@ -9,6 +9,24 @@ const window = lines(WINDOW);
 const posture = computePosture(window);
 const live = provenanceOf(window, parseProvenance(SERVER_BODY), null);
 const bare = provenanceOf([], null, null);
+
+describe("evidenceText of the bank", () => {
+  it("names the bank's own list", () => {
+    expect(evidenceText("bank", posture, provenanceOf(window, parseProvenance(SERVER_BODY_BANK), null))).toBe(
+      "bank lists 3 transfers since 2027-01-15T08:16:40Z: 3 with a certificate and a sealed entry, 0 without; 0 sealed payments missing at the bank",
+    );
+  });
+
+  it("says when the bank could not be asked, in a replay and without the server", () => {
+    const bank = JSON.parse(SERVER_BODY_BANK).bank;
+    const down = parseProvenance(JSON.stringify({ ...JSON.parse(SERVER_BODY), bank: { ...bank, transfers: 0, certified: 0, error: "bank: unavailable" } }));
+    expect([
+      evidenceText("bank", posture, provenanceOf(window, down, null)),
+      evidenceText("bank", posture, provenanceOf(window, null, "demo-1")),
+      evidenceText("bank", posture, bare),
+    ]).toEqual(["not checked: bank: unavailable", "not reconciled in a replay", "server provenance unavailable"]);
+  });
+});
 
 describe("evidenceText", () => {
   it.each<[EvidenceKey, string]>([
@@ -20,6 +38,7 @@ describe("evidenceText", () => {
     ["consent", "certified payments with holder consent: 1 of 2 · 50.0%"],
     ["attribution", "decisions naming their model call: 4 of 7 · 57.1%"],
     ["rails", "verified payments by rail: SIMULATED 2"],
+    ["bank", "not reconciled yet"],
     ["registry", "registry root 70566024e09c9a9e over 1 entry (server)"],
     ["policies", "policies served: desk v1, payments v1, nimbus v1"],
   ])("%s reads %s", (key, want) => {

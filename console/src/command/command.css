@@ -274,6 +274,17 @@ main {
   white-space: normal;
 }
 
+/* The bank check reads as a sentence: count, rail and time. */
+#tiles [data-metric="unbacked"] .value {
+  font: 400 15px/1.3 var(--mono);
+  letter-spacing: -0.02em;
+  white-space: normal;
+}
+
+#tiles [data-metric="unbacked"][data-alert] .value {
+  color: var(--alert);
+}
+
 #tiles [data-metric="verified"] .value {
   color: var(--verify);
 }

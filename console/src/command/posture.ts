@@ -68,7 +68,7 @@ export interface Posture {
 }
 
 export type MetricKey =
-  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails";
+  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails" | "unbacked";
 
 export const LABELS: Readonly<Record<MetricKey, string>> = {
   decided: "Actions decided",
@@ -83,6 +83,7 @@ export const LABELS: Readonly<Record<MetricKey, string>> = {
   attacks: "Attacks by kind",
   layers: "Denials by layer",
   rails: "Payments by rail",
+  unbacked: "Transfers at the bank without a certificate",
 };
 
 export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
@@ -110,6 +111,8 @@ export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
     "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
   rails:
     "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED).",
+  unbacked:
+    "Account transfers the bank itself lists from the desk's debit account since this registry began that carry no idempotency key naming a certificate this desk issued, or have no sealed execution entry in the registry. A read-only reconciler asks the bank's own API; 0 means every payment that left the account at the bank has a certificate and a receipt. Sealed payments the bank does not list are named in the evidence.",
 };
 
 const ATTACK_LAYERS: Readonly<Record<string, string>> = {

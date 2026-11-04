@@ -3,7 +3,9 @@ import {
   type AttackRow, counted, DEFINITIONS, formatCents, formatShare, LABELS,
   type MetricKey, type Posture, railsText,
 } from "./posture";
-import type { Provenance } from "./provenance";
+import { bankText, type BankCheck, type Provenance } from "./provenance";
+
+export { bankText };
 import { APPLICABILITY, CONTROLS, DISCLAIMER, evidenceText, type Control } from "./standards";
 
 export interface ReportControl extends Omit<Control, "evidence"> {
@@ -21,7 +23,7 @@ export interface Report {
   readonly controls: readonly ReportControl[];
 }
 
-export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails"] as const;
+export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "unbacked"] as const;
 
 /** Builds the report for a window; every field is derived from the posture and provenance given. */
 export function buildReport(posture: Posture, provenance: Provenance, generatedAtMs: number): Report {
@@ -60,11 +62,20 @@ function orderedProvenance(p: Provenance): Provenance {
           approval_required: r.approval_required, consent_required: r.consent_required,
         })),
       })),
+    bank: p.bank && orderedBank(p.bank),
+  };
+}
+
+function orderedBank(b: BankCheck): BankCheck {
+  return {
+    rail: b.rail, provider: b.provider, since: b.since, checked_at: b.checked_at,
+    transfers: b.transfers, certified: b.certified, unbacked: [...b.unbacked], missing: [...b.missing],
+    resolved: [...b.resolved], pending: [...b.pending], error: b.error,
   };
 }
 
 /** The display value of one posture tile. */
-export function metricValue(key: (typeof TILES)[number], p: Posture): string {
+export function metricValue(key: (typeof TILES)[number], p: Posture, prov: Provenance): string {
   switch (key) {
     case "decided": return String(p.decided.count);
     case "verified": return String(p.verified.count);
@@ -74,6 +85,7 @@ export function metricValue(key: (typeof TILES)[number], p: Posture): string {
     case "moved": return formatCents(p.movedCents);
     case "consent": return formatShare(p.consent.withConsent.count, p.consent.certified.count);
     case "rails": return railsText(p);
+    case "unbacked": return bankText(prov);
     case "attribution": return formatShare(p.attribution.attributed.count, p.decided.count);
     case "latency": {
       const parts = latencyParts(p);
@@ -193,7 +205,7 @@ export function reportMarkdown(r: Report): string {
     ["Policies served", p.policies ? cell(p.policies.map((x) => `${x.policy_id} v${x.version}`).join(", ")) : "not served"],
   ]));
   out.push("## Posture", "");
-  out.push(...table(["Metric", "Value", "Definition"], TILES.map((k) => [cell(LABELS[k]), cell(metricValue(k, m)), cell(r.definitions[k])])));
+  out.push(...table(["Metric", "Value", "Definition"], TILES.map((k) => [cell(LABELS[k]), cell(metricValue(k, m, p)), cell(r.definitions[k])])));
   out.push("## Attacks by kind", "", cell(r.definitions.attacks), "");
   out.push(...table(["Attack", "Attempts", "Blocked", "Not blocked", "Moved", "Stopped at"], m.attacks.map((a) => [
     cell(a.kind), String(a.attempts), String(a.blocked), String(a.breaches), formatCents(a.movedCents),

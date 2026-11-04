@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { SERVER_BODY } from "./__fixtures__/provenance";
+import { SERVER_BODY, SERVER_BODY_BANK } from "./__fixtures__/provenance";
 import { lines, WINDOW } from "./__fixtures__/window";
 import { parseProvenance, provenanceOf } from "./provenance";
 
 const ROOT = "70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87";
 const body = JSON.parse(SERVER_BODY);
+const bank = JSON.parse(SERVER_BODY_BANK).bank;
 
 describe("parseProvenance", () => {
   it("reads what the server serves", () => {
     const p = parseProvenance(SERVER_BODY);
-    expect([p.epoch, p.registry, p.policies.map((x) => x.policy_id)]).toEqual([
-      "MANDATE_FIXTURE-a1b2c3d4", { root: ROOT, leaves: 1 }, ["desk", "payments", "nimbus"],
+    expect([p.epoch, p.registry, p.policies.map((x) => x.policy_id), p.bank]).toEqual([
+      "MANDATE_FIXTURE-a1b2c3d4", { root: ROOT, leaves: 1 }, ["desk", "payments", "nimbus"], null,
     ]);
+  });
+
+  it("reads the reconciliation the server ran", () => {
+    expect(parseProvenance(SERVER_BODY_BANK).bank?.transfers).toBe(3);
+    expect(provenanceOf(lines(WINDOW), parseProvenance(SERVER_BODY_BANK), null).bank?.certified).toBe(3);
   });
 
   it.each([
@@ -20,6 +26,13 @@ describe("parseProvenance", () => {
     ["leaves as text", JSON.stringify({ ...body, registry: { root: ROOT, leaves: "1" } })],
     ["a short root", JSON.stringify({ ...body, registry: { root: "7056", leaves: 1 } })],
     ["a negative seq", JSON.stringify({ ...body, window: { first_seq: -1, last_seq: 9, retained: 9 } })],
+    ["a bank block with an extra key", JSON.stringify({ ...body, bank: { ...bank, url: "x" } })],
+    ["unbacked as text", JSON.stringify({ ...body, bank: { ...bank, unbacked: "t1" } })],
+    ["a rail it does not know", JSON.stringify({ ...body, bank: { ...bank, rail: "real" } })],
+    ["a bank block missing its error", JSON.stringify({ ...body, bank: { ...bank, error: undefined } })],
+    ["a fractional count", JSON.stringify({ ...body, bank: { ...bank, transfers: 1.5 } })],
+    ["a list holding a number", JSON.stringify({ ...body, bank: { ...bank, missing: [1] } })],
+    ["a provider that is not text", JSON.stringify({ ...body, bank: { ...bank, provider: 3 } })],
     ["a rule missing consent_required", JSON.stringify({
       ...body, policies: [{ ...body.policies[0], rules: [{ ...body.policies[0].rules[0], consent_required: undefined }] }],
     })],
@@ -36,7 +49,7 @@ describe("provenanceOf", () => {
       source: "live", replay: null, epoch: "MANDATE_FIXTURE-a1b2c3d4",
       window: { first: 1, last: 9, lines: 9 }, evicted: false,
       registry: { root: ROOT, leaves: 1, from: "server" },
-      policies: body.policies,
+      policies: body.policies, bank: null,
     });
   });
 
@@ -57,6 +70,10 @@ describe("provenanceOf", () => {
     expect(provenanceOf(window, parseProvenance(SERVER_BODY), null).registry?.from).toBe("server");
   });
 
+  it("a replay never carries the live reconciliation", () => {
+    expect(provenanceOf(window, parseProvenance(SERVER_BODY_BANK), "demo-1").bank).toBeNull();
+  });
+
   it("a replay says so and serves no policies", () => {
     const p = provenanceOf(window, null, "demo-1");
     expect([p.source, p.replay, p.registry?.from, p.policies]).toEqual(["replay", "demo-1", "line #3", null]);
@@ -75,7 +92,7 @@ describe("provenanceOf", () => {
   it("an empty window has no bounds and no registry", () => {
     expect(provenanceOf([], null, null)).toEqual({
       source: "live", replay: null, epoch: null, window: { first: null, last: null, lines: 0 },
-      evicted: false, registry: null, policies: null,
+      evicted: false, registry: null, policies: null, bank: null,
     });
   });
 });

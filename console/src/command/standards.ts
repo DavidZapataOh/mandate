@@ -1,10 +1,10 @@
 import { counted, formatCents, formatShare, type Posture, railsText } from "./posture";
-import type { Provenance } from "./provenance";
+import { bankText, type Provenance } from "./provenance";
 
 export type Framework = "NIST AI RMF 1.0" | "ISO/IEC 42001:2023" | "EU AI Act";
 
 export type EvidenceKey =
-  | "policies" | "consent" | "decided" | "attacks" | "denied" | "breaches" | "registry" | "verified" | "attribution" | "rails";
+  | "policies" | "consent" | "decided" | "attacks" | "denied" | "breaches" | "registry" | "verified" | "attribution" | "rails" | "bank";
 
 export interface Control {
   readonly framework: Framework;
@@ -182,6 +182,13 @@ export function evidenceText(key: EvidenceKey, p: Posture, prov: Provenance): st
       return `decisions naming their model call: ${formatShare(p.attribution.attributed.count, p.decided.count)}`;
     case "rails":
       return `verified payments by rail: ${railsText(p)}`;
+    case "bank": {
+      const b = prov.bank;
+      if (prov.source === "replay" || prov.epoch === null || b === null || b.error !== null) {
+        return bankText(prov);
+      }
+      return `bank lists ${counted(b.transfers, "transfer", "transfers")} since ${b.since}: ${b.certified} with a certificate and a sealed entry, ${b.unbacked.length} without; ${counted(b.missing.length, "sealed payment", "sealed payments")} missing at the bank`;
+    }
     case "registry":
       return prov.registry === null
         ? "no registry root in this window"

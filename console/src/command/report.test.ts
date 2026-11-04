@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { SERVER_BODY } from "./__fixtures__/provenance";
+import { SERVER_BODY, SERVER_BODY_BANK } from "./__fixtures__/provenance";
 import { attackLine, BREACH, DEPLOY_BREACH, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
 import { computePosture } from "./posture";
 import { parseProvenance, provenanceOf } from "./provenance";
-import { buildReport, cell, lineCount, metricValue, reportFileName, reportJson, reportMarkdown, TILES } from "./report";
+import { bankText, buildReport, cell, lineCount, metricValue, reportFileName, reportJson, reportMarkdown, TILES } from "./report";
 
 const ROOT = "70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87";
 const AT = Date.UTC(2026, 10, 3, 17, 0, 0);
@@ -36,6 +36,7 @@ describe("reportMarkdown", () => {
       "| Actions decided | 7 |",
       "| Moved by attacks | 0.00 |",
       "| Payments by rail | SIMULATED 2 |",
+      "| Transfers at the bank without a certificate | not reconciled yet |",
       "| Holder consent on certified payments | 1 of 2 · 50.0% |",
       "| Gate decision time | p50 61µs · p95 90µs (5 samples) |",
       "| Decisions naming their model call | 4 of 7 · 57.1% |",
@@ -120,7 +121,7 @@ describe("an attack window with one Nimbus step that ran", () => {
 
 describe("sample count", () => {
   it("a single latency sample reads in the singular", () => {
-    expect(metricValue("latency", computePosture(window.slice(8)))).toBe("p50 90µs · p95 90µs (1 sample)");
+    expect(metricValue("latency", computePosture(window.slice(8)), provenanceOf([], null, null))).toBe("p50 90µs · p95 90µs (1 sample)");
   });
 });
 
@@ -184,12 +185,36 @@ describe("reportJson determinism", () => {
 describe("metricValue", () => {
   it("renders each tile", () => {
     const p = computePosture(window);
-    expect(TILES.map((k) => metricValue(k, p))).toEqual([
-      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2",
+    expect(TILES.map((k) => metricValue(k, p, provenanceOf(window, parseProvenance(SERVER_BODY), null)))).toEqual([
+      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2", "not reconciled yet",
     ]);
   });
 
   it("says so when no verified payment names a rail", () => {
-    expect(metricValue("rails", computePosture([]))).toBe("no verified payments in this window");
+    expect(metricValue("rails", computePosture([]), provenanceOf([], null, null))).toBe("no verified payments in this window");
+  });
+});
+
+describe("bankText", () => {
+  const bank = JSON.parse(SERVER_BODY_BANK).bank;
+  const reconciled = (b: unknown) =>
+    provenanceOf(window, parseProvenance(JSON.stringify({ ...JSON.parse(SERVER_BODY), bank: b })), null);
+  it.each([
+    ["every transfer certified", reconciled(bank), "0 of 3 · SANDBOX increase · checked 2027-01-15T08:20:00Z"],
+    ["one unbacked", reconciled({ ...bank, certified: 2, unbacked: ["account_transfer_x"] }), "1 of 3 · SANDBOX increase · checked 2027-01-15T08:20:00Z"],
+    ["no provider named", reconciled({ ...bank, rail: "simulated", provider: null }), "0 of 3 · SIMULATED · checked 2027-01-15T08:20:00Z"],
+    ["the bank unreachable", reconciled({ ...bank, transfers: 0, certified: 0, error: "bank: unavailable" }), "not checked: bank: unavailable"],
+    ["not reconciled yet", provenanceOf(window, parseProvenance(SERVER_BODY), null), "not reconciled yet"],
+    ["a replay", provenanceOf(window, null, "demo-1"), "not reconciled in a replay"],
+    ["a replay beside a live server", provenanceOf(window, parseProvenance(SERVER_BODY_BANK), "demo-1"), "not reconciled in a replay"],
+    ["no server", provenanceOf(window, null, null), "server provenance unavailable"],
+  ])("%s", (_name, prov, want) => {
+    expect(bankText(prov)).toBe(want);
+  });
+
+  it("the JSON export carries the reconciliation the report rests on", () => {
+    const r = buildReport(computePosture(window), provenanceOf(window, parseProvenance(SERVER_BODY_BANK), null), AT);
+    expect(JSON.parse(reportJson(r)).provenance.bank).toEqual(bank);
+    expect(Object.keys(JSON.parse(reportJson(r)).provenance.bank)).toEqual(Object.keys(bank));
   });
 });
