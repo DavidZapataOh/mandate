@@ -8,6 +8,7 @@ import {
   GATE_KEY,
   HOLDER_KEY,
   RECEIPT,
+  RECEIPT_COOP,
   RECEIPT_ZKTLS,
   regate,
   reissue,
@@ -48,6 +49,7 @@ describe("verifyReceipt", () => {
       "Seal anch:000001 over entries 1–1 verifies",
       "No model reasoning: the certificate commits to an empty chain",
       "SIMULATED ledger payment pay:000001, requested under this certificate; no bank holds it",
+      "No funds evidence: this payment was not bound to a holder intent",
     ]);
   });
 
@@ -97,7 +99,7 @@ describe("verifyReceipt", () => {
     expect(results.map((r) => `${r.step}: ${r.status}`)).toEqual([
       "Receipt format: pass", "Gate certificate: pass", "Receipt disclosures: pass", "Canonical action: withheld",
       "Policy: pass", "Holder consent: withheld", "Registry inclusion: pass", "Registry seal: pass", "Reasoning anchor: pass",
-      "Bank transfer: pass",
+      "Bank transfer: pass", "Funds proof: pass",
     ]);
     expect(results[2]?.detail).toBe("Signed by the gate key; withheld by the holder: amount, payee, account, reference, holder");
     expect(results[3]?.detail).toBe("Withheld: the action's targets and salt were not disclosed; the certificate still fixes its salted hash");
@@ -184,7 +186,7 @@ describe("bank transfer step", () => {
   it("names a sandbox transfer and where it can be checked, without claiming it was", async () => {
     const results = await verifyReceipt(JSON.parse(SANDBOX_RECEIPT), TRUST);
     expect(results.map((r) => r.status)).toEqual(STEPS.map(() => "pass"));
-    expect(results.at(-1)).toEqual({
+    expect(results.find((r) => r.step === "Bank transfer")).toEqual({
       step: "Bank transfer",
       status: "pass",
       detail:
@@ -250,7 +252,7 @@ describe("verifyCertificate", () => {
     const results = await verifyCertificate(token, TRUST);
     expect(results.map((r) => r.status)).toEqual([
       "unchecked", "pass", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked",
-      "unchecked",
+      "unchecked", "unchecked",
     ]);
     expect(verdictOf(results)).toEqual({
       label: "INCOMPLETE",
@@ -268,9 +270,9 @@ describe("verifyCertificate", () => {
 });
 
 describe("verdictOf", () => {
-  it("is VERIFIED only when all ten steps passed", async () => {
+  it("is VERIFIED only when all eleven steps passed", async () => {
     expect(verdictOf(await verifyReceipt(JSON.parse(RECEIPT), TRUST)).label).toBe("VERIFIED");
-    expect(verdictOf((await verifyReceipt(JSON.parse(RECEIPT), TRUST)).slice(0, 9)).label).toBe("INCOMPLETE");
+    expect(verdictOf((await verifyReceipt(JSON.parse(RECEIPT), TRUST)).slice(0, 10)).label).toBe("INCOMPLETE");
   });
 
   it("notes when no holder list was published", async () => {
@@ -394,7 +396,7 @@ describe("verifyReceipt on hostile input", () => {
   it("withholds the action and the consent when the salt alone is withheld", async () => {
     const results = await verifyReceipt(without(RECEIPT, ["action_salt"]), TRUST);
     expect(results.map((r) => r.status)).toEqual([
-      "pass", "pass", "pass", "withheld", "pass", "withheld", "pass", "pass", "pass", "pass",
+      "pass", "pass", "pass", "withheld", "pass", "withheld", "pass", "pass", "pass", "pass", "pass",
     ]);
     expect(results[2]?.detail).toBe("Signed by the gate key; disclosed: amount, payee, account, reference, holder; withheld: action_salt");
   });
@@ -477,7 +479,7 @@ describe("holder consent signed by real holder keys", () => {
     const signature = await seedSign(0x81, consentBytes({ ...CONSENT, recipient: "evil-666" }));
     const results = await verifyReceipt(JSON.parse(await reissue({ recipient: "evil-666", signature })), TRUST);
     expect(results.map((r) => r.status)).toEqual([
-      "pass", "pass", "pass", "pass", "pass", "fail", "unchecked", "unchecked", "unchecked", "unchecked",
+      "pass", "pass", "pass", "pass", "pass", "fail", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked",
     ]);
     expect(results[5]).toEqual({ step: "Holder consent", status: "fail", detail: "Consent does not match the canonical action" });
   });
@@ -514,5 +516,61 @@ describe("gate-signed funds view", () => {
       p.funds = { ...(p.funds as object), kind: "bank" };
     };
     expect((await failed(await resign(odd, RECEIPT_ZKTLS)))?.detail).toBe("receipt: sd.funds.kind malformed");
+  });
+});
+
+const ZK_REF = "ev:zktls-attestation:c1cda26362828b69266512052b97cb37";
+const COOP_REF = "ev:cooperative-signed:c97da00074742018dff37a1130a145f3";
+const funds = (change: Record<string, unknown> | null) => (p: Record<string, unknown>) => {
+  p.funds = change === null ? null : { ...(p.funds as object), ...change };
+};
+
+describe("funds proof step", () => {
+  it("binds a zkTLS presentation the desk checked", async () => {
+    const results = await verifyReceipt(JSON.parse(RECEIPT_ZKTLS), TRUST);
+    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(results.at(-1)).toEqual({
+      step: "Funds proof",
+      status: "pass",
+      detail: `ZKTLS presentation ${ZK_REF} of sandbox.increase.com, checked by the desk's verifier with notary key 02989c0b76cb…; this browser checks its binding to the certificate, not the TLS proof`,
+    });
+  });
+
+  it.each([
+    [null, "Funds evidence was removed from the receipt"],
+    [{ evidence_ref: "ev:zktls-attestation:00000000000000000000000000000000" }, "Funds evidence is not among the certified evidence"],
+    [{ kind: "cooperative" }, "Funds kind does not match its evidence reference"],
+    [{ presentation_sha256: "0".repeat(64) }, "Funds proof digest does not match its reference"],
+    [{ server_name: "api.increase.com" }, "Funds proof was not made against sandbox.increase.com"],
+    [{ notary_key: null }, "Funds proof is malformed"],
+    [{ notary_key: "02989c0b76cb" }, "Funds proof is malformed"],
+    [{ notary_key: "04989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f" }, "Funds proof is malformed"],
+    [{ notary_key: "02989C0B76CB563971FDC9BEF31EC06C3560F3249D6EE9E5D83C57625596E05F6F" }, "Funds proof is malformed"],
+    [{ session_time: null }, "Funds proof is malformed"],
+  ])("a gate-signed funds view %j fails the funds step", async (change, detail) => {
+    const results = await verifyReceipt(JSON.parse(await resign(funds(change), RECEIPT_ZKTLS)), TRUST);
+    expect(results.at(-1)).toEqual({ step: "Funds proof", status: "fail", detail });
+    expect(results.slice(0, -1).every((r) => r.status === "pass")).toBe(true);
+  });
+
+  it("refuses a funds view edited without the gate key", async () => {
+    const r = JSON.parse(RECEIPT_ZKTLS);
+    const [token, ...rest] = r.sd.split("~");
+    const [h, p, sig] = token.split(".");
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64(p.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (p.length % 4)) % 4))));
+    payload.funds = null;
+    const edited = btoa(JSON.stringify(payload)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    r.sd = [`${h}.${edited}.${sig}`, ...rest].join("~");
+    expect((await failed(JSON.stringify(r)))?.detail).toBe("Disclosures do not verify (sd-jwt: bad signature)");
+  });
+
+  it("labels a cooperative statement as not a bank proof", async () => {
+    const results = await verifyReceipt(JSON.parse(RECEIPT_COOP), TRUST);
+    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(results.at(-1)).toEqual({
+      step: "Funds proof",
+      status: "pass",
+      detail: `COOPERATIVE statement ${COOP_REF}, signed by the desk; not a bank proof`,
+    });
   });
 });

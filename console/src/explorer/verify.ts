@@ -16,6 +16,7 @@ export const STEPS = [
   "Registry seal",
   "Reasoning anchor",
   "Bank transfer",
+  "Funds proof",
 ] as const;
 
 export type StepName = (typeof STEPS)[number];
@@ -97,6 +98,13 @@ const short = (value: unknown) => `${shown(value).slice(0, 12)}…`;
 // The only bank a sandbox claim may name, and the shape of the transfer ids it issues.
 const SANDBOX_PROVIDER = "increase";
 const INCREASE_TRANSFER = /^(?:sandbox_)?account_transfer_[A-Za-z0-9]{1,64}$/;
+
+// The only server a zkTLS funds proof may name, and the evidence prefix of each funds kind.
+const ZKTLS_SERVER = "sandbox.increase.com";
+const FUNDS_PREFIX = { cooperative: "ev:cooperative-signed:", zktls: "ev:zktls-attestation:" } as const;
+const BOUND_PREFIXES = ["ev:holder-intent:", ...Object.values(FUNDS_PREFIX)];
+// The desk's notary key: a compressed secp256k1 point in lowercase hex.
+const NOTARY_KEY = /^0[23][0-9a-f]{64}$/;
 
 function own(obj: Record<string, unknown>, key: string): unknown {
   return Object.hasOwn(obj, key) ? obj[key] : undefined;
@@ -329,6 +337,28 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
       return `SANDBOX transfer ${bank.transfer_id} at ${SANDBOX_PROVIDER}, requested under this certificate; the gate signs this claim, and the id is checkable in the Increase sandbox dashboard of the account that holds the key`;
     }
     return `SIMULATED ledger payment ${bank.transfer_id}, requested under this certificate; no bank holds it`;
+  },
+
+  // The gate signs the funds view; this step checks it against the certified evidence, not the TLS proof itself.
+  "Funds proof": async (ctx) => {
+    const d = ctx.get("disclosed");
+    const f = d.funds;
+    const refs = d.cava.evidence_refs;
+    if (f === null) {
+      if (refs.some((ref) => BOUND_PREFIXES.some((prefix) => ref.startsWith(prefix)))) {
+        throw new Fail("Funds evidence was removed from the receipt");
+      }
+      return "No funds evidence: this payment was not bound to a holder intent";
+    }
+    if (!refs.includes(f.evidence_ref)) throw new Fail("Funds evidence is not among the certified evidence");
+    if (!f.evidence_ref.startsWith(FUNDS_PREFIX[f.kind])) throw new Fail("Funds kind does not match its evidence reference");
+    if (f.kind === "cooperative") return `COOPERATIVE statement ${f.evidence_ref}, signed by the desk; not a bank proof`;
+    if (f.presentation_sha256 === null || f.evidence_ref !== `${FUNDS_PREFIX.zktls}${f.presentation_sha256.slice(0, 32)}`) {
+      throw new Fail("Funds proof digest does not match its reference");
+    }
+    if (f.server_name !== ZKTLS_SERVER) throw new Fail(`Funds proof was not made against ${ZKTLS_SERVER}`);
+    if (f.notary_key === null || !NOTARY_KEY.test(f.notary_key) || f.session_time === null) throw new Fail("Funds proof is malformed");
+    return `ZKTLS presentation ${f.evidence_ref} of ${ZKTLS_SERVER}, checked by the desk's verifier with notary key ${f.notary_key.slice(0, 12)}…; this browser checks its binding to the certificate, not the TLS proof`;
   },
 };
 

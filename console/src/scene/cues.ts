@@ -103,7 +103,7 @@ function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
           alert: `denied · ${s.reason ?? s.status}${lat(line.event)}`,
         };
       }
-      if (s.step === "intent" && s.status === "signed") {
+      if (s.step === "intent" && (s.status === "signed" || s.status === "proven")) {
         return { ...base, ...walker("holder"), route: "none", seal: null, outcome: "note", bubble: clip(`Holder signed: ${s.summary}`) };
       }
       if (s.status === "quoted") {

@@ -15,7 +15,9 @@ function deskText(line: Extract<ConsoleLine, { source: "desk" }>): string {
   const s = line.subject;
   const reason = reasonOf(line);
   if (s.step === "intent") {
-    return s.status === "signed" ? `Holder signed intent: ${s.summary}` : `Intent refused: ${reason}`;
+    if (s.status === "signed") return `Holder signed intent: ${s.summary}`;
+    if (s.status === "proven") return `Bank balance proven (zkTLS): ${s.summary}`;
+    return reason.startsWith("zktls:") ? `Funds proof refused: ${reason}` : `Intent refused: ${reason}`;
   }
   if (s.step === "quote") {
     return s.quote_id === null || s.status !== "quoted"

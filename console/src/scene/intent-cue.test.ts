@@ -22,3 +22,7 @@ test("a refused intent is the holder's denial, not the agent's", () => {
   const c = cueFor(intentLine("denied", "intent: bad signature"));
   expect([c.actor, c.route, c.seal, c.outcome, c.alert]).toEqual(["holder", "none", "deny", "deny", "denied · intent: bad signature"]);
 });
+
+test("treats a proven bank balance like a signed intent", () => {
+  expect(cueFor(intentLine("proven", null))).toEqual(cueFor(intentLine("signed", null)));
+});

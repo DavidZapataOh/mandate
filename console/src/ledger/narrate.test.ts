@@ -40,6 +40,22 @@ describe("gameText", () => {
       "Intent refused: intent: bad signature",
     ],
     [
+      "bank balance proven",
+      patch(CONFIRM, { event: null, forensic: null }, {
+        step: "intent", status: "proven", quote_id: null, payment_id: null, reason: null,
+        summary: "Pay 200.00 USD to acme-991 (ref A-991) from checking-881",
+      }),
+      "Bank balance proven (zkTLS): Pay 200.00 USD to acme-991 (ref A-991) from checking-881",
+    ],
+    [
+      "funds proof refused",
+      patch(CONFIRM, { event: null, forensic: null }, {
+        step: "intent", status: "denied", quote_id: null, payment_id: null,
+        reason: "zktls: stale session",
+      }),
+      "Funds proof refused: zktls: stale session",
+    ],
+    [
       "paid",
       CONFIRM,
       "Paid ✓ MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881 in 61µs",

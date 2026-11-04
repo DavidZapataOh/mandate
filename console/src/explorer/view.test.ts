@@ -75,14 +75,14 @@ describe("explorer page", () => {
     await verify("pay:000001");
     expect(verdict()).toBe("VERIFIED, FIELDS WITHHELD");
     expect(document.getElementById("verdict")!.dataset.verdict).toBe("withheld");
-    expect(marks()).toEqual(["PASS", "PASS", "PASS", "WITHHELD", "PASS", "WITHHELD", "PASS", "PASS", "PASS", "PASS"]);
+    expect(marks()).toEqual(["PASS", "PASS", "PASS", "WITHHELD", "PASS", "WITHHELD", "PASS", "PASS", "PASS", "PASS", "PASS"]);
     expect(seen).toEqual(["/api/keys", "/api/receipt/pay%3A000001"]);
     expect([...document.querySelectorAll("#reveals dt")].map((d) => d.textContent)).toEqual([
       "Amount", "Payee account", "Debit account", "Reference", "Payment and quote ids", "Consent key (this payment only)",
       "Holder public key", "Sealed at (unix seconds)", "Bank transfer",
     ]);
     expect(revealed().slice(0, 2)).toEqual([WITHHELD, WITHHELD]);
-    expect(document.querySelectorAll("#never li")).toHaveLength(5);
+    expect(document.querySelectorAll("#never li")).toHaveLength(6);
     expect(document.getElementById("limits")!.textContent).toBe(
       "Receipts share no holder key: each payment is signed by a key used once, and the holder's own key appears only when the holder discloses it. The gate that issued a receipt can still link it to its holder. A withheld field cannot be confirmed by guessing: the certificate's action hash is salted.",
     );
@@ -117,7 +117,7 @@ describe("explorer page", () => {
     await verify("pay:000001");
     await explorer.holderCopy();
     expect(verdict()).toBe("VERIFIED");
-    expect(marks()).toEqual(Array(10).fill("PASS"));
+    expect(marks()).toEqual(Array(11).fill("PASS"));
     expect(seen.at(-1)).toBe("/api/receipt/pay%3A000001?disclose=all");
     expect(revealed().slice(0, 2)).toEqual(["200.00 USD", "acme-991"]);
   });
@@ -150,7 +150,7 @@ describe("explorer page", () => {
     await verify(forge("amount_cents", 2000000));
     expect(verdict()).toBe("NOT VERIFIED");
     expect(verdictText()).toBe("Failed at Receipt disclosures: Disclosures do not verify (sd-jwt: disclosure not referenced)");
-    expect(marks()).toEqual(["PASS", "PASS", "FAIL", ...Array(7).fill("NOT CHECKED")]);
+    expect(marks()).toEqual(["PASS", "PASS", "FAIL", ...Array(8).fill("NOT CHECKED")]);
     expect(document.querySelector('#steps li[data-status="fail"]')?.getAttribute("data-step")).toBe("Receipt disclosures");
   });
 
@@ -256,7 +256,7 @@ describe("explorer page", () => {
     waiting[0]!.release();
     await first;
     expect(verdict()).toBe("VERIFIED");
-    expect(marks()).toEqual(Array(10).fill("PASS"));
+    expect(marks()).toEqual(Array(11).fill("PASS"));
     expect(revealed().slice(0, 2)).toEqual(["200.00 USD", "acme-991"]);
     expect(document.querySelectorAll("#reveals dt")).toHaveLength(9);
     // The superseded lookup leaves no payment id behind for the holder copy.

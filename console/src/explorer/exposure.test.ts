@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64 } from "./bytes";
-import { AUDITOR, CONSENT_KEY, GATE_KEY, HOLDER_KEY, RECEIPT } from "./__fixtures__/receipts";
+import { AUDITOR, CONSENT_KEY, GATE_KEY, HOLDER_KEY, RECEIPT, RECEIPT_ZKTLS } from "./__fixtures__/receipts";
 import { exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
 import { parseReceipt, type Receipt } from "./receipt";
 import { disclosedOf } from "./verify";
@@ -49,8 +49,16 @@ describe("exposure", () => {
     expect(exposure(r, { ...d, bank })).toContainEqual(["Bank transfer", "SANDBOX increase account_transfer_x (complete)"]);
   });
 
-  it("says no receipt carries the bank API key", () => {
-    expect(NEVER_IN_A_RECEIPT.at(-1)).toBe("The bank API key");
+  it("says no receipt carries the bank API key or the bank balance", () => {
+    expect(NEVER_IN_A_RECEIPT.slice(-2)).toEqual(["The bank API key", "Your bank balance"]);
+  });
+
+  it("names the funds proof of a bound payment", async () => {
+    const r = parseReceipt(JSON.parse(RECEIPT_ZKTLS));
+    const d = (await disclosedOf(r, fromBase64(GATE_KEY)))!;
+    expect(exposure(r, d)).toContainEqual([
+      "Funds proof", "ZKTLS ev:zktls-attestation:c1cda26362828b69266512052b97cb37",
+    ]);
   });
 
   it("pads cents", async () => {
