@@ -988,3 +988,73 @@ def test_a_lost_sandbox_answer_replayed_by_the_sdk_is_a_paid_confirm(
         ("execution", _body(held["id"], "q:000001", "ok: executed", "confirmed"))
     )
     assert desk.proof_receipt(held["id"]) is not None
+
+
+def test_a_sandbox_answer_that_is_not_a_transfer_leaves_the_intent_unsettled(
+    make_desk, sign_quote
+):
+    html = httpx.Response(
+        200, text="<html>ok</html>", headers={"content-type": "text/html"}
+    )
+    nothing = (200, {"data": [], "next_cursor": None})
+    cassette = Cassette("balance_lookup", html, nothing)
+    accounts = {"checking-881": "account_payer", "acme-991": "account_payee"}
+    desk, holder = make_desk(
+        intents=(DEMO_INTENT,), bank=IncreaseRail(cassette.client(), accounts)
+    )
+    q = _bound(desk)
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    first = desk.confirm(q["quote_id"])
+    assert (first["status"], first["reason"], first["payment_id"]) == (
+        "denied",
+        "bank: outcome unknown",
+        None,
+    )
+    receipt = desk.intent_receipt("i:000001")
+    assert (receipt["status"], receipt["idempotency_key"]) == ("unsettled", FIRST_KEY)
+    again = _confirm_again(desk, holder, sign_quote)
+    assert again["reason"] == "intent: unsettled"
+    posts = [r for r in cassette.requests if r.method == "POST"]
+    assert [r.headers["idempotency-key"] for r in posts] == [FIRST_KEY]
+    assert desk.registry.root() == _root(
+        ("denial", _body(None, "q:000001", "bank: outcome unknown", "denied")),
+        ("denial", _body(None, "q:000002", "intent: unsettled", "denied")),
+    )
+
+
+def test_an_unexpected_error_paying_an_intent_leaves_it_unsettled(
+    make_desk, sign_quote, caplog
+):
+    rail = RecordingRail(AttributeError("acme-991 secret detail"), balance=50000)
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=rail)
+    q = _bound(desk)
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    with caplog.at_level("ERROR", logger="swarm.desk"):
+        first = desk.confirm(q["quote_id"])
+    denied = {
+        "status": "denied",
+        "quote_id": "q:000001",
+        "reason": "bank: outcome unknown",
+        "payment_id": None,
+    }
+    assert first == denied
+    assert desk.status("q:000001") == denied
+    assert desk.confirm("q:000001") == denied
+    assert "AttributeError" in caplog.text
+    assert "secret" not in caplog.text
+    receipt = desk.intent_receipt("i:000001")
+    assert (receipt["status"], receipt["idempotency_key"]) == ("unsettled", FIRST_KEY)
+    assert rail.calls[0][2] == FIRST_KEY
+    assert desk.registry.root() == _root(
+        ("denial", _body(None, "q:000001", "bank: outcome unknown", "denied"))
+    )
+    assert desk.latest_seal()["seq_to"] == 1
+    assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
+    assert len(rail.calls) == 1
+    rail.found = True
+    settled = desk.reconcile("i:000001")
+    assert (settled["status"], settled["payment_id"]) == (
+        "paid",
+        "account_transfer_t1",
+    )
+    assert rail.lookups[0][1:] == rail.calls[0][1:]

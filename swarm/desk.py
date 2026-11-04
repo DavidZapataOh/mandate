@@ -10,8 +10,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-import jwt
-
 from bank.api import PaymentRequest, RailError
 from bank.rail import SANDBOX, BankRail, idempotency_key
 from bank.verifier import Verifier, action_commitment
@@ -31,8 +29,8 @@ from gate.consent import (
 from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule
 from gate.registry import Anchor, LogEntry, Registry
-from gate.shim import Mode, RawCall
-from mandate.client import RunRequest, RunResult, run_governed, to_proposed
+from gate.shim import Mode, RawCall, canonize
+from mandate.client import RunRequest, run_governed, to_proposed
 from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
 from swarm.intent import IntentError, confirmed_intent, intent_hash
 from swarm.meta_client import reasoning_commitment
@@ -720,6 +718,7 @@ class PaymentDesk:
         else:
             intent = bound.intent
             refs = (quote_id, bound.intent_ref, bound.funds_ref)
+        salt = self._action_salts()
         request = RunRequest(
             call=RawCall(
                 runtime="mcp",
@@ -744,14 +743,21 @@ class PaymentDesk:
             nonce=self._nonces(),
             timestamp=now,
             scope=PAY_SCOPE,
-            salt=self._action_salts(),
+            salt=salt,
             reasoning_commitment=reasoning_commitment(()),
             revocation_index=record.number % _REVOCATION_BITS,
             consent=c,
             holder_keys=self._holders,
             consents=self._ledger,
         )
-        outcome = run_governed(request, self.bank, self._verifier)
+        try:
+            outcome = run_governed(request, self.bank, self._verifier)
+        except Exception as exc:
+            # Only the type: a message could carry consent fields or keys.
+            _log.error(
+                "payment outcome unknown for %s (%s)", quote_id, type(exc).__name__
+            )
+            return self._unknown_outcome(quote_id, record, bound, request, salt)
         paid = outcome.reason == "ok: executed" and outcome.payment is not None
         payment_id = outcome.payment.payment_id if paid and outcome.payment else None
         result: dict[str, Any] = {
@@ -767,9 +773,7 @@ class PaymentDesk:
             if bound is not None:
                 bound.payment_id = payment_id
         elif bound is not None and outcome.reason in _UNSETTLED:
-            bound.unsettled = _unsettled(quote_id, c, outcome, now)
-            if bound.unsettled is None:
-                _log.error("unsettled %s left without its idempotency key", quote_id)
+            bound.unsettled = _unsettled(quote_id, c, request, salt, outcome.reason)
         body = _result_body(result)
         kind = "execution" if paid else "denial"
         seq, seal = self._append(kind, body)
@@ -817,6 +821,32 @@ class PaymentDesk:
                 payment=outcome.payment,
             )
         self._emit("confirm", result, c, outcome.event, forensic)
+        return dict(result)
+
+    def _unknown_outcome(
+        self,
+        quote_id: str,
+        record: _Quote,
+        bound: _Intent | None,
+        request: RunRequest,
+        salt: bytes,
+    ) -> dict[str, Any]:
+        """Close a confirm whose run failed: the bank may hold the transfer."""
+        reason = "bank: outcome unknown"
+        result: dict[str, Any] = {
+            "status": "denied",
+            "quote_id": quote_id,
+            "reason": reason,
+            "payment_id": None,
+        }
+        record.status = "denied"
+        record.result = result
+        if bound is not None:
+            bound.unsettled = _unsettled(
+                quote_id, record.consent, request, salt, reason
+            )
+        self._append("denial", _result_body(result))
+        self._emit("confirm", result, record.consent)
         return dict(result)
 
     def _emit(
@@ -877,13 +907,15 @@ class PaymentDesk:
 
 
 def _unsettled(
-    quote_id: str, consent: Consent, outcome: RunResult, outcome_time: int
-) -> _Unsettled | None:
-    """What a later lookup needs to settle the transfer this outcome left open."""
-    if not (outcome.certificate and outcome.action and outcome.salt):
-        return None
-    # The desk's own gate signed the certificate moments ago.
-    claims = jwt.decode(outcome.certificate, options={"verify_signature": False})
+    quote_id: str, consent: Consent, request: RunRequest, salt: bytes, reason: str
+) -> _Unsettled:
+    """What a later lookup needs to settle the transfer a run left open.
+
+    Everything comes from the run's own inputs, so it is known even when the
+    run failed before it returned: the certificate's id is the run's nonce,
+    and the action hash is the canonized call under the run's salt.
+    """
+    action = canonize(request.call, request.nonce, request.timestamp)
     return _Unsettled(
         quote_id=quote_id,
         request=PaymentRequest(
@@ -893,10 +925,10 @@ def _unsettled(
             currency=consent.currency,
             ref=consent.reference,
         ),
-        action_hash=action_commitment(to_proposed(outcome.action), outcome.salt),
-        key=idempotency_key(claims["jti"]),
-        reason=outcome.reason,
-        since=outcome_time,
+        action_hash=action_commitment(to_proposed(action), salt),
+        key=idempotency_key(request.nonce),
+        reason=reason,
+        since=request.now,
     )
 
 

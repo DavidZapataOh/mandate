@@ -10,9 +10,9 @@ from increase import (
     APIConnectionError,
     APIStatusError,
     AuthenticationError,
+    DefaultHttpxClient,
     IdempotencyKeyAlreadyUsedError,
     Increase,
-    InternalServerError,
     InvalidOperationError,
     PermissionDeniedError,
     RateLimitError,
@@ -49,13 +49,21 @@ def sandbox_client(
 
     The base URL is explicit because the SDK reads ``INCREASE_BASE_URL`` from the
     environment when none is given, which would send the key to another host.
+    Redirects are never followed, not even on a transport passed in: a 3xx is
+    no answer about the transfer, and following it could end in a 200 that is
+    not one.
 
     Args:
         api_key: Sandbox API key.
-        http_client: Optional transport, used to record answers.
+        http_client: Optional transport, used to record answers; it is set
+            not to follow redirects.
         max_retries: Automatic retries on transient failures; each resends
             the same idempotency key.
     """
+    if http_client is None:
+        http_client = DefaultHttpxClient(follow_redirects=False)
+    else:
+        http_client.follow_redirects = False
     return Increase(
         api_key=api_key,
         base_url=SANDBOX_URL,
@@ -144,7 +152,9 @@ class IncreaseRail:
         bank can hold a transfer under this key only because this certificate
         asked for it: a replayed answer (the SDK resending after a lost
         response) is this certificate's own transfer, paid when it matches the
-        request. When no answer comes at all, one lookup by the key settles it.
+        request. Only a 4xx carrying a parsed error is a definite refusal. Any
+        other failure, or a 2xx or 3xx that is not a transfer, is no usable
+        answer, and one lookup by the key settles it.
 
         Args:
             request: The payment to execute.
@@ -171,7 +181,7 @@ class IncreaseRail:
         # `from None` keeps SDK messages, which echo the request, out of
         # tracebacks shown to users.
         try:
-            transfer = self._client.account_transfers.create(
+            answer: object = self._client.account_transfers.create(
                 account_id=source,
                 amount=request.amount_cents,
                 description=description,
@@ -179,20 +189,29 @@ class IncreaseRail:
                 require_approval=False,
                 idempotency_key=idempotency_key,
             )
-        except IdempotencyKeyAlreadyUsedError:
-            raise ReplayError(idempotency_key) from None
-        except InvalidOperationError:
-            if self.get_balance(request.from_acct) < request.amount_cents:
-                raise ValueError(f"insufficient funds: {request.from_acct}") from None
-            raise RailError("bank: refused") from None
-        except (APIConnectionError, InternalServerError):
-            transfer = None
-        except (AuthenticationError, PermissionDeniedError, RateLimitError):
-            raise RailError("bank: unavailable") from None
-        except APIStatusError:
-            raise RailError("bank: refused") from None
-        if transfer is not None:
-            return self._paid(transfer, request, action_hash, idempotency_key)
+        except APIStatusError as exc:
+            if not _refusal(exc):
+                answer = None
+            elif isinstance(exc, IdempotencyKeyAlreadyUsedError):
+                raise ReplayError(idempotency_key) from None
+            elif isinstance(exc, InvalidOperationError):
+                if self.get_balance(request.from_acct) < request.amount_cents:
+                    raise ValueError(
+                        f"insufficient funds: {request.from_acct}"
+                    ) from None
+                raise RailError("bank: refused") from None
+            elif isinstance(
+                exc, (AuthenticationError, PermissionDeniedError, RateLimitError)
+            ):
+                raise RailError("bank: unavailable") from None
+            else:
+                raise RailError("bank: refused") from None
+        except Exception:
+            # No answer, or one the SDK could not read: the bank may still
+            # have committed the transfer.
+            answer = None
+        if isinstance(answer, AccountTransfer):
+            return self._paid(answer, request, action_hash, idempotency_key)
         found = self.reconcile(request, action_hash, idempotency_key)
         if found is None:
             raise RailError("bank: outcome unknown")
@@ -214,17 +233,24 @@ class IncreaseRail:
 
         Raises:
             RailError: ``bank: outcome unknown`` when the lookup itself gets
-                no answer; ``bank: not complete`` or ``bank: transfer differs``
+                no answer, or one that is not a list of transfers; ``bank: not
+                complete`` or ``bank: transfer differs``
                 for a transfer that cannot count as this payment.
             ValueError: If an account is unknown.
         """
         try:
             page = self._client.account_transfers.list(idempotency_key=idempotency_key)
-        except (APIConnectionError, APIStatusError):
+            held: object = page.data
+        except Exception:
             raise RailError("bank: outcome unknown") from None
-        if not page.data:
+        # Only a list read as transfers can say the bank holds none.
+        if not isinstance(held, list):
+            raise RailError("bank: outcome unknown")
+        if not held:
             return None
-        return self._paid(page.data[0], request, action_hash, idempotency_key)
+        if not isinstance(held[0], AccountTransfer):
+            raise RailError("bank: outcome unknown")
+        return self._paid(held[0], request, action_hash, idempotency_key)
 
     def _paid(
         self,
@@ -284,6 +310,15 @@ class IncreaseRail:
             return self._client.accounts.balance(account_id).available_balance
         except (APIConnectionError, APIStatusError):
             raise RailError("bank: unavailable") from None
+
+
+def _refusal(exc: APIStatusError) -> bool:
+    """Tell whether a status error is the bank definitely refusing the call.
+
+    Only a 4xx whose body parsed into an error says nothing was made; a 3xx,
+    a 5xx or an unreadable 4xx may come from something other than the bank.
+    """
+    return 400 <= exc.status_code < 500 and isinstance(exc.body, Mapping)
 
 
 def ensure_accounts(

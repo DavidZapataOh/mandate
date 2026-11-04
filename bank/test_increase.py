@@ -428,3 +428,95 @@ def test_account_id_names_the_bank_id_of_a_demo_account():
     assert rail.account_id("checking-881") == "account_payer"
     with pytest.raises(ValueError, match="^unknown account: acme-991$"):
         rail.account_id("acme-991")
+
+
+HTML = httpx.Response(
+    200, text="<html>ok</html>", headers={"content-type": "text/html"}
+)
+NOT_TRANSFERS = [
+    pytest.param(HTML, id="html"),
+    pytest.param(
+        httpx.Response(
+            200, content=b"not json", headers={"content-type": "application/json"}
+        ),
+        id="unparsable-json",
+    ),
+    pytest.param((200, []), id="json-list"),
+    pytest.param(
+        httpx.Response(302, headers={"location": "https://sandbox.increase.com/x"}),
+        id="redirect",
+    ),
+    pytest.param(
+        httpx.Response(
+            400, text="<html>no</html>", headers={"content-type": "text/html"}
+        ),
+        id="unparsed-4xx",
+    ),
+]
+
+
+@pytest.mark.parametrize("answer", NOT_TRANSFERS)
+def test_an_answer_that_is_not_a_transfer_is_settled_by_the_lookup(answer):
+    rail, cassette = _rail(answer, _listed(_transfer()))
+    payment = rail.execute(REQUEST, "h1", KEY)
+    assert payment.payment_id == recorded("account_transfer")["body"]["id"]
+    assert [(r.method, r.url.path) for r in cassette.requests] == [
+        ("POST", "/account_transfers"),
+        ("GET", "/account_transfers"),
+    ]
+    assert dict(cassette.requests[1].url.params) == {"idempotency_key": KEY}
+
+
+@pytest.mark.parametrize("answer", NOT_TRANSFERS)
+def test_an_answer_that_is_not_a_transfer_with_nothing_found_is_unknown(answer):
+    rail, cassette = _rail(answer, _listed())
+    with pytest.raises(RailError, match="^bank: outcome unknown$"):
+        rail.execute(REQUEST, "h1", KEY)
+    assert len(cassette.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        pytest.param(HTML, id="html"),
+        pytest.param((200, []), id="json-list"),
+        pytest.param((200, {"data": "x"}), id="data-not-a-list"),
+        pytest.param((200, {"data": [1], "next_cursor": None}), id="not-a-transfer"),
+        pytest.param(
+            httpx.Response(302, headers={"location": "https://sandbox.increase.com/"}),
+            id="redirect",
+        ),
+    ],
+)
+def test_a_lookup_answer_that_is_not_a_transfer_list_is_unknown(answer):
+    rail, cassette = _rail(answer)
+    with pytest.raises(RailError, match="^bank: outcome unknown$"):
+        rail.reconcile(REQUEST, "h1", KEY)
+    assert len(cassette.requests) == 1
+
+
+def test_the_client_never_follows_a_redirect():
+    assert sandbox_client(SENTINEL_KEY)._client.follow_redirects is False
+    seen: list[httpx.Request] = []
+    answers = iter(
+        [
+            httpx.Response(307, headers={"location": "https://elsewhere.example/t"}),
+            HTML,
+            httpx.Response(200, json={"data": [], "next_cursor": None}),
+        ]
+    )
+
+    def answer(request):
+        seen.append(request)
+        return next(answers)
+
+    following = httpx.Client(
+        transport=httpx.MockTransport(answer), follow_redirects=True
+    )
+    rail = IncreaseRail(sandbox_client(SENTINEL_KEY, following), ACCOUNTS)
+    with pytest.raises(RailError, match="^bank: outcome unknown$"):
+        rail.execute(REQUEST, "h1", KEY)
+    assert [(r.method, r.url.host, r.url.path) for r in seen] == [
+        ("POST", "sandbox.increase.com", "/account_transfers"),
+        ("GET", "sandbox.increase.com", "/account_transfers"),
+    ]
