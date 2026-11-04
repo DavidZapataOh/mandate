@@ -2,12 +2,35 @@ import base64
 import hashlib
 import json
 
+import httpx2
 import pytest
-from opentimestamps.core.serialize import BytesDeserializationContext
-from opentimestamps.core.timestamp import DetachedTimestampFile
+from opentimestamps.core.notary import PendingAttestation
+from opentimestamps.core.op import OpSHA256
+from opentimestamps.core.serialize import (
+    BytesDeserializationContext,
+    BytesSerializationContext,
+)
+from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
-from gate.anchor_public import AnchorError, anchor_digest_of, stamp
-from gate.conftest import OTS, OTS_FILE, recorded_aggregators, unb64
+from gate.anchor_public import (
+    BLOCK_SOURCE,
+    AnchorError,
+    Calendar,
+    EsploraHeaders,
+    anchor_digest_of,
+    attested_heights,
+    block_hash,
+    confirm,
+    stamp,
+    upgrade,
+)
+from gate.conftest import (
+    OTS,
+    OTS_FILE,
+    RecordedCalendars,
+    recorded_aggregators,
+    unb64,
+)
 
 ROOT = "70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87"
 DIGEST = "fe28838c6cdcfc365aef8d643ea05cd90abb7e58ffe7f60dfb57ea077fcf071a"
@@ -133,3 +156,136 @@ def test_a_stamp_needs_two_calendars(up):
 def test_two_calendars_are_enough():
     (proof,) = stamp([D1], recorded_aggregators(2), lambda: b"\x01" * 16)
     assert _calendars_of(proof) == CALENDARS[:2]
+
+
+CORE = bytes.fromhex("94ec151f452a221393d08f6b02fb30baacbeb59f194611f49069e7f5509b46fe")
+PENDING = unb64(OTS["core29"]["pending"])
+UPGRADED = unb64(OTS["core29"]["upgraded"])
+HELLO = unb64(OTS["hello2015"]["proof"])
+HELLO_DIGEST = bytes.fromhex(OTS["hello2015"]["digest"])
+H18 = bytes.fromhex(OTS["core29"]["headers"]["892418"])
+H21 = bytes.fromhex(OTS["core29"]["headers"]["892421"])
+H15 = bytes.fromhex(OTS["hello2015"]["header"])
+FLIPPED = H18[:-1] + bytes([H18[-1] ^ 1])
+HASH18 = "0000000000000000000167a45f26c2afb6a0df3009f8241a647b950a79e3da58"
+
+
+def test_upgrade_matches_the_reference_client():
+    calendars = RecordedCalendars(OTS["core29"]["answers"])
+    assert upgrade(PENDING, calendars.for_uri) == UPGRADED
+    assert sorted(calendars.asked) == CALENDARS
+
+
+def test_attested_heights_are_the_blocks_ots_info_names():
+    assert attested_heights(UPGRADED) == [892418, 892421, 892459, 892534]
+    assert attested_heights(PENDING) == []
+
+
+def test_one_round_asks_each_calendar_once_per_commitment():
+    nonces = iter([b"\x01" * 16, b"\x02" * 16])
+    first, second = stamp([D1, D2], recorded_aggregators(), lambda: next(nonces))
+    calendars, cache = RecordedCalendars({}), {}
+    assert upgrade(first, calendars.for_uri, cache) == first
+    assert upgrade(second, calendars.for_uri, cache) == second
+    assert sorted(calendars.asked) == CALENDARS
+
+
+class _BrokenCalendar:
+    """A calendar whose answer is neither a timestamp nor a not-found."""
+
+    def submit(self, digest: bytes, timeout: float | None = None) -> Timestamp:
+        raise RuntimeError("calendar answered 502")
+
+    def get_timestamp(
+        self, commitment: bytes, timeout: float | None = None
+    ) -> Timestamp:
+        raise RuntimeError("calendar answered 502")
+
+
+def test_one_broken_calendar_does_not_stop_the_others():
+    calendars = RecordedCalendars(OTS["core29"]["answers"])
+    broken = sorted(CALENDARS)[0]
+
+    def calendar_for(uri: str) -> Calendar:
+        return _BrokenCalendar() if uri == broken else calendars.for_uri(uri)
+
+    upgraded = upgrade(PENDING, calendar_for)
+    assert upgraded != PENDING
+    assert attested_heights(upgraded) != []
+    assert upgrade(PENDING, lambda uri: _BrokenCalendar()) == PENDING
+
+
+def test_upgrade_never_asks_a_calendar_off_the_whitelist():
+    lone = DetachedTimestampFile(OpSHA256(), Timestamp(D1))
+    lone.timestamp.attestations.add(PendingAttestation("https://calendar.example.com"))
+    ctx = BytesSerializationContext()
+    lone.serialize(ctx)
+    calendars = RecordedCalendars({})
+    assert upgrade(ctx.getbytes(), calendars.for_uri) == ctx.getbytes()
+    assert calendars.asked == []
+
+
+def test_confirm_returns_the_block_time():
+    assert confirm(UPGRADED, CORE, 892418, H18) == 1744655054
+    assert block_hash(H18) == HASH18
+
+
+@pytest.mark.parametrize(
+    ("proof", "digest", "height", "header", "reason"),
+    [
+        (UPGRADED, D1, 892418, H18, "proof is not over this seal's anchor digest"),
+        (b"not a proof", CORE, 892418, H18, "proof malformed"),
+        (
+            HELLO, HELLO_DIGEST, 358391, H15,
+            "proof uses an operation the explorer cannot check",
+        ),
+        (UPGRADED, CORE, 892419, H18, "proof names no Bitcoin block 892419"),
+        (UPGRADED, CORE, 892418, H18[:79], "a block header is 80 bytes"),
+        (UPGRADED, CORE, 892418, FLIPPED, "header misses its proof-of-work target"),
+        (UPGRADED, CORE, 892418, H15, "header is below the work floor"),
+        (
+            UPGRADED, CORE, 892418, H21,
+            "block header does not hold the proof's merkle root",
+        ),
+    ],
+)  # fmt: skip
+def test_confirm_refuses(proof, digest, height, header, reason):
+    with pytest.raises(AnchorError, match=f"^anchor: {reason}$"):
+        confirm(proof, digest, height, header)
+
+
+def _source(routes):
+    seen = []
+
+    def answer(request):
+        seen.append((request.method, str(request.url)))
+        status, text = routes.get(str(request.url), (404, "Block not found"))
+        return httpx2.Response(status, text=text)
+
+    client = httpx2.Client(transport=httpx2.MockTransport(answer))
+    return EsploraHeaders(client), seen
+
+
+def test_headers_come_from_the_block_source_by_height():
+    height_url = f"{BLOCK_SOURCE}/block-height/892418"
+    header_url = f"{BLOCK_SOURCE}/block/{HASH18}/header"
+    source, seen = _source({height_url: (200, HASH18), header_url: (200, H18.hex())})
+    assert source.header(892418) == H18
+    assert seen == [("GET", height_url), ("GET", header_url)]
+
+
+@pytest.mark.parametrize(
+    ("hash_answer", "header_answer", "reason"),
+    [
+        ((503, "busy"), None, "header source unavailable"),
+        ((200, "zz" * 32), None, "header source unavailable"),
+        ((200, HASH18), (200, H21.hex()), "header source answered another block"),
+    ],
+)
+def test_a_block_source_failure_is_unavailable(hash_answer, header_answer, reason):
+    routes = {f"{BLOCK_SOURCE}/block-height/892418": hash_answer}
+    if header_answer is not None:
+        routes[f"{BLOCK_SOURCE}/block/{HASH18}/header"] = header_answer
+    source, _ = _source(routes)
+    with pytest.raises(AnchorError, match=f"^anchor: {reason}$"):
+        source.header(892418)
