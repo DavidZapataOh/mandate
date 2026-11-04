@@ -1,0 +1,897 @@
+:root {
+  --ink: #0b0d10;
+  --bone: #f6f4ee;
+  --verify: #1fd598;
+  --alert: #ff5c5c;
+  --muted: #8a8f98;
+  --hairline: 1px solid rgb(246 244 238 / 0.14);
+  /* A row or strip one step off the ground, still reading as Ink. */
+  --raised: #16181c;
+  /* The register's header band. Bone on it is 5.1:1. */
+  --band: #5c5e62;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --sans: "Inter", system-ui, sans-serif;
+  --gutter: clamp(16px, 2.92vw, 48px);
+  --snap: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
+  scrollbar-color: var(--muted) var(--ink);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--bone);
+  font: 400 15px/1.4 var(--sans);
+}
+
+::selection {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ink);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: var(--bone);
+  text-underline-offset: 3px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.sr-only,
+#posture-h {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Top bar: wordmark, view name and exports, then the provenance strip. */
+.bar {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "mark name md json"
+    "prov prov state nav";
+  grid-template-rows: 86px auto;
+  align-items: center;
+  padding: 0 var(--gutter);
+}
+
+/* The one heavier rule: it closes the top bar. */
+.bar::before {
+  content: "";
+  position: absolute;
+  top: 85px;
+  right: 0;
+  left: 0;
+  border-top: 3px solid var(--muted);
+}
+
+.wordmark {
+  grid-area: mark;
+  display: block;
+  height: 50px;
+  margin-left: -6px;
+}
+
+.bar h1 {
+  grid-area: name;
+  margin-left: 32px;
+  color: var(--muted);
+  font: 700 17px/1 var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+#export-md,
+#export-json {
+  height: 44px;
+  padding: 0 22px;
+  border: 1px solid rgb(246 244 238 / 0.55);
+  border-radius: 4px;
+  background: var(--ink);
+  font: 700 16px/1 var(--sans);
+}
+
+#export-md {
+  grid-area: md;
+}
+
+#export-json {
+  grid-area: json;
+  margin-left: 14px;
+}
+
+#export-md:hover,
+#export-json:hover {
+  border-color: var(--bone);
+}
+
+#export-md:active,
+#export-json:active {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+#provenance,
+#stream-state,
+.bar nav {
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  min-height: 35px;
+  margin-top: 11px;
+  background: var(--raised);
+  font: 700 15px/1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+}
+
+#provenance {
+  grid-area: prov;
+  padding: 6px 10px;
+  overflow-wrap: anywhere;
+}
+
+#stream-state {
+  grid-area: state;
+  justify-content: flex-end;
+  padding: 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.bar nav {
+  grid-area: nav;
+  justify-content: flex-end;
+  padding: 0 10px 0 0;
+  font: 400 13px/1 var(--mono);
+}
+
+.bar nav a {
+  color: var(--muted);
+}
+
+.bar nav a:hover {
+  color: var(--bone);
+}
+
+main {
+  padding: 0 var(--gutter) 48px;
+}
+
+/* Eight metric cells divided by hairlines. */
+#tiles {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  margin-top: 13px;
+  padding-bottom: 2px;
+  border-bottom: var(--hairline);
+}
+
+#tiles article {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(40px, auto) auto 1fr auto;
+  min-height: 150px;
+  padding: 6px 8px 0 14px;
+}
+
+#tiles article + article {
+  border-left: var(--hairline);
+}
+
+#tiles h3 {
+  font: 700 15px/19px var(--sans);
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+#tiles .value {
+  align-self: center;
+  margin-top: 4px;
+  font: 700 clamp(36px, 3.34vw, 56px)/1.05 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+#tiles [data-metric="consent"] .value,
+#tiles [data-metric="attribution"] .value {
+  font-size: clamp(14px, 1.12vw, 19px);
+  letter-spacing: -0.02em;
+  white-space: normal;
+}
+
+#tiles [data-metric="latency"] .value {
+  font-size: clamp(12px, 0.9vw, 15px);
+  letter-spacing: -0.02em;
+  white-space: normal;
+}
+
+#tiles [data-metric="verified"] .value {
+  color: var(--verify);
+}
+
+#tiles [data-metric="breaches"][data-zero="false"] .value,
+#tiles [data-metric="moved"][data-zero="false"] .value {
+  color: var(--alert);
+}
+
+/* Definitions: a disclosure whose text lays over the page, so opening one never shifts the band. */
+details {
+  position: relative;
+}
+
+summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  color: rgb(246 244 238 / 0.82);
+  font: 400 15px/1.2 var(--sans);
+  cursor: pointer;
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::after {
+  content: "i";
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid currentcolor;
+  border-radius: 50%;
+  font: 700 9px/1 var(--sans);
+}
+
+summary:hover,
+details[open] > summary {
+  color: var(--bone);
+}
+
+details > .definition {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(320px, 80vw);
+  padding: 12px 14px;
+  border: 1px solid rgb(246 244 238 / 0.4);
+  background: var(--ink);
+  color: var(--bone);
+  font: 400 14px/1.45 var(--sans);
+}
+
+/* The last cells' text opens leftward so it stays on the page. */
+#tiles article:nth-child(n + 6) details {
+  position: static;
+}
+
+#tiles article:nth-child(n + 6) details > .definition {
+  top: auto;
+  right: 0;
+  left: auto;
+}
+
+#tiles details {
+  align-self: end;
+  margin-top: 8px;
+}
+
+button.drill {
+  justify-self: start;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 400 12px/1.4 var(--mono);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+button.drill:hover {
+  color: var(--bone);
+}
+
+/* Control register. */
+#controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "h disclaimer"
+    "h applicability"
+    "table table";
+  column-gap: 32px;
+  margin-top: 17px;
+}
+
+#controls-h,
+#attacks-h,
+#layers-h {
+  font: 700 18px/1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#controls-h {
+  grid-area: h;
+  align-self: center;
+}
+
+#disclaimer,
+#applicability {
+  justify-self: end;
+  color: var(--muted);
+  font: 400 13px/16px var(--sans);
+  text-align: right;
+}
+
+#disclaimer {
+  grid-area: disclaimer;
+}
+
+#applicability {
+  grid-area: applicability;
+}
+
+.register {
+  grid-area: table;
+  max-height: 213px;
+  margin-top: 4px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.register table,
+.scroll table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.register table {
+  min-width: 960px;
+  table-layout: fixed;
+}
+
+.register thead th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  height: 37px;
+  padding: 0 10px;
+  background: var(--band);
+  font: 700 12.5px/1.1 var(--sans);
+  white-space: nowrap;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.register thead th:nth-child(1) { width: 11%; }
+.register thead th:nth-child(2) { width: 27%; }
+.register thead th:nth-child(3) { width: 22%; }
+.register thead th:nth-child(4) { width: 14%; }
+.register thead th:nth-child(5) { width: 21%; }
+.register thead th:nth-child(6) { width: 5%; }
+
+.register tbody tr {
+  background: var(--raised);
+  border-top: 2px solid var(--ink);
+}
+
+.register tbody td,
+.register tbody th {
+  padding: 6px 10px;
+  font: 400 12px/1.28 var(--sans);
+  text-align: left;
+  vertical-align: top;
+}
+
+.register tbody td:first-child {
+  font: 700 15px/1.25 var(--sans);
+}
+
+/* Grouped by framework: the name is said once, at the head of its group. */
+.register tr[data-control^="NIST"] + tr[data-control^="NIST"] > td:first-child,
+.register tr[data-control^="ISO"] + tr[data-control^="ISO"] > td:first-child,
+.register tr[data-control^="EU"] + tr[data-control^="EU"] > td:first-child {
+  color: transparent;
+}
+
+.register tr[data-control^="NIST"] + tr[data-control^="ISO"],
+.register tr[data-control^="ISO"] + tr[data-control^="EU"] {
+  border-top: 1px solid rgb(246 244 238 / 0.4);
+}
+
+.register tbody th {
+  font-weight: 400;
+}
+
+.register .evidence {
+  font: 700 12px/1.28 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.register td:last-child {
+  font: 400 12px/1.28 var(--mono);
+}
+
+/* Attacks and layers side by side, split by a hairline. */
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 13px;
+  border-top: var(--hairline);
+}
+
+#attacks {
+  padding-right: 31px;
+}
+
+#layers {
+  padding-left: 33px;
+  border-left: var(--hairline);
+}
+
+#attacks,
+#layers {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "h note"
+    "table table";
+  align-items: center;
+  align-content: start;
+  column-gap: 16px;
+  padding-top: 25px;
+}
+
+#attacks-h,
+#layers-h {
+  grid-area: h;
+}
+
+#attacks .note,
+#layers .note {
+  grid-area: note;
+}
+
+#attacks .note > .definition,
+#layers .note > .definition {
+  right: 0;
+  left: auto;
+}
+
+.scroll {
+  grid-area: table;
+  margin-top: 2px;
+  overflow-x: auto;
+}
+
+/* Positioned, so the visually hidden header text scrolls and clips with its table. */
+.scroll thead th {
+  position: relative;
+  padding: 0 4px 3px;
+  color: var(--muted);
+  font: 400 10.5px/1.2 var(--mono);
+  text-align: right;
+  text-transform: uppercase;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
+.scroll thead th:first-child {
+  text-align: left;
+}
+
+.scroll tbody tr {
+  background: var(--raised);
+  border-top: 2px solid var(--ink);
+}
+
+.scroll tbody th,
+.scroll tbody td {
+  height: 22px;
+  padding: 0 4px;
+  font: 400 15px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.scroll tbody th {
+  padding-left: 10px;
+  font: 700 15px/1.2 var(--sans);
+  text-align: left;
+}
+
+/* Stopped at, and the attack kinds behind a layer, are words, not numbers. */
+#attacks tbody td:nth-child(6),
+#layers tbody td:nth-child(3) {
+  color: rgb(246 244 238 / 0.8);
+  font: 400 12.5px/1.2 var(--sans);
+}
+
+#layers tbody td:nth-child(3) {
+  white-space: normal;
+}
+
+#layers tbody td:nth-child(3) {
+  text-align: left;
+}
+
+.scroll button.drill {
+  margin: 0;
+  font-size: 11px;
+}
+
+/* An attack that got through: the counts and the cents it moved, and the words "not stopped". */
+#attacks tr[data-breach="true"] > td:nth-child(4),
+#attacks tr[data-breach="true"] > td:nth-child(5),
+#attacks .alert {
+  color: var(--alert);
+  font-weight: 700;
+}
+
+/* The lines behind a metric, each opening its forensic record. */
+#drill {
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: var(--hairline);
+  transition: opacity 180ms var(--snap);
+}
+
+@starting-style {
+  #drill {
+    opacity: 0;
+  }
+}
+
+#drill-title {
+  font: 700 22px/1.2 var(--sans);
+}
+
+#drill-title:focus {
+  outline: none;
+}
+
+#drill-title:focus-visible {
+  outline: 2px solid var(--bone);
+}
+
+#drill ol {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: var(--hairline);
+}
+
+#drill li {
+  border-top: var(--hairline);
+}
+
+#drill li > button {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+#drill li > button:hover {
+  box-shadow: inset 0 0 0 1px var(--bone);
+}
+
+#drill li > button:active {
+  background: rgb(246 244 238 / 0.06);
+}
+
+#drill li:not(:has(button)) {
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
+#drill .sentence {
+  font: 400 15px/1.4 var(--sans);
+}
+
+#drill .row {
+  color: var(--muted);
+  font: 400 13px/1.4 var(--mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* The forensic record: the main view's right-side drawer. */
+#forensic {
+  position: fixed;
+  z-index: 10;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(560px, 100%);
+  padding: 24px;
+  overflow-y: auto;
+  border-left: var(--hairline);
+  background: var(--ink);
+  color: var(--bone);
+  transition:
+    opacity 200ms var(--snap),
+    translate 200ms var(--snap);
+}
+
+@starting-style {
+  #forensic {
+    opacity: 0;
+    translate: 16px 0;
+  }
+}
+
+#forensic h2 {
+  margin: 0 0 16px;
+  font: 700 22px/1.2 var(--sans);
+}
+
+#forensic h3 {
+  margin: 24px 0 8px;
+  color: var(--muted);
+  font: 700 14px/1.2 var(--mono);
+}
+
+#forensic pre {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 400 14px/1.5 var(--mono);
+}
+
+#forensic button {
+  padding: 4px 8px;
+  border: var(--hairline);
+  background: var(--ink);
+  font: 400 14px/1.2 var(--mono);
+}
+
+#forensic button:hover {
+  border-color: var(--bone);
+}
+
+#forensic button:active {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+/* Narrow laptops keep both compact tables whole beside each other. */
+@media (max-width: 1380px) {
+  .scroll tbody th {
+    font-size: 13.5px;
+  }
+
+  .scroll tbody td {
+    font-size: 13.5px;
+  }
+
+  #attacks tbody td:nth-child(6),
+  #layers tbody td:nth-child(3) {
+    font-size: 12px;
+  }
+
+  #attacks {
+    padding-right: 20px;
+  }
+
+  #layers {
+    padding-left: 20px;
+  }
+}
+
+@media (max-width: 1100px) {
+  #tiles {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    row-gap: 16px;
+  }
+
+  #tiles article:nth-child(4n + 1) {
+    border-left: 0;
+  }
+
+  #tiles .value {
+    font-size: 44px;
+  }
+
+  #tiles [data-metric="consent"] .value,
+  #tiles [data-metric="attribution"] .value {
+    font-size: 18px;
+  }
+
+  #tiles [data-metric="latency"] .value {
+    font-size: 14px;
+  }
+
+  #tiles article:nth-child(4n) details > .definition,
+  #tiles article:nth-child(4n - 1) details > .definition {
+    right: 0;
+    left: auto;
+  }
+
+  .pair {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 24px;
+  }
+
+  #attacks {
+    padding-right: 0;
+  }
+
+  #layers {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .bar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "mark mark"
+      "name name"
+      "md json"
+      "prov prov"
+      "state nav";
+    grid-template-rows: auto;
+    row-gap: 8px;
+    padding-top: 12px;
+    padding-bottom: 8px;
+  }
+
+  .bar::before {
+    display: none;
+  }
+
+  .wordmark {
+    height: 40px;
+  }
+
+  .bar h1 {
+    margin-left: 0;
+    font-size: 14px;
+  }
+
+  #export-md,
+  #export-json {
+    height: 40px;
+    padding: 0 12px;
+    font-size: 14px;
+  }
+
+  #export-md {
+    justify-self: stretch;
+  }
+
+  #provenance {
+    margin-top: 0;
+    font-size: 13px;
+  }
+
+  #stream-state,
+  .bar nav {
+    margin-top: -8px;
+    justify-content: flex-start;
+    padding-left: 10px;
+  }
+
+  #tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #tiles article:nth-child(n) {
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  #tiles article:nth-child(2n) {
+    padding-left: 12px;
+    border-left: var(--hairline);
+  }
+
+  #tiles article:nth-child(n) details > .definition {
+    left: 0;
+    right: auto;
+    width: min(300px, 86vw);
+  }
+
+  #tiles article:nth-child(2n) details > .definition {
+    right: 0;
+    left: auto;
+  }
+
+  #controls {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "h"
+      "disclaimer"
+      "applicability"
+      "table";
+    row-gap: 6px;
+  }
+
+  #controls-h,
+  #attacks-h,
+  #layers-h {
+    font-size: 15px;
+    white-space: normal;
+  }
+
+  #disclaimer,
+  #applicability {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .register {
+    max-height: 60vh;
+  }
+
+  .scroll table {
+    min-width: 560px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}

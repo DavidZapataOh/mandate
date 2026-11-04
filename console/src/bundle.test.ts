@@ -45,7 +45,7 @@ describe("zero mock rows", () => {
       logLevel: "silent",
       build: { outDir, emptyOutDir: true },
     });
-    expect(files(outDir).map((p) => relative(outDir, p))).toEqual(expect.arrayContaining(["index.html", "explorer.html"]));
+    expect(files(outDir).map((p) => relative(outDir, p))).toEqual(expect.arrayContaining(["index.html", "explorer.html", "command.html"]));
     expect(fixtureLeaks(outDir)).toEqual([]);
   }, 30_000);
 });

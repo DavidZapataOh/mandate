@@ -43,6 +43,7 @@ from swarm.live_attack import (
     NoPlanError,
 )
 from swarm.nimbus import NimbusStep
+from swarm.provenance import provenance
 from swarm.receipt import present
 from swarm.redteam import TEMPLATES, AttackKind
 from swarm.voice import (
@@ -492,6 +493,13 @@ state is returned."""
             return JSONResponse(dict(_NOT_FOUND), status_code=404)
         return Response(console_line_json(found), media_type="application/json")
 
+    async def posture(request: Request) -> Response:
+        if hub is None:
+            return _bad_request()
+        return JSONResponse(
+            provenance(hub, desk), headers={"cache-control": "no-store"}
+        )
+
     async def attack(request: Request) -> Response:
         body = await _fields(request, "kind")
         try:
@@ -521,6 +529,7 @@ state is returned."""
             ("/api/events", events),
             ("/api/lines", lines),
             ("/api/forensic/{seq}", forensic),
+            ("/api/provenance", posture),
         ):
             _route(srv, path, "GET", _host_guard(handler, allowed_hosts))
     if attacks is not None:

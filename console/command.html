@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mandate Command</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+  </head>
+  <body>
+    <header class="bar">
+      <img class="wordmark" src="/brand/mandate-horizontal-white.svg" alt="Mandate" />
+      <h1>Command</h1>
+      <p id="stream-state" role="status">CONNECTING</p>
+      <p id="provenance"></p>
+      <nav aria-label="Console"><a href="./">Live console</a></nav>
+      <button type="button" id="export-md">Export Markdown</button>
+      <button type="button" id="export-json">Export JSON</button>
+    </header>
+    <main>
+      <section id="posture" aria-labelledby="posture-h">
+        <h2 id="posture-h">Posture</h2>
+        <div id="tiles"></div>
+      </section>
+      <section id="controls" aria-labelledby="controls-h">
+        <h2 id="controls-h">Framework mapping</h2>
+        <p id="disclaimer"></p>
+        <p id="applicability"></p>
+        <div class="register" tabindex="0" role="region" aria-labelledby="controls-h">
+          <table>
+            <thead><tr><th scope="col">Framework</th><th scope="col">Provision</th><th scope="col">Maps to (Mandate control)</th><th scope="col">Evidence in this window</th><th scope="col">Gap</th><th scope="col">Source</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+      <div class="pair">
+        <section id="attacks" aria-labelledby="attacks-h">
+          <h2 id="attacks-h">Attacks by kind</h2>
+          <details class="note"><summary>Definition</summary><p class="definition"></p></details>
+          <div class="scroll">
+            <table>
+              <thead><tr><th scope="col">Attack</th><th scope="col">Attempts</th><th scope="col">Blocked</th><th scope="col">Not blocked</th><th scope="col">Moved</th><th scope="col">Stopped at</th><th scope="col"><span class="sr-only">Lines</span></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+        <section id="layers" aria-labelledby="layers-h">
+          <h2 id="layers-h">Denials by layer</h2>
+          <details class="note"><summary>Definition</summary><p class="definition"></p></details>
+          <div class="scroll">
+            <table>
+              <thead><tr><th scope="col">Layer</th><th scope="col">Denials</th><th scope="col">Attack kinds</th><th scope="col"><span class="sr-only">Lines</span></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+      <section id="drill" aria-labelledby="drill-title" hidden>
+        <h2 id="drill-title"></h2>
+        <ol></ol>
+      </section>
+    </main>
+    <p id="drill-status" class="sr-only" role="status"></p>
+    <aside id="forensic" hidden></aside>
+    <script type="module" src="./src/command/main.ts"></script>
+  </body>
+</html>

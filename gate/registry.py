@@ -125,6 +125,10 @@ class Registry:
         """True while another entry fits within the budget."""
         return len(self._entries) < self._max_entries
 
+    def size(self) -> int:
+        """Number of appended entries."""
+        return len(self._entries)
+
     def root(self) -> str:
         """Hex Merkle root of the log (EMPTY_ROOT when empty)."""
         if not self._entries:

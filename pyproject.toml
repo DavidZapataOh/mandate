@@ -82,6 +82,7 @@ module = [
     "swarm.test_hook",
     "swarm.test_nimbus",
     "swarm.test_hub",
+    "swarm.test_provenance",
     "swarm.test_hookio",
     "swarm.test_intent",
     "swarm.test_journal_tail",

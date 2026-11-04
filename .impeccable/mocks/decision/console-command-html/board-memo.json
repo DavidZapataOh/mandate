@@ -1,0 +1,1 @@
+{"model": "muse-image-1.0", "endpoint": "/v1/images/edits", "request": "097a50e3-4ac0-49e4-b8e6-31508d2bb86c", "reference": "console/art/command-anchor.png", "prompt_file": "board-memo.prompt.txt", "approved": false}

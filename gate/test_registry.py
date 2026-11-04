@@ -128,3 +128,11 @@ def test_has_room_tracks_budget():
     assert reg.has_room() is True
     reg.append("execution", "a")
     assert reg.has_room() is False
+
+
+def test_size_counts_entries():
+    reg = Registry()
+    assert reg.size() == 0
+    reg.append("execution", '{"pay":"A-991"}')
+    reg.append("denial", '{"reason":"mismatch"}')
+    assert reg.size() == 2

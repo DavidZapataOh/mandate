@@ -1,0 +1,8 @@
+{
+  "model": "muse-image-1.0",
+  "endpoint": "/v1/images/edits",
+  "request": "9642f8d1-aa6a-4370-bf4d-f83ee9fdaf8d",
+  "reference": "console/art/command-anchor.png",
+  "prompt_file": "control-register.prompt.txt",
+  "approved": true
+}
