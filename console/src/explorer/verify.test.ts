@@ -785,7 +785,7 @@ describe("card authorization at the bank step", () => {
     const results = await verifyReceipt(JSON.parse(CARD_RECEIPT), TRUST);
     expect(results.map((r) => r.status)).toEqual(STEPS.map((s) => (s === "Public anchor" ? "unchecked" : "pass")));
     expect(results.find((r) => r.step === "Bank transfer")?.detail).toBe(
-      "SANDBOX card authorization real_time_decision_j76n2e810ezcg3zh5qtn at increase, approved under this certificate; the gate signs this claim, and the merchant settles the card payment later",
+      "SANDBOX card authorization sandbox_real_time_decision_b4ni7vda7z380dn9lb5x at increase, approved under this certificate; the gate signs this claim, and the merchant settles the card payment later",
     );
   });
 

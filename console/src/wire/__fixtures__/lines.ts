@@ -64,7 +64,7 @@ export const DEPLOY =
 
 /** A card authorization Mandate answered: the bank's decision id, byte for byte the Python golden. */
 export const CARD =
-  '{"v":3,"seq":12,"source":"desk","event":null,"meta":null,"subject":{"step":"card","quote_id":"q:000001","status":"approved","summary":"Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-991) from checking-881","payment_id":"real_time_decision_j76n2e810ezcg3zh5qtn","reason":"ok: executed"},"forensic":null}';
+  '{"v":3,"seq":12,"source":"desk","event":null,"meta":null,"subject":{"step":"card","quote_id":"q:000001","status":"approved","summary":"Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-991) from checking-881","payment_id":"sandbox_real_time_decision_b4ni7vda7z380dn9lb5x","reason":"ok: executed"},"forensic":null}';
 
 /** What the bank itself reported: Increase's event for the sandbox transfer, byte for byte the Python golden. */
 export const BANK =

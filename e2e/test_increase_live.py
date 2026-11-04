@@ -17,6 +17,7 @@ from increase import (
 
 from bank.ach import simulate
 from bank.api import PaymentRequest
+from bank.card import ensure_card, ensure_card_subscription
 from bank.conftest import DOC_EVENT, FIXTURES
 from bank.credentials import BANK_KEY_ENV, WEBHOOK_SECRET_ENV
 from bank.events import BankEvents
@@ -33,6 +34,9 @@ from gate.policy import Intent
 from gate.shim import Mode, RawCall
 from gate.state import StateStore
 from mandate.client import RunRequest, run_governed, to_proposed
+from swarm.card import CardAuthorizer, card_webhook_app, card_webhook_server
+from swarm.conftest import DEMO_INTENT
+from swarm.console_line import console_line_json
 from swarm.desk import PaymentDesk
 from swarm.flow import PAYMENTS_POLICY
 from swarm.intent import sign_intent
@@ -753,3 +757,78 @@ def test_capture_card_authorization():
         else:
             body = json.loads((FIXTURES / f"{name}.json").read_text())["body"]
             assert set(record["body"]) == set(body), name
+
+
+def _card_lines(lines):
+    return [line.subject for line in lines if line.subject.get("step") == "card"]
+
+
+@pytest.mark.live
+def test_card_authorization_end_to_end(tmp_path):
+    key = _key()
+    secret, url = _card_env()
+    client = sandbox_client(key)
+    accounts = ensure_accounts(client, CAPTURE, CAPTURE[0], 1_000_000)
+    gate_key, gate_pub = generate_keypair()
+    holder_key, holder_pub = generate_keypair()
+    store = StateStore(tmp_path / "state.db")
+    lines = []
+    desk = PaymentDesk(
+        source=CAPTURE[0],
+        bank=IncreaseRail.connect(client),
+        verifier=Verifier(gate_pub, state=store),
+        gate_key=gate_key,
+        clock=lambda: int(time.time()),
+        nonces=lambda: secrets.token_hex(16),
+        publish=lines.append,
+        state=store,
+    )
+    desk.register_holder(holder_pub)
+    signed = sign_intent(holder_key, DEMO_INTENT)
+    iid = desk.record_intent(DEMO_INTENT, signed)["intent_id"]
+    quoted = desk.quote("acme-991", 20000, "USD", "A-991", intent_id=iid)
+    consent = Consent(**quoted["consent"], signature=b"")
+    desk.approve(quoted["quote_id"], sign_approval(holder_key, consent))
+    card_id = ensure_card(client, accounts[CAPTURE[0]], CAPTURE[0])
+    authorizer = CardAuthorizer(client, desk, card_id, accounts[CAPTURE[0]], store)
+    server = card_webhook_server(
+        card_webhook_app(client, authorizer, secret), CAPTURE_PORT
+    )
+    serving = threading.Thread(target=server.run, daemon=True)
+    serving.start()
+    end = time.monotonic() + 10
+    while not server.started and time.monotonic() < end:
+        time.sleep(0.05)
+    assert server.started
+    charge = {
+        "amount": 20000,
+        "card_id": card_id,
+        "merchant_acceptor_id": "acme-991",
+        "merchant_descriptor": "ACME 991",
+    }
+    try:
+        ensure_card_subscription(client, url, secret)
+        approved = client.simulations.card_authorizations.create(**charge)
+        again = client.simulations.card_authorizations.create(**charge)
+    finally:
+        server.should_exit = True
+        serving.join(10)
+    assert approved.pending_transaction is not None
+    paid = approved.pending_transaction.source.card_authorization
+    decision_id = paid.real_time_decision_id
+    entries = [desk.registry.entry(n) for n in range(1, desk.registry.size() + 1)]
+    sealed = [json.loads(e.body) for e in entries if e.kind == "execution"]
+    assert [entry["payment_id"] for entry in sealed] == [decision_id]
+    assert desk.status(quoted["quote_id"])["status"] == "confirmed"
+    assert again.declined_transaction is not None
+    refused = again.declined_transaction.source.card_decline
+    assert refused.reason == "webhook_declined"
+    answers = _card_lines(lines)
+    assert [(a["status"], a["payment_id"]) for a in answers] == [
+        ("approved", decision_id),
+        ("declined", refused.real_time_decision_id),
+    ]
+    assert answers[1]["reason"] == "card: no approved quote"
+    published = "".join(console_line_json(line) for line in lines)
+    assert key not in published and secret not in published
+    store.close()

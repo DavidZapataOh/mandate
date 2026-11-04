@@ -380,7 +380,7 @@ def test_card_desk_receipt_is_the_card_golden(make_desk, sign_quote, state_store
     assert bank == {
         "rail": "sandbox",
         "provider": "increase",
-        "transfer_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+        "transfer_id": "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",
         "status": "approved",
         "idempotency_key": "mandate-cert-00000000000000000000000000000002",
     }

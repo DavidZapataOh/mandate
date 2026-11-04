@@ -11,7 +11,7 @@ describe("classify", () => {
     expect(classify("account_transfer_7k9qe1ysdgqztnt63l7n")).toEqual({ kind: "payment", id: "account_transfer_7k9qe1ysdgqztnt63l7n" });
   });
   it("reads a bank decision id as a payment id", () => {
-    for (const id of ["real_time_decision_j76n2e810ezcg3zh5qtn", "sandbox_real_time_decision_j76n2e810ezcg3zh5qtn"]) {
+    for (const id of ["real_time_decision_b4ni7vda7z380dn9lb5x", "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x"]) {
       expect(classify(id)).toEqual({ kind: "payment", id });
     }
     expect(classify("real_time_decision_").kind).toBe("unknown");

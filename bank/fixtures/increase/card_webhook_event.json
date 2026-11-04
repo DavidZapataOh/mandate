@@ -1,10 +1,10 @@
 {
   "body": {
-    "associated_object_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+    "associated_object_id": "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",
     "associated_object_type": "real_time_decision",
     "category": "real_time_decision.card_authorization_requested",
-    "created_at": "2026-11-04T09:00:00Z",
-    "id": "event_ns4k7c1q9x2zdv8h3wyp",
+    "created_at": "2026-11-04T20:51:43Z",
+    "id": "sandbox_event_001m6m59xsccvpg8dhgwst826y3",
     "type": "event"
   },
   "replayed": null,

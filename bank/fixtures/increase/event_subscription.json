@@ -1,17 +1,18 @@
 {
   "body": {
-    "created_at": "2026-11-04T09:00:00Z",
-    "id": "event_subscription_dqx3m6w2n8rk5ty1hbvc",
-    "idempotency_key": "mandate-capture-rtd-0123456789abcdef",
+    "created_at": "2026-11-04T20:51:42Z",
+    "id": "sandbox_event_subscription_001m6m59xhbh7gsft06zgp8j0vh",
+    "idempotency_key": "mandate-capture-rtd-3d6b75e98792f57e",
     "oauth_connection_id": null,
     "selected_event_categories": [
       {
         "event_category": "real_time_decision.card_authorization_requested"
       }
     ],
+    "selected_event_category": "real_time_decision.card_authorization_requested",
     "status": "active",
     "type": "event_subscription",
-    "url": "https://example.trycloudflare.com/increase/card-authorizations"
+    "url": "https://elizabeth-void-dollar-collection.trycloudflare.com/increase/card-authorizations"
   },
   "replayed": null,
   "status": 200

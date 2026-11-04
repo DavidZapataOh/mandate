@@ -356,8 +356,8 @@ def test_an_answer_without_a_sealed_confirm_is_registered(
     entry = desk.registry.entry(size + 1)
     assert (entry.kind, entry.body) == (
         "denial",
-        '{"payment_id":"real_time_decision_j76n2e810ezcg3zh5qtn","quote_id":null,'
-        '"reason":"card: no approved quote","status":"declined"}',
+        '{"payment_id":"sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",'
+        '"quote_id":null,"reason":"card: no approved quote","status":"declined"}',
     )
     assert [line.subject for line in lines[-2:]] == [
         {

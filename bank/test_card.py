@@ -44,8 +44,8 @@ from bank.increase import setup_cli
 KAV_BODY = (
     '{"id":"event_001","type":"event","category":"real_time_decision.card_'
     'authorization_requested","associated_object_type":"real_time_decision'
-    '","associated_object_id":"real_time_decision_j76n2e810ezcg3zh5qtn","c'
-    'reated_at":"2020-01-31T23:59:59Z"}'
+    '","associated_object_id":"sandbox_real_time_decision_b4ni7vda7z380dn9'
+    'lb5x","created_at":"2020-01-31T23:59:59Z"}'
 )
 
 
@@ -61,7 +61,7 @@ def test_the_test_signer_is_standard_webhooks():
     assert sign_webhook(KAV_BODY, KAV_ID, 1800001000) == {
         "webhook-id": KAV_ID,
         "webhook-timestamp": "1800001000",
-        "webhook-signature": "v1,j1CKyQ8xFu2zW4DlJKg4mwAYv3dKV+JhHE7LdzD81U4=",
+        "webhook-signature": "v1,8i1c7pjecU553JCaQ+YrKmBdvCZSqXZx70VFfzZTu+g=",
     }
 
 
@@ -80,7 +80,7 @@ def _unverified(case):
     if case == "wrong secret":
         return body, sign_webhook(body, secret="another_secret")  # noqa: S106
     if case == "tampered":
-        return body.replace(b"j76n", b"j77n"), good
+        return body.replace(b"b4ni", b"b5ni"), good
     if case == "stale":
         return body, sign_webhook(body, timestamp=now - 301)
     if case == "future":
@@ -117,7 +117,7 @@ def test_unverified_webhooks_name_no_decision(case, reason):
         webhook_event(category="account_transfer.created"),
         webhook_event(object_type="account"),
         webhook_event("real_time_decision_../x"),
-        webhook_event("card_oubs0hwk5rn6knuecxg2"),
+        webhook_event("sandbox_card_ec262iyo1u6iil9cbl37"),
         b"[1]",
     ],
 )

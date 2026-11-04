@@ -143,10 +143,10 @@ describe("settle lines", () => {
 describe("card answers", () => {
   const card = (status: string, reason: string) => parseLine(patch(CARD, {}, { status, reason }));
   it.each([
-    ["approved", "ok: executed", "Card approved by Mandate: Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-991) from checking-881 · real_time_decision_j76n2e810ezcg3zh5qtn"],
-    ["declined", "card: no approved quote", "Card declined by Mandate: card: no approved quote · real_time_decision_j76n2e810ezcg3zh5qtn"],
-    ["not_answered", "card: deadline passed", "Card not answered by Mandate; the bank decides: card: deadline passed · real_time_decision_j76n2e810ezcg3zh5qtn"],
-    ["unknown", "bank: outcome unknown", "Card outcome unknown: bank: outcome unknown · real_time_decision_j76n2e810ezcg3zh5qtn"],
+    ["approved", "ok: executed", "Card approved by Mandate: Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-991) from checking-881 · sandbox_real_time_decision_b4ni7vda7z380dn9lb5x"],
+    ["declined", "card: no approved quote", "Card declined by Mandate: card: no approved quote · sandbox_real_time_decision_b4ni7vda7z380dn9lb5x"],
+    ["not_answered", "card: deadline passed", "Card not answered by Mandate; the bank decides: card: deadline passed · sandbox_real_time_decision_b4ni7vda7z380dn9lb5x"],
+    ["unknown", "bank: outcome unknown", "Card outcome unknown: bank: outcome unknown · sandbox_real_time_decision_b4ni7vda7z380dn9lb5x"],
   ])("says what Mandate answered (%s)", (status, reason, text) => {
     expect(gameText(card(status, reason))).toBe(text);
   });

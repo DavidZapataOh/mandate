@@ -1,25 +1,29 @@
 {
   "body": {
-    "account_id": "account_in71c4amph0vgo2qllky",
+    "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
     "authorization_controls": null,
     "billing_address": {
-      "city": null,
-      "line1": null,
+      "city": "New York",
+      "line1": "33 Liberty Street",
       "line2": null,
-      "postal_code": null,
-      "state": null
+      "postal_code": "10045",
+      "state": "NY"
     },
-    "bin": "40000000",
+    "bin": "44137135",
     "cardholder_name": null,
-    "created_at": "2026-11-04T09:00:00Z",
+    "created_at": "2026-11-04T20:51:42Z",
     "description": "mandate-capture-card",
-    "digital_wallet": null,
+    "digital_wallet": {
+      "digital_card_profile_id": null,
+      "email": null,
+      "phone": null
+    },
     "entity_id": null,
     "expiration_month": 11,
-    "expiration_year": 2029,
-    "id": "card_oubs0hwk5rn6knuecxg2",
+    "expiration_year": 2030,
+    "id": "sandbox_card_ec262iyo1u6iil9cbl37",
     "idempotency_key": "mandate-capture-card",
-    "last4": "5249",
+    "last4": "2903",
     "renewals": [],
     "replacement_for": null,
     "status": "active",

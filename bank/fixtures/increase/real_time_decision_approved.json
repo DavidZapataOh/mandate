@@ -3,7 +3,7 @@
     "card_authentication": null,
     "card_authentication_challenge": null,
     "card_authorization": {
-      "account_id": "account_in71c4amph0vgo2qllky",
+      "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
       "additional_amounts": {
         "clinic": null,
         "dental": null,
@@ -19,24 +19,25 @@
       "approval": {
         "partial_amount": null
       },
-      "card_id": "card_oubs0hwk5rn6knuecxg2",
+      "card_id": "sandbox_card_ec262iyo1u6iil9cbl37",
       "decision": "approve",
       "decline": null,
       "digital_wallet_token_id": null,
       "direction": "settlement",
       "healthcare": null,
-      "merchant_acceptor_id": "5665270011000168",
-      "merchant_category_code": "5942",
-      "merchant_city": "New York",
+      "merchant_acceptor_id": "acme-991",
+      "merchant_category_code": "5734",
+      "merchant_city": "SANFRANCISCO",
       "merchant_country": "US",
-      "merchant_descriptor": "AMAZON.COM",
-      "merchant_postal_code": "10045",
-      "merchant_state": "NY",
+      "merchant_descriptor": "ACME 991",
+      "merchant_postal_code": "94108",
+      "merchant_state": "CA",
+      "network": "visa",
       "network_details": {
         "category": "visa",
         "pulse": null,
         "visa": {
-          "electronic_commerce_indicator": "secure_electronic_commerce",
+          "electronic_commerce_indicator": null,
           "point_of_service_entry_mode": "manual",
           "stand_in_processing_reason": null,
           "terminal_entry_capability": null
@@ -44,13 +45,13 @@
       },
       "network_identifiers": {
         "authorization_identification_response": null,
-        "retrieval_reference_number": "785867080153",
-        "trace_number": "487941",
-        "transaction_id": "627199945183184"
+        "retrieval_reference_number": "227576429480",
+        "trace_number": "278452",
+        "transaction_id": "790087780923843"
       },
-      "network_risk_score": null,
+      "network_risk_score": 33,
       "original_card_payment_id": null,
-      "partial_approval_capability": "not_supported",
+      "partial_approval_capability": "supported",
       "physical_card_id": null,
       "presentment_amount": 100,
       "presentment_currency": "USD",
@@ -58,17 +59,15 @@
       "request_details": {
         "category": "initial_authorization",
         "incremental_authorization": null,
-        "initial_authorization": {
-          "category": "purchase"
-        }
+        "initial_authorization": {}
       },
       "settlement_amount": 100,
       "settlement_currency": "USD",
-      "terminal_id": "42981",
-      "upcoming_card_payment_id": "card_payment_lc6bqjrvyo85a6ncwx92",
+      "terminal_id": "WQYNOGDV",
+      "upcoming_card_payment_id": "sandbox_card_payment_qb6an3tsmopk9ueymuvr",
       "verification": {
         "card_verification_code": {
-          "result": "match"
+          "result": "not_checked"
         },
         "cardholder_address": {
           "actual_line1": null,
@@ -76,17 +75,18 @@
           "provided_line1": null,
           "provided_postal_code": null,
           "result": "not_checked"
-        }
+        },
+        "cardholder_name": null
       }
     },
     "card_balance_inquiry": null,
     "category": "card_authorization_requested",
-    "created_at": "2026-11-04T09:00:00Z",
+    "created_at": "2026-11-04T20:51:42Z",
     "digital_wallet_authentication": null,
     "digital_wallet_token": null,
-    "id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+    "id": "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",
     "status": "responded",
-    "timeout_at": "2026-11-04T09:00:04Z",
+    "timeout_at": "2026-11-04T20:51:46Z",
     "type": "real_time_decision"
   },
   "replayed": null,

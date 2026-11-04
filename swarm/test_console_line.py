@@ -524,11 +524,12 @@ def test_attack_line_forged_approval_shows_the_consent_it_refused():
 
 
 GOLDEN_CARD = (
-    '{"v":3,"seq":12,"source":"desk","event":null,"meta":null,"subj'
-    'ect":{"step":"card","quote_id":"q:000001","status":"approved",'
-    '"summary":"Card 200.00 USD at MANDATE_FIXTURE ACME 991 (acme-9'
-    '91) from checking-881","payment_id":"real_time_decision_j76n2e'
-    '810ezcg3zh5qtn","reason":"ok: executed"},"forensic":null}'
+    '{"v":3,"seq":12,"source":"desk","event":null,"meta":null,"'
+    'subject":{"step":"card","quote_id":"q:000001","status":"ap'
+    'proved","summary":"Card 200.00 USD at MANDATE_FIXTURE ACME'
+    ' 991 (acme-991) from checking-881","payment_id":"sandbox_r'
+    'eal_time_decision_b4ni7vda7z380dn9lb5x","reason":"ok: exec'
+    'uted"},"forensic":null}'
 )
 
 
@@ -538,7 +539,7 @@ def test_a_card_line_is_the_golden():
         {
             "status": "approved",
             "quote_id": "q:000001",
-            "payment_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+            "payment_id": "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",
             "reason": "ok: executed",
         },
         card_summary(

@@ -269,7 +269,7 @@ describe("returned payments", () => {
 
 describe("card answers", () => {
   it("posture: a card answer is a note; the confirm it rides on counts once, as SANDBOX", () => {
-    const decision = "real_time_decision_j76n2e810ezcg3zh5qtn";
+    const decision = "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x";
     const paid = patch(SANDBOX_CONFIRM, { seq: 5, subject: { ...JSON.parse(SANDBOX_CONFIRM).subject, payment_id: decision } });
     const p = computePosture([parseLine(paid), parseLine(CARD)]);
     expect([p.decided.count, p.verified.count, railsText(p)]).toEqual([1, 1, "SANDBOX 1"]);

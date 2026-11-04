@@ -2,19 +2,35 @@
   "body": {
     "declined_transaction": null,
     "pending_transaction": {
-      "account_id": "account_in71c4amph0vgo2qllky",
-      "amount": 100,
+      "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+      "amount": -100,
+      "balance_impact": "affects_available_balance",
       "completed_at": null,
-      "created_at": "2026-11-04T09:00:00Z",
+      "created_at": "2026-11-04T20:51:44Z",
       "currency": "USD",
-      "description": "AMAZON.COM",
-      "held_amount": 100,
-      "id": "pending_transaction_5wk3d9yb4gp2xv1ncfmh",
-      "route_id": "card_oubs0hwk5rn6knuecxg2",
+      "date": "2026-11-04",
+      "description": "ACME 991",
+      "held_amount": -100,
+      "id": "sandbox_pending_transaction_e4khk17q17f9mwe36soe",
+      "route_id": "sandbox_card_ec262iyo1u6iil9cbl37",
       "route_type": "card",
       "source": {
+        "actioner": "user",
+        "additional_amounts": {
+          "clinic": null,
+          "dental": null,
+          "original": null,
+          "prescription": null,
+          "surcharge": null,
+          "total_cumulative": null,
+          "total_healthcare": null,
+          "transit": null,
+          "unknown": null,
+          "vision": null
+        },
+        "amount": 100,
         "card_authorization": {
-          "actioner": "increase",
+          "actioner": "user",
           "additional_amounts": {
             "clinic": null,
             "dental": null,
@@ -28,50 +44,52 @@
             "vision": null
           },
           "amount": 100,
-          "card_payment_id": "card_payment_lc6bqjrvyo85a6ncwx92",
+          "card_payment_id": "sandbox_card_payment_qb6an3tsmopk9ueymuvr",
+          "class_name": "card_authorization",
           "currency": "USD",
           "digital_wallet_token_id": null,
           "direction": "settlement",
-          "expires_at": "2026-11-11T09:00:00Z",
+          "expires_at": "2026-11-09T23:59:59Z",
           "healthcare": null,
-          "id": "card_authorization_pq7x2bkd5ym1c8vjhr0n",
-          "merchant_acceptor_id": "5665270011000168",
-          "merchant_category_code": "5942",
-          "merchant_city": "New York",
+          "id": "sandbox_card_authorization_187dlaset1jqhk23f19t",
+          "merchant_acceptor_id": "acme-991",
+          "merchant_category_code": "5734",
+          "merchant_city": "SANFRANCISCO",
           "merchant_country": "US",
-          "merchant_descriptor": "AMAZON.COM",
-          "merchant_postal_code": "10045",
-          "merchant_state": "NY",
+          "merchant_descriptor": "ACME 991",
+          "merchant_postal_code": "94108",
+          "merchant_state": "CA",
+          "network": "visa",
           "network_details": {
             "category": "visa",
             "pulse": null,
             "visa": {
-              "electronic_commerce_indicator": "secure_electronic_commerce",
+              "electronic_commerce_indicator": null,
               "point_of_service_entry_mode": "manual",
               "stand_in_processing_reason": null,
               "terminal_entry_capability": null
             }
           },
           "network_identifiers": {
-            "authorization_identification_response": null,
-            "retrieval_reference_number": "785867080153",
-            "trace_number": "487941",
-            "transaction_id": "627199945183184"
+            "authorization_identification_response": "HV3QDI",
+            "retrieval_reference_number": "227576429480",
+            "trace_number": "278452",
+            "transaction_id": "790087780923843"
           },
-          "network_risk_score": null,
+          "network_risk_score": 33,
           "original_card_payment_id": null,
-          "pending_transaction_id": null,
+          "pending_transaction_id": "sandbox_pending_transaction_e4khk17q17f9mwe36soe",
           "physical_card_id": null,
           "presentment_amount": 100,
           "presentment_currency": "USD",
           "processing_category": "purchase",
-          "real_time_decision_id": "real_time_decision_j76n2e810ezcg3zh5qtn",
+          "real_time_decision_id": "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",
           "scheme_fees": [],
-          "terminal_id": "42981",
+          "terminal_id": "WQYNOGDV",
           "type": "card_authorization",
           "verification": {
             "card_verification_code": {
-              "result": "match"
+              "result": "not_checked"
             },
             "cardholder_address": {
               "actual_line1": null,
@@ -79,10 +97,67 @@
               "provided_line1": null,
               "provided_postal_code": null,
               "result": "not_checked"
-            }
+            },
+            "cardholder_name": null
           }
         },
-        "category": "card_authorization"
+        "card_payment_id": "sandbox_card_payment_qb6an3tsmopk9ueymuvr",
+        "category": "card_authorization",
+        "class_name": "card_authorization",
+        "currency": "USD",
+        "digital_wallet_token_id": null,
+        "direction": "settlement",
+        "expires_at": "2026-11-09T23:59:59Z",
+        "healthcare": null,
+        "id": "sandbox_card_authorization_187dlaset1jqhk23f19t",
+        "merchant_acceptor_id": "acme-991",
+        "merchant_category_code": "5734",
+        "merchant_city": "SANFRANCISCO",
+        "merchant_country": "US",
+        "merchant_descriptor": "ACME 991",
+        "merchant_postal_code": "94108",
+        "merchant_state": "CA",
+        "network": "visa",
+        "network_details": {
+          "category": "visa",
+          "pulse": null,
+          "visa": {
+            "electronic_commerce_indicator": null,
+            "point_of_service_entry_mode": "manual",
+            "stand_in_processing_reason": null,
+            "terminal_entry_capability": null
+          }
+        },
+        "network_identifiers": {
+          "authorization_identification_response": "HV3QDI",
+          "retrieval_reference_number": "227576429480",
+          "trace_number": "278452",
+          "transaction_id": "790087780923843"
+        },
+        "network_risk_score": 33,
+        "original_card_payment_id": null,
+        "pending_transaction_id": "sandbox_pending_transaction_e4khk17q17f9mwe36soe",
+        "physical_card_id": null,
+        "presentment_amount": 100,
+        "presentment_currency": "USD",
+        "processing_category": "purchase",
+        "real_time_decision_id": "sandbox_real_time_decision_b4ni7vda7z380dn9lb5x",
+        "scheme_fees": [],
+        "terminal_id": "WQYNOGDV",
+        "type": "card_authorization",
+        "verification": {
+          "card_verification_code": {
+            "result": "not_checked"
+          },
+          "cardholder_address": {
+            "actual_line1": null,
+            "actual_postal_code": null,
+            "provided_line1": null,
+            "provided_postal_code": null,
+            "result": "not_checked"
+          },
+          "cardholder_name": null
+        }
       },
       "status": "pending",
       "type": "pending_transaction"
