@@ -166,6 +166,10 @@ class PaymentDesk:
             self._emit("quote", view, consent)
             return view
 
+    def expired(self, consent_expires_at: int) -> bool:
+        """Whether the desk's clock is past a quote's deadline (the approve rule)."""
+        return self._clock() > consent_expires_at
+
     def pending(self) -> list[dict[str, Any]]:
         """Quotes still awaiting approval, in id order."""
         with self._lock:

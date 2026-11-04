@@ -446,6 +446,326 @@ s.hash {
   overflow: hidden;
 }
 
+/* The quote waiting for the holder is a held ledger row: pinned atop the ledger strip, flush
+   under the stage, so the booth, its seal, the alert bar and the walkers stay uncovered. */
+main {
+  position: relative;
+}
+
+#approval {
+  position: absolute;
+  z-index: 4;
+  top: calc(164px * var(--scale));
+  /* The box ends under its last line; past the room under the stage it scrolls inside. */
+  max-height: calc(100% - 164px * var(--scale) - 8px);
+  left: 50%;
+  translate: -50% 0;
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr);
+  grid-template-areas:
+    "title status status"
+    "amount payee payee"
+    "steps steps steps"
+    "fields fields fields"
+    "hlabel hlabel hlabel"
+    "hash hash hash"
+    "gate gate gate"
+    "expires expires device"
+    "where where where"
+    "error error error";
+  align-content: start;
+  column-gap: 12px;
+  width: min(928px, calc(100% - 20px));
+  padding: 8px 20px 6px 32px;
+  overflow-y: auto;
+  border: 1px solid var(--bone);
+  background: var(--ink);
+  color: var(--bone);
+  font: 400 18px/22px var(--mono);
+}
+
+#approval > * {
+  margin: 0;
+}
+
+#approval .title {
+  grid-area: title;
+  align-self: center;
+  font: 700 21px/24px var(--sans);
+}
+
+/* Muted while the holder or the agent still has to act; Verify only once paid; Alert on refusal. */
+#approval .status {
+  grid-area: status;
+  justify-self: end;
+  align-self: center;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 20px;
+  text-align: right;
+  transition: color var(--snap-ms) var(--snap);
+}
+
+#approval[data-phase="paid"] .status {
+  color: var(--verify);
+}
+
+#approval[data-phase="refused"] .status,
+#approval[data-phase="expired"] .status,
+#approval[data-phase="denied"] .status {
+  color: var(--alert);
+}
+
+#approval .amount {
+  grid-area: amount;
+  align-self: baseline;
+  font: 700 30px/34px var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+#approval .payee {
+  grid-area: payee;
+  align-self: baseline;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 24px;
+  line-height: 34px;
+}
+
+/* Each step's state is a word weight and a drawn mark as well as a colour: a filled square
+   done, a hollow square current, the seal's refusal seam failed, no mark yet to come. */
+#approval .steps {
+  grid-area: steps;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 12px;
+  margin-top: 2px;
+  padding: 0 0 5px;
+  border-bottom: 1px solid var(--muted);
+  list-style: none;
+  font-size: 16px;
+  line-height: 20px;
+}
+
+/* Only colour eases between phases; the marks are drawn in currentColor so they follow it. */
+#approval .step {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  transition: color var(--snap-ms) var(--snap);
+}
+
+#approval .step + .step::before {
+  content: ">";
+  margin-right: 8px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+#approval .step::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-left: 8px;
+  box-sizing: border-box;
+}
+
+#approval .step[data-state="done"] {
+  color: var(--bone);
+}
+
+#approval .step[data-state="done"]::after {
+  background: currentColor;
+}
+
+#approval .step[data-state="current"] {
+  color: var(--bone);
+  font-weight: 700;
+}
+
+#approval .step[data-state="current"]::after {
+  border: 1px solid currentColor;
+}
+
+#approval .step[data-state="failed"] {
+  color: var(--alert);
+}
+
+#approval .step[data-state="failed"]::after {
+  width: 12px;
+  height: 3px;
+  background: currentColor;
+}
+
+#approval .step[data-state="todo"]::after {
+  display: none;
+}
+
+/* Seven fields in two column pairs: the first four, then the last three, in signing order. */
+#approval .fields {
+  grid-area: fields;
+  display: grid;
+  grid-template-columns: max-content max-content max-content minmax(0, 1fr);
+  column-gap: 16px;
+  margin-top: 8px;
+  font-size: 16px;
+  line-height: 18px;
+}
+
+#approval dt:nth-of-type(n + 5) {
+  grid-column: 3;
+  margin-left: 24px;
+}
+
+#approval dd:nth-of-type(n + 5) {
+  grid-column: 4;
+}
+
+#approval :is(dt, dd):nth-of-type(4n + 1) {
+  grid-row: 1;
+}
+
+#approval :is(dt, dd):nth-of-type(4n + 2) {
+  grid-row: 2;
+}
+
+#approval :is(dt, dd):nth-of-type(4n + 3) {
+  grid-row: 3;
+}
+
+#approval :is(dt, dd):nth-of-type(4) {
+  grid-row: 4;
+}
+
+#approval .fields:empty {
+  display: none;
+}
+
+#approval dt {
+  color: var(--bone);
+}
+
+#approval dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+#approval .hash-label {
+  grid-area: hlabel;
+  justify-self: start;
+  align-self: start;
+  margin-top: 6px;
+  padding: 0 6px;
+  background: rgb(246 244 238 / 0.16);
+  font-size: 16px;
+}
+
+/* Under the shown digest, so the gate's digest reads directly beneath it. */
+#approval .gate {
+  grid-area: gate;
+  min-width: 0;
+  color: var(--muted);
+  transition: color var(--snap-ms) var(--snap);
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+#approval[data-gate="match"] .gate {
+  color: var(--bone);
+}
+
+#approval[data-gate="mismatch"] .gate,
+#approval[data-phase="refused"] .gate .reason,
+#approval[data-phase="expired"] .gate .reason,
+#approval[data-phase="denied"] .gate .reason {
+  color: var(--alert);
+}
+
+#approval .gate > p {
+  margin: 0;
+}
+
+/* The gate's digest is set like the shown one, so its eight groups line up beneath it. */
+#approval .gate .digest {
+  display: block;
+  font-size: 18px;
+  line-height: 24px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+#approval .hash {
+  grid-area: hash;
+  color: var(--bone);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 24px;
+}
+
+/* The ledger's hash cell carries a separator; the panel's digest stands alone. */
+#approval .hash::before {
+  content: none;
+}
+
+#approval .expires {
+  grid-area: expires;
+}
+
+#approval .expires:empty {
+  display: none;
+}
+
+#approval .device {
+  margin-left: 24px;
+}
+
+#approval .expires:empty + .device {
+  grid-column-start: expires-start;
+  margin-left: 0;
+}
+
+/* Without the fields there is no amount to lead with; the line says why instead. */
+#approval:has(.fields:empty) .amount {
+  display: none;
+}
+
+#approval:has(.fields:empty) .payee {
+  grid-column-start: amount-start;
+  color: var(--muted);
+  font: 400 16px/24px var(--mono);
+}
+
+#approval .device {
+  grid-area: device;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#approval .where {
+  grid-area: where;
+  justify-self: start;
+  margin-top: 4px;
+  padding: 0 6px;
+  background: var(--muted);
+  color: var(--ink);
+  font-size: 16px;
+  letter-spacing: -0.04em;
+}
+
+#approval .desk-error {
+  grid-area: error;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 20px;
+}
+
 #forensic {
   position: fixed;
   z-index: 10;
@@ -908,6 +1228,86 @@ button.scenario .badge {
   .bubble .say {
     -webkit-line-clamp: 1;
     line-clamp: 1;
+  }
+
+  /* On a phone the held row sits right under the stage at full width, before the strip; the page
+     grows and scrolls, never sideways and never inside the panel. */
+  body:has(#approval:not([hidden])) {
+    height: auto;
+  }
+
+  body:has(#approval:not([hidden])) .ledger-strip {
+    flex: none;
+    height: auto;
+  }
+
+  #approval {
+    position: static;
+    translate: none;
+    width: calc(100% - 20px);
+    max-height: none;
+    margin: 8px auto 0;
+    overflow: visible;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "title"
+      "status"
+      "amount"
+      "payee"
+      "steps"
+      "fields"
+      "hlabel"
+      "hash"
+      "gate"
+      "expires"
+      "device"
+      "where"
+      "error";
+    padding: 8px 12px;
+    font-size: 16px;
+    line-height: 20px;
+  }
+
+  #approval .status {
+    justify-self: start;
+    text-align: left;
+  }
+
+  #approval .device {
+    margin-left: 0;
+  }
+
+  #approval .gate .digest {
+    font-size: 16px;
+  }
+
+  #approval .amount {
+    font-size: 24px;
+    line-height: 30px;
+  }
+
+  #approval .payee {
+    font-size: 18px;
+    line-height: 24px;
+  }
+
+  #approval .fields {
+    grid-template-columns: 124px minmax(0, 1fr);
+    font-size: 14px;
+  }
+
+  #approval dt:nth-of-type(n),
+  #approval dd:nth-of-type(n) {
+    grid-row: auto;
+    margin-left: 0;
+  }
+
+  #approval dt:nth-of-type(n) {
+    grid-column: 1;
+  }
+
+  #approval dd:nth-of-type(n) {
+    grid-column: 2;
   }
 }
 

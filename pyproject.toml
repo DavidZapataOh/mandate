@@ -48,6 +48,7 @@ module = [
     "e2e.test_redteam_live",
     "e2e.test_swarm_live",
     "e2e.test_voice_live",
+    "e2e.test_voice_confirm_live",
     "e2e.conftest",
     "e2e.test_webapp",
     "e2e.test_smoke_imports",

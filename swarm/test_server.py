@@ -2,13 +2,24 @@ import base64
 import json
 import re
 
+import anyio
 import httpx2
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mcp import Client
 
 from gate.certs import generate_keypair
 from swarm import server
+from swarm.hub import EventHub
 from swarm.server import build_server
+from swarm.test_voice import CLIP, RESPONSE, _wav
+from swarm.voice import (
+    NO_VOICE_KEY,
+    VOICE_OFF,
+    VOICE_SIG_HEADER,
+    Transcriber,
+    voice_bytes,
+)
 
 TOOLS = ["confirm_payment", "get_payment_status", "get_receipt", "quote_payment"]
 ARGS = {
@@ -158,6 +169,7 @@ async def test_holder_route_needs_the_pairing_token(make_desk, extra):
         ("POST", "/api/holder"),
         ("POST", "/api/approve"),
         ("GET", "/api/pending"),
+        ("GET", "/api/device"),
         ("GET", "/app/"),
         ("GET", "/app/app.js"),
     ],
@@ -292,3 +304,265 @@ async def test_web_app_served_and_nothing_else(make_desk):
     assert script.headers["content-type"].startswith("text/javascript")
     assert "registerTool" in script.text
     assert suite.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_device_route_reports_the_paired_holder(make_desk):
+    desk, _ = make_desk(register=False)
+    key = {"public_key": _b64(bytes(range(32))), "pairing": PAIR}
+    async with _http(desk) as http:
+        before = await http.get("/api/device")
+        await http.post("/api/holder", json=key)
+        after = await http.get("/api/device")
+    assert before.json() == {"paired": False, "fingerprint": None, "voice": False}
+    assert after.json() == {
+        "paired": True,
+        "fingerprint": "630dcd2966c43366",
+        "voice": False,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("voice", "expected"),
+    [(None, False), (Transcriber(None), False), (Transcriber("vk"), True)],
+    ids=["absent", "no-key", "on"],
+)
+async def test_device_route_reports_whether_voice_is_on(make_desk, voice, expected):
+    desk, _ = make_desk()
+    async with _voice_http(desk, voice) as http:
+        resp = await http.get("/api/device")
+    assert resp.json()["voice"] is expected
+
+
+WAV = {"content-type": "audio/wav"}
+SPOKEN = CLIP.read_bytes()
+PERMISSIONS = "microphone=(self), camera=(), geolocation=()"
+
+
+def _meta(seen, status=200):
+    def handler(request):
+        seen.append(request)
+        body = json.dumps(RESPONSE).encode()
+        return httpx2.Response(status, content=body)
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    return Transcriber("vk", http_client=client)
+
+
+def _voice_http(desk, voice):
+    app = build_server(desk, PAIR, voice=voice).streamable_http_app()
+    return _asgi(app)
+
+
+def _voice_sig(priv, quote, audio):
+    raw = Ed25519PrivateKey.from_private_bytes(priv).sign(voice_bytes(quote, audio))
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+async def _speak(http, audio=SPOKEN, quote="q:000001", headers=WAV, sig=None):
+    if sig is not None:
+        headers = {**headers, VOICE_SIG_HEADER: sig}
+    params = {"quote": quote}
+    return await http.post("/api/voice", params=params, content=audio, headers=headers)
+
+
+@pytest.mark.anyio
+async def test_voice_route_returns_only_the_transcript(make_desk):
+    hub = EventHub()
+    desk, holder = make_desk(publish=hub.publish)
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    before, seen = hub.last_seq, []
+    async with _voice_http(desk, _meta(seen)) as http:
+        resp = await _speak(http, sig=_voice_sig(holder, "q:000001", SPOKEN))
+    sent = seen[0].read()
+    heard = {"transcript": RESPONSE["transcript"]}
+    assert (resp.status_code, resp.json()) == (200, heard)
+    assert SPOKEN in sent
+    assert b'"keywords": ["acme-991", "A-991"]' in sent
+    assert desk.status("q:000001")["status"] == "quoted"
+    assert hub.last_seq == before
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("register", "quote", "headers"),
+    [
+        (True, "q:000001", {**WAV, **FOREIGN}),
+        (True, "q:000001", {"content-type": "application/json"}),
+        (True, "q:000001", {**WAV, "origin": "https://evil.example"}),
+        (True, "q:000009", WAV),
+        (False, "q:000001", WAV),
+    ],
+    ids=["foreign-host", "not-wav", "foreign-origin", "unknown-quote", "no-holder"],
+)
+async def test_voice_route_refuses_before_upload(make_desk, register, quote, headers):
+    desk, _ = make_desk(register=register)
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    seen = []
+    async with _voice_http(desk, _meta(seen)) as http:
+        resp = await _speak(http, quote=quote, headers=headers)
+    assert (resp.status_code, resp.json()) == (400, {"error": "bad request"})
+    assert seen == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "forge",
+    [
+        lambda holder, stranger: None,
+        lambda holder, stranger: "A" * 85,
+        lambda holder, stranger: _voice_sig(stranger, "q:000001", SPOKEN),
+        lambda holder, stranger: _voice_sig(holder, "q:000001", SPOKEN + b"\x00"),
+        lambda holder, stranger: _voice_sig(holder, "q:000002", SPOKEN),
+    ],
+    ids=["missing", "malformed", "other-key", "other-audio", "other-quote"],
+)
+async def test_voice_route_needs_the_paired_device(make_desk, forge):
+    desk, holder = make_desk()
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    desk.quote("acme-991", 20000, "USD", "A-992")
+    stranger, _ = generate_keypair()
+    seen = []
+    async with _voice_http(desk, _meta(seen)) as http:
+        resp = await _speak(http, sig=forge(holder, stranger))
+    assert (resp.status_code, resp.json()) == (401, {"error": "not the paired device"})
+    assert seen == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("audio", "status", "error"),
+    [
+        (bytes(31_000_001), 413, "audio too large"),
+        (_wav(channels=2), 400, "unsupported wav: channels=2"),
+    ],
+)
+async def test_voice_route_refuses_audio_the_service_would(
+    make_desk, audio, status, error
+):
+    desk, holder = make_desk()
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    seen = []
+    sig = _voice_sig(holder, "q:000001", audio)
+    async with _voice_http(desk, _meta(seen)) as http:
+        resp = await _speak(http, audio=audio, sig=sig)
+    assert (resp.status_code, resp.json()) == (status, {"error": error})
+    assert seen == []
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("voice", "reason"), [(None, VOICE_OFF), (Transcriber(None), NO_VOICE_KEY)]
+)
+async def test_voice_route_without_voice_names_why(make_desk, voice, reason):
+    desk, _ = make_desk()
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    async with _voice_http(desk, voice) as http:
+        resp = await _speak(http)
+    assert (resp.status_code, resp.json()) == (
+        503,
+        {"error": "voice unavailable", "reason": reason},
+    )
+
+
+@pytest.mark.anyio
+async def test_voice_route_reports_a_failed_transcription(make_desk):
+    desk, holder = make_desk()
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    seen = []
+    async with _voice_http(desk, _meta(seen, status=429)) as http:
+        resp = await _speak(http, sig=_voice_sig(holder, "q:000001", SPOKEN))
+    assert (resp.status_code, resp.json()) == (502, {"error": "model error"})
+    assert len(seen) == 1
+    assert desk.status("q:000001")["status"] == "quoted"
+
+
+@pytest.mark.anyio
+async def test_holder_page_grants_the_microphone_to_itself_only(make_desk):
+    desk, _ = make_desk()
+    async with _http(desk) as http:
+        page = await http.get("/app/")
+    assert page.headers["permissions-policy"] == PERMISSIONS
+    assert page.headers["content-security-policy"] == "frame-ancestors 'none'"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("argv", "reason"), [((), VOICE_OFF), (("--voice",), NO_VOICE_KEY)]
+)
+async def test_cli_voice_is_off_unless_asked(monkeypatch, capsys, argv, reason):
+    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    app, _ = _run_cli(monkeypatch, capsys, *argv)
+    async with _asgi(app) as http:
+        resp = await _speak(http)
+    assert resp.json() == {"error": "voice unavailable", "reason": reason}
+
+
+@pytest.mark.anyio
+async def test_voice_route_hears_a_signed_clip_once(make_desk):
+    desk, holder = make_desk()
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    seen = []
+    sig = _voice_sig(holder, "q:000001", SPOKEN)
+    async with _voice_http(desk, _meta(seen)) as http:
+        first = await _speak(http, sig=sig)
+        again = await _speak(http, sig=sig)
+    assert first.status_code == 200
+    assert (again.status_code, again.json()) == (
+        409,
+        {"error": "clip already transcribed"},
+    )
+    assert len(seen) == 1
+
+
+@pytest.mark.anyio
+async def test_voice_route_refuses_a_quote_past_its_deadline(make_desk):
+    now = [1800001000]
+    desk, holder = make_desk(clock=lambda: now[0])
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    now[0] += 601
+    seen = []
+
+    async def unread():
+        raise AssertionError("body read")
+        yield b""
+
+    sig = _voice_sig(holder, "q:000001", SPOKEN)
+    async with _voice_http(desk, _meta(seen)) as http:
+        resp = await _speak(http, audio=unread(), sig=sig)
+    assert (resp.status_code, resp.json()) == (409, {"error": "quote expired"})
+    assert seen == []
+
+
+@pytest.mark.anyio
+async def test_voice_route_refuses_a_second_upload_before_reading_it(make_desk):
+    desk, holder = make_desk()
+    desk.quote("acme-991", 20000, "USD", "A-991")
+    started, release, seen = anyio.Event(), anyio.Event(), []
+    sig = _voice_sig(holder, "q:000001", SPOKEN)
+
+    async def slow():
+        started.set()
+        await release.wait()
+        yield SPOKEN
+
+    async def unread():
+        raise AssertionError("body read")
+        yield b""
+
+    async with _voice_http(desk, _meta(seen)) as http:
+        async with anyio.create_task_group() as tg:
+            first = []
+
+            async def go():
+                first.append(await _speak(http, audio=slow(), sig=sig))
+
+            tg.start_soon(go)
+            await started.wait()
+            second = await _speak(http, audio=unread(), sig=sig)
+            release.set()
+    assert (second.status_code, second.json()) == (409, {"error": "voice busy"})
+    assert first[0].status_code == 200
+    assert len(seen) == 1

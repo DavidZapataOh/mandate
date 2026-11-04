@@ -1,0 +1,8 @@
+{
+  "model": "muse-image-1.0",
+  "endpoint": "/v1/images/edits",
+  "request": "c84e334e-e7f6-4172-a96f-6d4d9a474e5f",
+  "reference": ".impeccable/mocks/decision/console-approval/reference.png",
+  "prompt_file": "held-row.prompt.txt",
+  "approved": true
+}

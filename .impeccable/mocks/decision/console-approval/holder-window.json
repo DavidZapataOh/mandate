@@ -1,0 +1,1 @@
+{"model": "muse-image-1.0", "endpoint": "/v1/images/edits", "request": "b4142b9a-8330-423f-b5af-4220e98cd9af", "reference": ".impeccable/mocks/decision/console-approval/reference.png", "prompt_file": "holder-window.prompt.txt", "approved": false}

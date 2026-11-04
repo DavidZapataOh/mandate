@@ -12,3 +12,10 @@ button:focus-visible { outline: 4px solid #ff0; outline-offset: 2px; }
   padding: 12px; margin: 16px 0; }
 #approve { width: 100%; font-size: 36px; padding: 20px; }
 #pairing, #status { color: #ffd54a; min-height: 1.3em; }
+#hash, #device { font: 20px/1.3 ui-monospace, monospace; color: #ccc;
+  overflow-wrap: anywhere; }
+#fields { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px;
+  margin: 0 0 16px; font: 20px/1.3 ui-monospace, monospace; }
+#fields dd { margin: 0; overflow-wrap: anywhere; }
+#voice-note, #heard { font-size: 22px; color: #ccc; overflow-wrap: anywhere; }
+#heard { color: #fff; min-height: 1.3em; }

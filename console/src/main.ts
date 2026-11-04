@@ -1,3 +1,5 @@
+import { httpDesk } from "./approval/api";
+import { mountApproval } from "./approval/panel";
 import { mountAttackPanel } from "./attacks/panel";
 import { closeForensic, forensicFetcher, openForensic } from "./forensic/drawer";
 import { decorateForensic, mountKillCam } from "./killcam/view";
@@ -65,6 +67,7 @@ function start(): void {
     state.textContent = "REPLAY ERROR";
     return;
   }
+  void mountApproval(byId("approval"), store, name === null ? httpDesk() : null).refresh();
   if (name !== null) {
     void replay(name);
     return;

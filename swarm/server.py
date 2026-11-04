@@ -3,8 +3,11 @@
 import argparse
 import base64
 import binascii
+import hashlib
 import hmac
 import json
+import os
+import re
 import secrets
 import threading
 import time
@@ -40,6 +43,16 @@ from swarm.live_attack import (
 )
 from swarm.nimbus import NimbusStep
 from swarm.redteam import TEMPLATES, AttackKind
+from swarm.voice import (
+    MAX_WAV_BYTES,
+    VOICE_OFF,
+    VOICE_SIG_HEADER,
+    Transcriber,
+    VoiceAPIError,
+    VoiceBusyError,
+    transcriber_from_env,
+    verify_voice,
+)
 
 _MAX_BODY = 4096
 _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
@@ -52,6 +65,14 @@ _MAX_DIGITS = 18
 _HEARTBEAT_S = 15.0
 _NOT_FOUND = {"error": "not found"}
 _SEND_TIMEOUT_S = 10.0
+_NOT_PAIRED_DEVICE = {"error": "not the paired device"}
+_VOICE_SIG = re.compile(r"[A-Za-z0-9_-]{86}")
+_PAGE_HEADERS = {
+    "permissions-policy": "microphone=(self), camera=(), geolocation=()",
+    # A meta CSP cannot carry frame-ancestors; without it a foreign page could
+    # frame the holder page and overlay its Approve button.
+    "content-security-policy": "frame-ancestors 'none'",
+}
 _CONSOLE_CSP = (
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
@@ -104,7 +125,7 @@ def _bad_request() -> JSONResponse:
 
 async def _fields(request: Request, *names: str) -> dict[str, Any] | None:
     """Parse a JSON object body and require each named field to be a string."""
-    if not _same_site_json(request):
+    if not _same_site(request, "application/json"):
         return None
     raw = await request.body()
     if len(raw) > _MAX_BODY:
@@ -120,15 +141,33 @@ async def _fields(request: Request, *names: str) -> dict[str, Any] | None:
     return body
 
 
-def _same_site_json(request: Request) -> bool:
-    # A JSON content type forces a CORS preflight this server never answers, and
-    # a present Origin must match, so a foreign page cannot drive these routes.
+def _same_site(request: Request, content_type: str) -> bool:
+    # A non-simple content type, JSON or WAV, forces a CORS preflight this server
+    # never answers, and a present Origin must match, so a foreign page cannot
+    # drive these routes.
     kind = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if kind != "application/json":
+    if kind != content_type:
         return False
     origin = request.headers.get("origin")
     own = f"{request.url.scheme}://{request.url.netloc}"
     return origin is None or origin == own
+
+
+async def _capped_body(request: Request, limit: int) -> bytes | None:
+    """Read the body, or None as soon as it grows past `limit` bytes."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
+def _voice_signature(request: Request) -> bytes | None:
+    offered = request.headers.get(VOICE_SIG_HEADER)
+    if offered is None or not _VOICE_SIG.fullmatch(offered):
+        return None
+    return base64.urlsafe_b64decode(offered + "==")
 
 
 def _digits(text: str) -> int | None:
@@ -207,6 +246,7 @@ def build_server(
     console_dir: Path | None = None,
     deploys: DeploySource | None = None,
     live: LiveAttacker | None = None,
+    voice: Transcriber | None = None,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
@@ -226,6 +266,8 @@ def build_server(
         deploys: When given, POST /api/deploy runs one pinned Nimbus step.
         live: With `attacks`, the open-weights attacker behind
             `POST /api/attack/model`; None reports it as off.
+        voice: Transcriber behind `POST /api/voice`, which answers only the
+            words of a clip the paired device signed; None reports it as off.
 
     Returns:
         An MCP server named `mandate`.
@@ -284,8 +326,85 @@ state is returned."""
             return _bad_request()
         return JSONResponse({"registered": desk.register_holder(key)})
 
+    async def device(request: Request) -> Response:
+        keys = desk.holder_keys
+        fingerprint = hashlib.sha256(keys[0]).hexdigest()[:16] if keys else None
+        return JSONResponse(
+            {
+                "paired": bool(keys),
+                "fingerprint": fingerprint,
+                # Read-only, so the holder page offers the microphone only when
+                # the desk would answer.
+                "voice": voice is not None and voice.available,
+            }
+        )
+
+    transcribed: dict[str, set[bytes]] = {}
+    uploading = False
+
+    async def voice_text(request: Request) -> Response:
+        nonlocal uploading
+        if not _same_site(request, "audio/wav"):
+            return _bad_request()
+        if voice is None or not voice.available:
+            reason = VOICE_OFF if voice is None else voice.reason
+            return JSONResponse(
+                {"error": "voice unavailable", "reason": reason}, status_code=503
+            )
+        quote_id = request.query_params.get("quote")
+        shown = next((q for q in desk.pending() if q["quote_id"] == quote_id), None)
+        if quote_id is None or shown is None or not desk.holder_keys:
+            return _bad_request()
+        consent = shown["consent"]
+        if desk.expired(consent["expires_at"]):
+            return JSONResponse({"error": "quote expired"}, status_code=409)
+        signature = _voice_signature(request)
+        if signature is None:
+            return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
+        # A signed clip is transcribed once per quote; forget closed quotes.
+        open_ids = {q["quote_id"] for q in desk.pending()}
+        for closed in transcribed.keys() - open_ids:
+            del transcribed[closed]
+        if signature in transcribed.get(quote_id, ()):
+            return JSONResponse({"error": "clip already transcribed"}, status_code=409)
+        # Claimed before the body is read, so parallel fake uploads cannot each
+        # buffer a full clip. The loop is single-threaded: no await in between.
+        if uploading:
+            return JSONResponse({"error": "voice busy"}, status_code=409)
+        uploading = True
+        try:
+            return await _transcribe(request, voice, quote_id, signature, consent)
+        finally:
+            uploading = False
+
+    async def _transcribe(
+        request: Request,
+        voice: Transcriber,
+        quote_id: str,
+        signature: bytes,
+        consent: dict[str, Any],
+    ) -> Response:
+        audio = await _capped_body(request, MAX_WAV_BYTES)
+        if audio is None:
+            return JSONResponse({"error": "audio too large"}, status_code=413)
+        # The digest covers the body actually received, so a signature over
+        # other audio or another quote fails here, before any model call.
+        if not verify_voice(quote_id, audio, signature, desk.holder_keys):
+            return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
+        transcribed.setdefault(quote_id, set()).add(signature)
+        keywords = (consent["recipient"], consent["reference"])
+        try:
+            heard = await anyio.to_thread.run_sync(voice.transcribe, audio, keywords)
+        except ValueError as err:
+            return JSONResponse({"error": str(err)}, status_code=400)
+        except VoiceBusyError:
+            return JSONResponse({"error": "voice busy"}, status_code=409)
+        except VoiceAPIError:
+            return JSONResponse({"error": "model error"}, status_code=502)
+        return JSONResponse({"transcript": heard.text})
+
     async def page(request: Request) -> Response:
-        return FileResponse(_WEBAPP / "index.html")
+        return FileResponse(_WEBAPP / "index.html", headers=dict(_PAGE_HEADERS))
 
     async def script(request: Request) -> Response:
         return FileResponse(_WEBAPP / "app.js", media_type="text/javascript")
@@ -368,6 +487,8 @@ state is returned."""
         ("/api/pending", "GET", pending),
         ("/api/approve", "POST", approve),
         ("/api/holder", "POST", holder),
+        ("/api/device", "GET", device),
+        ("/api/voice", "POST", voice_text),
     ):
         _route(srv, path, method, _host_guard(handler, allowed_hosts))
     return srv
@@ -468,7 +589,7 @@ def _route(srv: MCPServer, path: str, method: str, handler: _Handler) -> None:
 
 
 def cli(argv: list[str] | None = None) -> None:
-    """Console entry point: `mandate-desk [--host H] [--port P] [--source ACCT]`.
+    """Console entry point: `mandate-desk [--host H] [--port P] [--voice]`.
 
     Prints the one-time pairing URL the holder device must open first.
     """
@@ -484,6 +605,11 @@ def cli(argv: list[str] | None = None) -> None:
         default=[],
         help="extra Host name the holder routes accept, e.g. an HTTPS proxy name",
     )
+    parser.add_argument(
+        "--voice",
+        action="store_true",
+        help="let the holder page transcribe spoken confirmations (spends Meta calls)",
+    )
     args = parser.parse_args(argv)
     token = secrets.token_urlsafe(16)
     gate_key, gate_pub = generate_keypair()
@@ -496,7 +622,8 @@ def cli(argv: list[str] | None = None) -> None:
         nonces=lambda: secrets.token_hex(16),
     )
     allowed = (*_LOCAL_HOSTS, *args.public_host)
-    app = build_server(desk, token, allowed).streamable_http_app()
+    voice = transcriber_from_env(os.environ, enabled=args.voice)
+    app = build_server(desk, token, allowed, voice=voice).streamable_http_app()
     print(
         f"Pair the holder device: http://{args.host}:{args.port}/app/#pair={token}",
         flush=True,

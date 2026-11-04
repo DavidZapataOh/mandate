@@ -23,6 +23,8 @@ from swarm.redteam import PINNED, AttackKind
 from swarm.server import build_server
 from swarm.test_console_line import RECORD
 from swarm.test_server import FOREIGN, PAIR, _asgi
+from swarm.test_voice import CLIP
+from swarm.voice import NO_VOICE_KEY
 
 CSP = (
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
@@ -365,3 +367,18 @@ async def test_cli_serves_the_nimbus_steps(monkeypatch, capsys, dist):
         resp = await http.post("/api/deploy", json={"step": "stale_migration"})
     line = read_console_line(resp.text)
     assert (line.seq, line.subject["reason"]) == (1, "no rule matches")
+
+
+@pytest.mark.anyio
+async def test_cli_wires_voice_when_asked(monkeypatch, capsys, dist):
+    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    seen, _ = _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--voice")
+    async with _asgi(seen["app"]) as http:
+        resp = await http.post(
+            "/api/voice",
+            params={"quote": "q:000001"},
+            content=CLIP.read_bytes(),
+            headers={"content-type": "audio/wav"},
+        )
+    assert resp.json() == {"error": "voice unavailable", "reason": NO_VOICE_KEY}

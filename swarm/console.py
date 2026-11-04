@@ -27,6 +27,7 @@ from swarm.live_attack import live_attacker
 from swarm.nimbus import NimbusStep, ProdTarget, run_step
 from swarm.redteam import TEMPLATES, AttackKind, AttackPlan, apply_attack
 from swarm.server import build_server
+from swarm.voice import transcriber_from_env
 
 CONSOLE_DIST = Path(__file__).resolve().parent.parent / "console" / "dist"
 _DEMO_BALANCE_CENTS = 10000000
@@ -229,6 +230,11 @@ def cli(argv: list[str] | None = None) -> None:
         action="store_true",
         help="let the console ask the open-weights attacker (spends model calls)",
     )
+    parser.add_argument(
+        "--voice",
+        action="store_true",
+        help="let the holder page transcribe spoken confirmations (spends Meta calls)",
+    )
     parser.add_argument("--console-dir", type=Path, default=CONSOLE_DIST)
     parser.add_argument(
         "--public-host",
@@ -265,6 +271,7 @@ def cli(argv: list[str] | None = None) -> None:
         attacks=runner,
         deploys=deploys,
         live=live_attacker(runner, os.environ, enabled=args.live_attacker),
+        voice=transcriber_from_env(os.environ, enabled=args.voice),
         console_dir=args.console_dir,
     ).streamable_http_app()
     if args.journal is not None:
