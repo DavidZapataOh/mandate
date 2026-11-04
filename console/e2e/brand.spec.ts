@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { CONSOLE_PAGES, type TextRun, textRuns, visit } from "./surfaces";
+import { CONSOLE_PAGES, GLASSES, type TextRun, textRuns, visit } from "./surfaces";
 
 const WEIGHTS: Readonly<Record<string, readonly string[]>> = {
   Inter: ["400", "700", "800"],
@@ -54,4 +54,11 @@ test("the manifest and its icons are served at the sizes and types it declares",
   expect((await touch.body()).readUInt32BE(16)).toBe(180);
   const ico = await request.get("/console/brand/favicon.ico");
   expect([ico.status(), ico.headers()["content-type"]]).toEqual([200, "image/x-icon"]);
+});
+
+test("the glasses page sets Bone on pure black in loaded brand faces", async ({ page }) => {
+  await visit(page, GLASSES);
+  const ground = await page.locator("body").evaluate((b) => [getComputedStyle(b).backgroundColor, getComputedStyle(b).color]);
+  expect(ground).toEqual(["rgb(0, 0, 0)", "rgb(246, 244, 238)"]);
+  expect(offBrand(await textRuns(page))).toEqual([]);
 });

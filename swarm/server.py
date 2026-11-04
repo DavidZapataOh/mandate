@@ -76,6 +76,13 @@ _VOICE_DOMAIN = "mandate/intent-voice/v1"
 _AGENT_DOMAIN = "mandate/agent-start/v1"
 _INTENT_KEYS = frozenset({"amount_cents", "currency", "recipient", "reference"})
 _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
+_FONTS = frozenset(
+    {
+        "inter-latin-400-normal.woff2",
+        "inter-latin-700-normal.woff2",
+        "jetbrains-mono-latin-400-normal.woff2",
+    }
+)
 _BAD_REQUEST = {"error": "bad request"}
 _APPROVAL = ("signature", "consent_key", "key_signature")
 _PROOF_FIELDS = ("intent_id", "presentation")
@@ -706,6 +713,12 @@ state is returned."""
     async def style(request: Request) -> Response:
         return FileResponse(_WEBAPP / "app.css", media_type="text/css")
 
+    async def font(request: Request) -> Response:
+        name = request.path_params["name"]
+        if name not in _FONTS:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(_WEBAPP / "fonts" / name, media_type="font/woff2")
+
     async def events(request: Request) -> Response:
         since = _since(request)
         if since is None or hub is None:
@@ -808,6 +821,7 @@ state is returned."""
         ("/app/", "GET", page),
         ("/app/app.js", "GET", script),
         ("/app/app.css", "GET", style),
+        ("/app/fonts/{name}", "GET", font),
         ("/api/pending", "GET", pending),
         ("/api/approve", "POST", approve),
         ("/api/holder", "POST", holder),

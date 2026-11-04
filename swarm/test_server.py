@@ -590,3 +590,27 @@ async def test_approve_needs_the_one_time_key_and_its_certificate(
         resp = await http.post("/api/approve", json=sent)
     assert (resp.status_code, resp.json()) == (400, {"error": "bad request"})
     assert desk.status("q:000001")["status"] == "quoted"
+
+
+@pytest.mark.anyio
+async def test_web_app_serves_its_three_fonts_and_nothing_else(make_desk):
+    desk, _ = make_desk()
+    async with _http(desk) as http:
+        fonts = [
+            await http.get(f"/app/fonts/{name}")
+            for name in (
+                "inter-latin-400-normal.woff2",
+                "inter-latin-700-normal.woff2",
+                "jetbrains-mono-latin-400-normal.woff2",
+            )
+        ]
+        licence = await http.get("/app/fonts/OFL-Inter.txt")
+        script = await http.get("/app/fonts/app.js")
+        foreign = await http.get(
+            "/app/fonts/inter-latin-400-normal.woff2", headers=FOREIGN
+        )
+    assert [f.status_code for f in fonts] == [200, 200, 200]
+    assert {f.headers["content-type"] for f in fonts} == {"font/woff2"}
+    assert {f.content[:4] for f in fonts} == {b"wOF2"}
+    assert [licence.status_code, script.status_code] == [404, 404]
+    assert foreign.status_code == 400

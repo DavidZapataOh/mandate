@@ -99,3 +99,7 @@ test("every built page carries the brand head and none hand-writes an icon", () 
   }
   expect(JSON.parse(readFileSync(join(dist, "brand/site.webmanifest"), "utf8")).theme_color).toBe("#0B0D10");
 });
+
+test("the glasses page stays on the brand palette over a pure black ground", () => {
+  expect(offPalette(readFileSync(join(REPO, "webapp/app.css"), "utf8"), ["000000"])).toEqual([]);
+});
