@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
-import { forge, GATE_KEY, RECEIPT } from "../src/explorer/__fixtures__/receipts";
+import { forge, GATE_KEY, RECEIPT, tamper } from "../src/explorer/__fixtures__/receipts";
+import OTS from "../src/explorer/__fixtures__/ots.json" with { type: "json" };
 
 async function open(page: Page): Promise<void> {
   await page.goto("/console/explorer.html");
@@ -40,6 +41,18 @@ test("with a pinned key the receipt verifies offline and a forgery fails red", a
   await expect(verdict(page)).toHaveText("NOT VERIFIED");
   await expect(failed(page)).toHaveAttribute("data-step", "Receipt disclosures");
   await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(2);
+});
+
+test("a pending public timestamp reads PENDING offline and never as a pass", async ({ page, context }) => {
+  await open(page);
+  await context.setOffline(true);
+  await page.locator("#gate-key").fill(GATE_KEY);
+  await verify(page, tamper("public_anchor", { v: 1, ots: OTS.golden.pending, bitcoin: null }));
+  await expect(verdict(page)).toHaveText("VERIFIED");
+  const step = page.locator('#steps li[data-step="Public anchor"]');
+  await expect(step).toHaveAttribute("data-status", "pending");
+  await expect(step.locator(".mark")).toHaveText("PENDING");
+  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(11);
 });
 
 test("a payment id needs the server and says so offline", async ({ page, context }) => {

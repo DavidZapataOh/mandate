@@ -18,6 +18,7 @@ const MARKS: Readonly<Record<Status, string>> = {
   pass: "PASS",
   fail: "FAIL",
   withheld: "WITHHELD",
+  pending: "PENDING",
   unchecked: "NOT CHECKED",
 };
 

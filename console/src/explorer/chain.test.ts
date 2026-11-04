@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64, fromBase64Url, toHex } from "./bytes";
 import { canonicalJson, hmacSha256Hex, keyBytes, sha256Hex } from "./canon";
-import { anchorDigest, consentBytes, leafHash, readClaims, reasoningCommitment, rootOf, sealBytes } from "./chain";
+import { consentBytes, leafHash, readClaims, reasoningAnchorDigest, reasoningCommitment, rootOf, sealBytes } from "./chain";
 import { CAVA, CONSENT, CONSENT_KEY, GATE_KEY, HOLDER_KEY, RECEIPT } from "./__fixtures__/receipts";
 
 const golden = JSON.parse(RECEIPT);
@@ -163,7 +163,7 @@ describe("reasoning anchor matches swarm/anchor.py", () => {
 
   it("digests a Meta response anchor", async () => {
     expect(
-      await anchorDigest({
+      await reasoningAnchorDigest({
         v: 1,
         model: "muse-spark-1.3",
         response_id: "resp_golden_1",

@@ -20,6 +20,7 @@ from typing import Any
 
 import uvicorn
 from increase import AuthenticationError, IncreaseError, PermissionDeniedError
+from opentimestamps.calendar import RemoteCalendar
 
 from bank.api import Bank
 from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
@@ -34,6 +35,13 @@ from evidence.notary import (
     start_notary,
 )
 from evidence.zktls import ZKTLS_BIN_ENV, BankProofSetup, find_verifier
+from gate.anchor_public import (
+    AGGREGATORS,
+    CALENDAR_TIMEOUT_S,
+    HEADER_TIMEOUT_S,
+    EsploraHeaders,
+    PublicAnchors,
+)
 from gate.certs import generate_keypair, public_key_of
 from gate.policy import Intent
 from gate.shim import RawCall
@@ -59,8 +67,15 @@ _DEMO_BALANCE_CENTS = 10000000
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _GRACEFUL_SHUTDOWN_S = 2
 RECONCILE_EVERY_S = 60
+ANCHOR_EVERY_S = 600
+# Best effort: a round that upgrades many proofs can outlast this; the store
+# closes under it and its write fails closed, logged by type.
+_ANCHOR_JOIN_S = CALENDAR_TIMEOUT_S * len(AGGREGATORS) + HEADER_TIMEOUT_S
 _PRIVATE_DIR = 0o700
 _NEEDS_STATE_DIR = "bank rail needs --state-dir: receipts must outlive the process\n"
+_ANCHOR_NEEDS_STATE_DIR = (
+    "public anchor needs --state-dir: proofs are upgraded hours later\n"
+)
 _log = logging.getLogger(__name__)
 _INTENT = Intent(
     amount_cents=20000, currency="USD", recipient="acme-991", reference="A-991"
@@ -447,6 +462,53 @@ def reconcile_round(desk: PaymentDesk) -> None:
         _log.error("reconcile failed (%s)", type(exc).__name__)
 
 
+def anchor_every(
+    anchors: PublicAnchors, every_s: float, stop: threading.Event
+) -> threading.Thread:
+    """Run an anchor round at once, then every ``every_s`` seconds until stopped.
+
+    A round a third party kept from completing is logged with its reason, one
+    that raised by its type only, and either is tried again at the next one;
+    nothing waits on this thread but shutdown.
+
+    Args:
+        anchors: The store's public anchors.
+        every_s: Seconds between rounds.
+        stop: Set to end the loop.
+
+    Returns:
+        The started daemon thread.
+    """
+
+    def loop() -> None:
+        anchor_round(anchors)
+        while not stop.wait(every_s):
+            anchor_round(anchors)
+
+    thread = threading.Thread(target=loop, name="anchor", daemon=True)
+    thread.start()
+    return thread
+
+
+def anchor_round(anchors: PublicAnchors) -> None:
+    """Run one anchor round and log what kept it from completing.
+
+    A reported `AnchorError` is logged at warning with its text, a fixed
+    reason of the desk's; an exception is logged by its type only.
+
+    Args:
+        anchors: The store's public anchors.
+    """
+    try:
+        done = anchors.round()
+    except Exception as exc:
+        # Only the type: a message could carry a third party's text.
+        _log.error("anchor round failed (%s)", type(exc).__name__)
+        return
+    if done.error is not None:
+        _log.warning("anchor round incomplete (%s)", done.error)
+
+
 def _port_free(listen: str) -> bool:
     host, _, port = listen.rpartition(":")
     with socket.socket() as probe:
@@ -493,7 +555,9 @@ def cli(argv: list[str] | None = None) -> None:
     With ``--state-dir`` the gate key, registry, receipts and fences live in
     that directory, locked to this process and closed when the server stops;
     the sandbox rail requires it. The desk reconciles with its bank at start,
-    and every ``RECONCILE_EVERY_S`` on the sandbox rail. Template attacks
+    and every ``RECONCILE_EVERY_S`` on the sandbox rail. ``--public-anchor``
+    (needs ``--state-dir``) stamps the store's seals through public
+    OpenTimestamps calendars at start and every ``ANCHOR_EVERY_S``. Template attacks
     always run on a simulated bank of their own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
@@ -523,6 +587,14 @@ def cli(argv: list[str] | None = None) -> None:
             "directory that keeps the gate key, the registry, receipts and "
             "fences across restarts (keep it outside any repository, e.g. "
             "~/.mandate-demo); needed by --rail sandbox; default: in memory"
+        ),
+    )
+    parser.add_argument(
+        "--public-anchor",
+        action="store_true",
+        help=(
+            "stamp every registry seal through public OpenTimestamps calendars "
+            "and upgrade to Bitcoin; needs --state-dir"
         ),
     )
     parser.add_argument(
@@ -580,6 +652,8 @@ def cli(argv: list[str] | None = None) -> None:
         parser.error(f"--holders must be 0 to {MAX_HOLDERS}")
     if args.unpair and args.state_dir is None:
         parser.error("--unpair needs --state-dir: holders live in the state directory")
+    if args.public_anchor and args.state_dir is None:
+        parser.exit(2, _ANCHOR_NEEDS_STATE_DIR)
     book = _payee_book(args.payees)
     if book is None:
         parser.exit(2, f"payee book unreadable: {args.payees}\n")
@@ -610,12 +684,23 @@ def cli(argv: list[str] | None = None) -> None:
         hub = EventHub()
         if args.record is not None:
             hub.record(args.record)
-        desk = _desk(parser, args.source, rail, gate_key, zktls, state, hub)
+        anchors = (
+            PublicAnchors(
+                state,
+                public_key_of(gate_key),
+                [RemoteCalendar(url) for url in AGGREGATORS],
+                EsploraHeaders(),
+                _now,
+            )
+            if args.public_anchor and state is not None
+            else None
+        )
+        desk = _desk(parser, args.source, rail, gate_key, zktls, state, hub, anchors)
         for holder_id in args.unpair:
             if not desk.unpair_holder(holder_id):
                 parser.error(f"not a paired holder: {holder_id}")
             print(f"Unpaired holder {holder_id}.", flush=True)
-        _serve(parser, args, book, desk, gate_key, hub, held)
+        _serve(parser, args, book, desk, gate_key, hub, held, anchors)
 
 
 def _desk(
@@ -626,6 +711,7 @@ def _desk(
     zktls: BankProofSetup | None,
     state: StateStore | None,
     hub: EventHub,
+    anchors: PublicAnchors | None,
 ) -> PaymentDesk:
     # Loading the registry checks every stored seal; a store that fails it
     # stops the start like any other store error.
@@ -640,6 +726,7 @@ def _desk(
             publish=hub.publish,
             zktls=zktls,
             state=state,
+            anchors=anchors,
         )
 
 
@@ -651,6 +738,7 @@ def _serve(
     gate_key: bytes,
     hub: EventHub,
     held: ExitStack,
+    anchors: PublicAnchors | None,
 ) -> None:
     intake, agent = _spark(os.environ, book)
     tokens = tuple(secrets.token_urlsafe(16) for _ in range(args.holders))
@@ -673,6 +761,7 @@ def _serve(
         console_dir=args.console_dir,
         intake=intake,
         agent=agent,
+        anchors=anchors,
     ).streamable_http_app()
     # A round that fails leaves its reason in the view; the console serves.
     reconcile_round(desk)
@@ -682,6 +771,11 @@ def _serve(
         # Unwound first: a round still asking the bank ends before the store
         # closes.
         held.callback(_end_loop, stop, loop)
+    if anchors is not None:
+        stop_anchoring = threading.Event()
+        anchoring = anchor_every(anchors, ANCHOR_EVERY_S, stop_anchoring)
+        # Unwound before the store closes, like the reconcile loop.
+        held.callback(_end_loop, stop_anchoring, anchoring, _ANCHOR_JOIN_S)
     if args.journal is not None:
         # A daemon thread: the process ends with the server.
         JournalTail(args.journal, hub).start()
@@ -694,6 +788,8 @@ def _serve(
     console_server(app, args.host, args.port, hub, held.close).run()
 
 
-def _end_loop(stop: threading.Event, loop: threading.Thread) -> None:
+def _end_loop(
+    stop: threading.Event, loop: threading.Thread, wait_s: float = RECONCILE_EVERY_S
+) -> None:
     stop.set()
-    loop.join(RECONCILE_EVERY_S)
+    loop.join(wait_s)

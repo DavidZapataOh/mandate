@@ -464,7 +464,8 @@ main {
   overflow-wrap: anywhere;
 }
 
-#steps li[data-status="withheld"] p {
+#steps li[data-status="withheld"] p,
+#steps li[data-status="pending"] p {
   grid-area: detail;
   padding: 0 0 6px;
 }

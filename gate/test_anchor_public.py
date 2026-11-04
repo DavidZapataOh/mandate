@@ -5,8 +5,8 @@ import threading
 
 import httpx2
 import pytest
-from opentimestamps.core.notary import PendingAttestation
-from opentimestamps.core.op import OpSHA256
+from opentimestamps.core.notary import BitcoinBlockHeaderAttestation, PendingAttestation
+from opentimestamps.core.op import OpAppend, OpKECCAK256, OpSHA1, OpSHA256
 from opentimestamps.core.serialize import (
     BytesDeserializationContext,
     BytesSerializationContext,
@@ -26,6 +26,7 @@ from gate.anchor_public import (
     attested_heights,
     block_hash,
     confirm,
+    explorer_can_read,
     stamp,
     upgrade,
 )
@@ -494,3 +495,173 @@ def test_a_corrupt_record_reads_as_no_anchor(state_store, caplog):
     state_store.put_record("ots-pending", "1", "{not json")
     assert _anchors(state_store).view(1) is None
     assert "anchor record unreadable (JSONDecodeError)" in caplog.text
+
+
+def _crafted_proof(tree: str) -> bytes:
+    return bytes.fromhex(MAGIC + DIGEST + tree)
+
+
+def _varbytes(data: bytes) -> str:
+    assert len(data) < 0x80
+    return f"{len(data):02x}" + data.hex()
+
+
+ATTESTED = "00" + "0588960d73d71901" + _varbytes(bytes.fromhex("a0ef36"))
+
+
+def _pending_at(uri: bytes) -> str:
+    return "00" + "83dfe30d2ef90c8e" + _varbytes(bytes.fromhex(_varbytes(uri)))
+
+
+@pytest.mark.parametrize(
+    ("tree", "readable"),
+    [
+        (ATTESTED, True),
+        (_pending_at(b"https://alice.btc.calendar.opentimestamps.org"), True),
+        ("08" * 255 + ATTESTED, True),
+        ("08" * 256 + ATTESTED, False),
+        ("ff" + "08" + ATTESTED + "f001aa" + ATTESTED, True),
+        ("ff" + "08" + ATTESTED + "08" + ATTESTED, False),
+        ("ff" + "f001aa" + ATTESTED + "f001aa" + ATTESTED, False),
+        ("02" + ATTESTED, False),
+        ("67" + ATTESTED, False),
+        ("f000" + ATTESTED, False),
+        (ATTESTED + "00", False),
+        (ATTESTED[:-2], False),
+        (_pending_at(b"https://a b"), False),
+        ("00" + "0102030405060708" + _varbytes(b"any payload"), True),
+        ("00" + "0588960d73d71901" + _varbytes(bytes.fromhex("8080808010")), False),
+    ],
+)
+def test_the_desk_reads_a_proof_as_the_explorer_does(tree, readable):
+    assert explorer_can_read(_crafted_proof(tree)) is readable
+
+
+def test_the_desk_refuses_what_the_explorer_refuses_whole():
+    assert explorer_can_read(PENDING) and explorer_can_read(UPGRADED)
+    assert explorer_can_read(unb64(OTS["golden"]["pending"]))
+    assert not explorer_can_read(HELLO)  # ripemd160
+    assert not explorer_can_read(UPGRADED[:-1])
+    assert not explorer_can_read(b"not a proof")
+    wide = "".join(
+        "ff" + "f0" + "a01f" + (bytes([i]) * 4000).hex() + ATTESTED for i in range(9)
+    )
+    assert not explorer_can_read(_crafted_proof(wide + ATTESTED))
+
+
+class _Crafted:
+    """A calendar that answers every call with a timestamp built for its message."""
+
+    def __init__(self, build) -> None:
+        self.build = build
+
+    def submit(self, digest: bytes, timeout: float | None = None) -> Timestamp:
+        return self.build(digest)
+
+    def get_timestamp(
+        self, commitment: bytes, timeout: float | None = None
+    ) -> Timestamp:
+        return self.build(commitment)
+
+
+def _foreign_op(op):
+    def build(msg):
+        stamp_ = Timestamp(msg)
+        stamp_.ops.add(op).attestations.add(BitcoinBlockHeaderAttestation(900000))
+        return stamp_
+
+    return build
+
+
+def _deep(ops):
+    def build(msg):
+        stamp_ = node = Timestamp(msg)
+        for _ in range(ops):
+            node = node.ops.add(OpSHA256())
+        node.attestations.add(BitcoinBlockHeaderAttestation(900000))
+        return stamp_
+
+    return build
+
+
+def _wide(appends, first=0):
+    def build(msg):
+        stamp_ = Timestamp(msg)
+        for i in range(first, first + appends):
+            child = stamp_.ops.add(OpAppend(bytes([i]) * 4000))
+            child.attestations.add(BitcoinBlockHeaderAttestation(900000))
+        return stamp_
+
+    return build
+
+
+def _dangling(msg):
+    stamp_ = Timestamp(msg)
+    stamp_.ops.add(OpSHA256())
+    stamp_.attestations.add(BitcoinBlockHeaderAttestation(900000))
+    return stamp_
+
+
+# A lone digest's tip sits two operations deep (nonce, sha256): 253 more is the
+# deepest the explorer reads.
+UNREADABLE = {
+    "sha1": _foreign_op(OpSHA1()),
+    "keccak256": _foreign_op(OpKECCAK256()),
+    "too deep": _deep(254),
+    "too large": _wide(9),
+    "dangling": _dangling,
+}
+
+
+@pytest.mark.parametrize("build", UNREADABLE.values(), ids=UNREADABLE.keys())
+def test_a_stamp_drops_an_answer_the_explorer_cannot_read(build):
+    good = recorded_aggregators()[:3]
+    (proof,) = stamp([D1], [_Crafted(build), *good], lambda: b"\x01" * 16)
+    assert proof == stamp([D1], recorded_aggregators()[:3], lambda: b"\x01" * 16)[0]
+    assert explorer_can_read(proof)
+    with pytest.raises(AnchorError, match="^anchor: 1 of 2 calendars answered$"):
+        stamp([D1], [_Crafted(build), good[0]], lambda: b"\x01" * 16)
+
+
+def test_a_stamp_keeps_the_deepest_answer_the_explorer_reads():
+    (proof,) = stamp(
+        [D1], [_Crafted(_deep(253)), *recorded_aggregators()[:1]], lambda: b"\x01" * 16
+    )
+    assert explorer_can_read(proof)
+    assert attested_heights(proof) == [900000]
+
+
+def test_a_stamp_drops_the_answer_that_would_outgrow_the_explorer():
+    first, second = _Crafted(_wide(7)), _Crafted(_wide(2, first=7))
+    good = recorded_aggregators()[:2]
+    (proof,) = stamp([D1], [first, second, *good], lambda: b"\x01" * 16)
+    assert proof == stamp([D1], [first, *good], lambda: b"\x01" * 16)[0]
+    assert explorer_can_read(proof)
+
+
+@pytest.mark.parametrize("build", UNREADABLE.values(), ids=UNREADABLE.keys())
+def test_an_upgrade_drops_an_answer_the_explorer_cannot_read(build):
+    assert upgrade(PENDING, lambda uri: _Crafted(build)) == PENDING
+    calendars = RecordedCalendars(OTS["core29"]["answers"])
+    poisoned = sorted(CALENDARS)[0]
+
+    def calendar_for(uri: str) -> Calendar:
+        return _Crafted(build) if uri == poisoned else calendars.for_uri(uri)
+
+    def broken_for(uri: str) -> Calendar:
+        return _BrokenCalendar() if uri == poisoned else calendars.for_uri(uri)
+
+    upgraded = upgrade(PENDING, calendar_for)
+    assert upgraded == upgrade(PENDING, broken_for)
+    assert explorer_can_read(upgraded)
+
+
+def test_a_malformed_stored_seal_does_not_wedge_the_rounds(state_store):
+    seal = {**_seal(1, ROOT), "signature": base64.b64encode(bytes(10)).decode()}
+    state_store.add_seal(seal)
+    record = {"ots": OTS["core29"]["upgraded"], "bitcoin": None, "stamped_at": 1}
+    state_store.put_record("ots-pending", "1", json.dumps(record))
+    state_store.put("anchored_to", "1")
+    anchors = _anchors(state_store, headers=RecordedHeaders({892418: H18}))
+    assert anchors.round() == AnchorRound(0, 0, 1, "anchor: proof malformed")
+    assert anchors.view(1)["ots"] == OTS["core29"]["upgraded"]

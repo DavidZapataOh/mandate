@@ -176,25 +176,180 @@ def stamp(
 
     Raises:
         ValueError: `roots` is empty.
-        AnchorError: Fewer than `MIN_CALENDARS` calendars answered.
+        AnchorError: Fewer than `MIN_CALENDARS` calendars answered with a
+            proof the explorer can read.
     """
     if not roots:
         raise ValueError("anchor: nothing to stamp")
+    salts = [nonces() for _ in roots]
+    tip_msg = _stamped(roots, salts, [])[1]
+    kept: list[Timestamp] = []
+    out: list[bytes] = []
+    for calendar in calendars:
+        answer = _ask(calendar, tip_msg)
+        if answer is None:
+            continue
+        trial = _readable(roots, salts, [*kept, answer])
+        if trial is not None:
+            kept.append(answer)
+            out = trial
+    if len(kept) < MIN_CALENDARS:
+        raise AnchorError(f"anchor: {len(kept)} of {len(calendars)} calendars answered")
+    return out
+
+
+def _readable(
+    roots: Sequence[bytes], salts: Sequence[bytes], answers: Sequence[Timestamp]
+) -> list[bytes] | None:
+    # An answer the explorer could not read would fail every receipt of the
+    # batch for good, so it counts as no answer.
+    try:
+        proofs = [_serialized(p) for p in _stamped(roots, salts, answers)[0]]
+    except Exception:
+        return None
+    return proofs if all(explorer_can_read(p) for p in proofs) else None
+
+
+def _stamped(
+    roots: Sequence[bytes], salts: Sequence[bytes], answers: Sequence[Timestamp]
+) -> tuple[list[DetachedTimestampFile], bytes]:
+    # Rebuilt per answer, so a refused answer leaves no trace in the proofs.
     proofs = [DetachedTimestampFile(OpSHA256(), Timestamp(root)) for root in roots]
     leaves = [
-        proof.timestamp.ops.add(OpAppend(nonces())).ops.add(OpSHA256())
-        for proof in proofs
+        proof.timestamp.ops.add(OpAppend(salt)).ops.add(OpSHA256())
+        for proof, salt in zip(proofs, salts, strict=True)
     ]
     tip = make_merkle_tree(leaves)
-    answered = 0
-    for calendar in calendars:
-        answer = _ask(calendar, tip.msg)
-        if answer is not None:
-            tip.merge(answer)
-            answered += 1
-    if answered < MIN_CALENDARS:
-        raise AnchorError(f"anchor: {answered} of {len(calendars)} calendars answered")
-    return [_serialized(proof) for proof in proofs]
+    for answer in answers:
+        tip.merge(answer)
+    return proofs, bytes(tip.msg)
+
+
+_OTS_MAGIC = bytes.fromhex(
+    "004f70656e54696d657374616d7073000050726f6f6600bf89e2e884e89294"
+)
+_PENDING_TAG = bytes.fromhex("83dfe30d2ef90c8e")
+_BITCOIN_TAG = bytes.fromhex("0588960d73d71901")
+_MAX_DEPTH = 256
+_MAX_ARG = 4096
+_MAX_PAYLOAD = 8192
+_MAX_URI = 1000
+_MAX_HEIGHT = 0xFFFFFFFF
+_URI_CHARS = re.compile(r"[A-Za-z0-9._/:-]*")
+
+
+class _UnreadableError(Exception):
+    pass
+
+
+class _Reader:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._at = 0
+
+    @property
+    def done(self) -> bool:
+        return self._at == len(self._data)
+
+    def take(self, n: int) -> bytes:
+        if self._at + n > len(self._data):
+            raise _UnreadableError
+        out = self._data[self._at : self._at + n]
+        self._at += n
+        return out
+
+    def byte(self) -> int:
+        return self.take(1)[0]
+
+    def varuint(self) -> int:
+        value = 0
+        for i in range(9):
+            b = self.byte()
+            value |= (b & 0x7F) << (7 * i)
+            if not b & 0x80:
+                return value
+        raise _UnreadableError
+
+    def varbytes(self, most: int, least: int = 0) -> bytes:
+        n = self.varuint()
+        if not least <= n <= most:
+            raise _UnreadableError
+        return self.take(n)
+
+
+def _check_attestation(tag: bytes, payload: bytes) -> None:
+    r = _Reader(payload)
+    if tag == _PENDING_TAG:
+        try:
+            uri = r.varbytes(_MAX_URI).decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise _UnreadableError from exc
+        if not _URI_CHARS.fullmatch(uri):
+            raise _UnreadableError
+    elif tag == _BITCOIN_TAG:
+        if r.varuint() > _MAX_HEIGHT:
+            raise _UnreadableError
+    else:
+        return
+    if not r.done:
+        raise _UnreadableError
+
+
+def _check_tree(r: _Reader, msg_len: int, depth: int) -> None:
+    if depth >= _MAX_DEPTH:
+        raise _UnreadableError
+    seen: set[bytes] = set()
+    tag = r.byte()
+    while tag == 0xFF:
+        _check_branch(r, r.byte(), msg_len, depth, seen)
+        tag = r.byte()
+    _check_branch(r, tag, msg_len, depth, seen)
+
+
+def _check_branch(
+    r: _Reader, tag: int, msg_len: int, depth: int, seen: set[bytes]
+) -> None:
+    if tag == 0x00:
+        kind = r.take(8)
+        _check_attestation(kind, r.varbytes(_MAX_PAYLOAD))
+        return
+    if tag == 0x08:
+        op, next_len = b"\x08", 32
+    elif tag in (0xF0, 0xF1):
+        arg = r.varbytes(_MAX_ARG, 1)
+        op, next_len = bytes([tag]) + arg, msg_len + len(arg)
+    else:
+        raise _UnreadableError
+    if op in seen or next_len > _MAX_ARG:
+        raise _UnreadableError
+    seen.add(op)
+    _check_tree(r, next_len, depth + 1)
+
+
+def explorer_can_read(proof: bytes) -> bool:
+    """Whether the explorer's proof reader accepts these `.ots` bytes.
+
+    The same rules as the console's `readOts`: size, magic, version, a
+    sha256 file digest, sha256/append/prepend only, nesting, a repeated
+    operation, argument, result and attestation limits, no trailing bytes.
+
+    Args:
+        proof: A serialized `.ots` proof.
+
+    Returns:
+        True when the explorer would read it, else False.
+    """
+    if len(proof) > MAX_PROOF_BYTES or not proof.startswith(_OTS_MAGIC):
+        return False
+    r = _Reader(proof[len(_OTS_MAGIC) :])
+    try:
+        if r.varuint() != 1 or r.byte() != 0x08:
+            return False
+        r.take(32)
+        _check_tree(r, 32, 0)
+    except _UnreadableError:
+        return False
+    return r.done
 
 
 _CHECKABLE_OPS = (OpSHA256, OpAppend, OpPrepend)
@@ -245,10 +400,11 @@ def upgrade(
             proofs so a batch asks each calendar once per commitment.
 
     Returns:
-        The serialized proof; the same bytes when no calendar had anything new.
+        The serialized proof; the same bytes when no calendar had anything new
+        the explorer can read.
 
     Raises:
-        AnchorError: The proof is malformed, or the upgrade made it too large.
+        AnchorError: The proof is malformed.
     """
     parsed = _parse(proof)
     cache = {} if cache is None else cache
@@ -277,16 +433,28 @@ def upgrade(
             if answer is None:
                 continue
             new = _attestations(answer) - existing
-            if new:
+            if new and _merged_readably(parsed, sub, answer):
                 existing |= new
-                sub.merge(answer)
                 changed = True
-    if not changed:
-        return proof
-    out = _serialized(parsed)
-    if len(out) > MAX_PROOF_BYTES:
-        raise AnchorError("anchor: proof too large")
-    return out
+    return _serialized(parsed) if changed else proof
+
+
+def _merged_readably(
+    parsed: DetachedTimestampFile, sub: Timestamp, answer: Timestamp
+) -> bool:
+    # An answer the explorer could not read would fail the receipt for good,
+    # so it counts as no answer and `sub` is put back as it was.
+    ctx = BytesSerializationContext()
+    sub.serialize(ctx)
+    saved = Timestamp.deserialize(BytesDeserializationContext(ctx.getbytes()), sub.msg)
+    try:
+        sub.merge(answer)
+        readable = explorer_can_read(_serialized(parsed))
+    except Exception:
+        readable = False
+    if not readable:
+        sub.attestations, sub.ops = saved.attestations, saved.ops
+    return readable
 
 
 def attested_heights(proof: bytes) -> list[int]:
@@ -502,16 +670,33 @@ class PublicAnchors:
     def round(self) -> AnchorRound:
         """Stamp new seals, upgrade pending proofs, record confirmed ones.
 
-        One round runs at a time; a second caller waits for the first.
+        One round runs at a time; a second caller waits for the first
+        (`try_round` does not).
 
         Returns:
             What the round did; an `AnchorError` is reported, not raised.
         """
         with self._rounds:
-            stamped, error = self._stamp()
-            confirmed, upgrade_error = self._upgrade()
-            pending = len(self._state.records(_PENDING))
-            return AnchorRound(stamped, confirmed, pending, error or upgrade_error)
+            return self._round()
+
+    def try_round(self) -> AnchorRound | None:
+        """Run a round like `round`, unless one is already running.
+
+        Returns:
+            What the round did, or None when another round holds the slot.
+        """
+        if not self._rounds.acquire(blocking=False):
+            return None
+        try:
+            return self._round()
+        finally:
+            self._rounds.release()
+
+    def _round(self) -> AnchorRound:
+        stamped, error = self._stamp()
+        confirmed, upgrade_error = self._upgrade()
+        pending = len(self._state.records(_PENDING))
+        return AnchorRound(stamped, confirmed, pending, error or upgrade_error)
 
     def _anchored_to(self) -> int:
         return int(self._state.get(_ANCHORED_TO) or 0)
@@ -569,12 +754,16 @@ class PublicAnchors:
         # checked before any header is fetched for it.
         found = self._state.seals_after(seq_to - 1, 1)
         parsed = _parse(proof)
+        if not found or found[0]["seq_to"] != seq_to:
+            raise AnchorError("anchor: proof is not over this seal's anchor digest")
+        try:
+            digest = anchor_digest_of(found[0], self._gate_public_key)
+        except (ValueError, KeyError, TypeError) as exc:
+            # One unreadable seal must not stop every other proof's upgrade.
+            raise AnchorError("anchor: proof malformed") from exc
         if (
-            not found
-            or found[0]["seq_to"] != seq_to
-            or not isinstance(parsed.file_hash_op, OpSHA256)
-            or bytes(parsed.file_digest)
-            != (digest := anchor_digest_of(found[0], self._gate_public_key))
+            not isinstance(parsed.file_hash_op, OpSHA256)
+            or bytes(parsed.file_digest) != digest
         ):
             raise AnchorError("anchor: proof is not over this seal's anchor digest")
         return digest

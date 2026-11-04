@@ -9,7 +9,7 @@ export async function verifiedReceipt(page: Page): Promise<void> {
   await page.locator("#paste").fill(RECEIPT);
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page.locator("#verdict .label")).toHaveText("VERIFIED");
-  await expect(page.locator("#steps li")).toHaveCount(11);
+  await expect(page.locator("#steps li")).toHaveCount(12);
   await expect(page.locator('#steps li[data-step="Bank transfer"]')).toBeVisible();
   await expect(page.locator('#steps li[data-step="Funds proof"]')).toBeVisible();
 }

@@ -1,6 +1,18 @@
-import { fromBase64, toBase64, verifyEd25519, type Bytes } from "./bytes";
+import { fromBase64, fromHex, toBase64, verifyEd25519, type Bytes } from "./bytes";
 import { hmacSha256Hex, keyBytes } from "./canon";
-import { anchorDigest, cavaJson, certificateId, consentBytes, leafHash, readClaims, reasoningCommitment, rootOf, sealBytes } from "./chain";
+import {
+  anchorDigest,
+  cavaJson,
+  certificateId,
+  consentBytes,
+  leafHash,
+  readClaims,
+  reasoningAnchorDigest,
+  reasoningCommitment,
+  rootOf,
+  sealBytes,
+} from "./chain";
+import { OtsError, readHeader, readOts, type OtsProof } from "./ots";
 import { parseDisclosed, parseReceipt, ReceiptError, type Disclosed, type Receipt } from "./receipt";
 import { processSdJwt, RECEIPT_TYP } from "./sdjwt";
 
@@ -14,13 +26,14 @@ export const STEPS = [
   "Holder consent",
   "Registry inclusion",
   "Registry seal",
+  "Public anchor",
   "Reasoning anchor",
   "Bank transfer",
   "Funds proof",
 ] as const;
 
 export type StepName = (typeof STEPS)[number];
-export type Status = "pass" | "fail" | "withheld" | "unchecked";
+export type Status = "pass" | "fail" | "withheld" | "pending" | "unchecked";
 
 export interface StepResult {
   step: StepName;
@@ -54,6 +67,7 @@ const UNCHECKED = "Not checked: an earlier step failed";
 const RECEIPT_NEEDED = "Paste the full receipt to check this step";
 const ACTION_WITHHELD = "Withheld: the action's targets and salt were not disclosed; the certificate still fixes its salted hash";
 const CONSENT_WITHHELD = "Withheld: the holder's signed fields were not all disclosed";
+const NO_PUBLIC_ANCHOR = "No public timestamp in this receipt: the desk has not stamped its seal";
 const HOLDER_ON_GATE = "Signed by a one-time key; holder identity withheld (the gate checked its certificate)";
 const FIELD_GROUPS = ["amount", "payee", "account", "reference"] as const satisfies readonly Group[];
 // Claims that open every hidden field; the holder discloses them only with all four field groups.
@@ -63,6 +77,10 @@ const FULL = [["cava", "targets"], ["cava", "action_salt"], ["consent", "signatu
 class Fail extends Error {}
 /** A check needs a field the holder did not disclose; the chain goes on. */
 class Withheld extends Error {}
+/** A check found its evidence still waiting on a third party; the chain goes on. */
+class Pending extends Error {}
+/** A check found nothing to check; the chain goes on. */
+class NotChecked extends Error {}
 
 /** What the checks share; a check reads what an earlier step stored. */
 interface Slots {
@@ -124,6 +142,14 @@ function decoded(text: string, detail: string): Bytes {
     return fromBase64(text);
   } catch {
     throw new Fail(detail);
+  }
+}
+
+function hostOf(uri: string): string {
+  try {
+    return new URL(uri).hostname;
+  } catch {
+    return uri;
   }
 }
 
@@ -301,6 +327,52 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
     return `Seal ${seal.anchor_id} over entries ${seal.seq_from}–${seal.seq_to} verifies`;
   },
 
+  // It checks that the proof reaches a header with real work; that the block is in the main chain is the reader's lookup.
+  "Public anchor": async (ctx) => {
+    const { public_anchor: anchor, registry } = ctx.get("receipt");
+    if (anchor === null) throw new NotChecked(NO_PUBLIC_ANCHOR);
+    const bytes = decoded(anchor.ots, "Public anchor proof is malformed (not base64)");
+    let proof: OtsProof;
+    try {
+      proof = await readOts(bytes);
+    } catch (error) {
+      if (error instanceof OtsError) throw new Fail(`Public anchor proof is malformed (${error.message})`);
+      throw error;
+    }
+    // Recomputed from the seal the previous step verified, never read from the proof: a bare root or another desk's seal fails here.
+    const expected = await anchorDigest(registry.seal, ctx.trust.gateKey);
+    if (proof.digest !== expected) {
+      throw new Fail(`Public anchor proof is for ${short(proof.digest)}, not this seal's anchor digest ${short(expected)}`);
+    }
+    const { bitcoin } = anchor;
+    if (bitcoin === null) {
+      if (proof.attestations.length === 0) throw new Fail("Public anchor proof attests nothing");
+      // A proof that already names a block says so, even beside its calendars: "no block attests it yet" would be false.
+      const heights = [...new Set(proof.attestations.flatMap((a) => (a.kind === "bitcoin" ? [a.height] : [])))].sort((a, b) => a - b);
+      if (heights.length > 0) {
+        throw new Pending(
+          `PENDING: the proof names Bitcoin block ${heights.join(", ")}, but this receipt carries no block header to check it against`,
+        );
+      }
+      const hosts = proof.attestations.flatMap((a) => (a.kind === "pending" ? [hostOf(a.uri)] : [])).sort();
+      throw new Pending(
+        `PENDING: submitted to ${hosts.length} OpenTimestamps calendars (${hosts.join(", ")}); no Bitcoin block attests this seal yet`,
+      );
+    }
+    const at = proof.attestations.filter((a) => a.kind === "bitcoin" && a.height === bitcoin.height);
+    if (at.length === 0) throw new Fail(`Public anchor proof names no Bitcoin block ${bitcoin.height}`);
+    const header = await readHeader(fromHex(bitcoin.header));
+    const block = `Bitcoin block ${bitcoin.height}`;
+    if (!header.meetsTarget) throw new Fail(`${block} header misses its proof-of-work target`);
+    if (!header.aboveFloor) throw new Fail(`${block} header is below the work floor`);
+    if (!at.some((a) => a.msg === header.merkleRoot)) throw new Fail(`${block} header does not hold the proof's merkle root`);
+    const mined = new Date(header.time * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");
+    return (
+      `CONFIRMED: this seal is committed in ${block} (${header.hash}), mined ${mined}; this browser checked the proof and the ` +
+      "header's proof of work, not that the block is in the main chain: look the block up at any Bitcoin explorer or run ots verify"
+    );
+  },
+
   "Reasoning anchor": async (ctx) => {
     const { reasoning } = ctx.get("receipt");
     const commitment = own(ctx.get("claims"), "reasoning_commitment");
@@ -311,7 +383,7 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
     let digest: string;
     try {
       if (reasoning.v !== 1) throw new Error("reasoning: unsupported anchor version");
-      digest = await anchorDigest(reasoning);
+      digest = await reasoningAnchorDigest(reasoning);
     } catch {
       throw new Fail("Reasoning anchor is malformed");
     }
@@ -379,6 +451,8 @@ async function run(ctx: Context, steps: Readonly<Record<StepName, Check | string
       results.push({ step, status: "pass", detail: await check(ctx) });
     } catch (error) {
       if (error instanceof Withheld) results.push({ step, status: "withheld", detail: error.message });
+      else if (error instanceof Pending) results.push({ step, status: "pending", detail: error.message });
+      else if (error instanceof NotChecked) results.push({ step, status: "unchecked", detail: error.message });
       else if (error instanceof Fail) {
         results.push({ step, status: "fail", detail: error.message });
         failed = true;
@@ -400,21 +474,33 @@ export async function verifyCertificate(token: string, trust: Trust): Promise<St
   return run(new Context(token, trust), steps);
 }
 
-/** The chain's verdict: VERIFIED only when every step passed. */
+// The anchor answers "did it exist by then?", not "does the chain hold?", so it is named beside the label, never inside it.
+function anchorSuffix(results: readonly StepResult[]): string {
+  const status = results.find((r) => r.step === "Public anchor")?.status;
+  if (status === "pass") return "; its seal is timestamped in Bitcoin";
+  if (status === "pending") return "; its Bitcoin timestamp is pending";
+  return "; no public timestamp yet";
+}
+
+/** The chain's verdict: VERIFIED only when every chain step passed; the public anchor's state is named in its text. */
 export function verdictOf(results: readonly StepResult[]): Verdict {
   const failure = results.find((r) => r.status === "fail");
   if (failure !== undefined) return { label: "NOT VERIFIED", text: `Failed at ${failure.step}: ${failure.detail}` };
   const complete = results.length === STEPS.length && results.every((r, i) => r.step === STEPS[i]);
-  if (complete && results.every((r) => r.status === "pass")) {
+  const chain = results.filter((r) => r.step !== "Public anchor");
+  if (complete && chain.every((r) => r.status === "pass")) {
     // Without the holder group the paired key's certificate was checked by the gate, not here.
     const onGate = results.some((r) => r.step === "Holder consent" && r.detail.startsWith(`${HOLDER_ON_GATE}:`));
-    const text = "Every link of the chain verified in this browser";
-    return { label: "VERIFIED", text: onGate ? `${text}; the holder's identity rests on the gate` : text };
+    const text = `Every link of the chain verified in this browser${onGate ? "; the holder's identity rests on the gate" : ""}`;
+    return { label: "VERIFIED", text: `${text}${anchorSuffix(results)}` };
   }
-  const withheld = results.filter((r) => r.status === "withheld").length;
-  if (complete && withheld > 0 && results.every((r) => r.status !== "unchecked")) {
+  const withheld = chain.filter((r) => r.status === "withheld").length;
+  if (complete && withheld > 0 && chain.every((r) => r.status !== "unchecked")) {
     const checks = withheld === 1 ? "1 check needs" : `${withheld} checks need`;
-    return { label: "VERIFIED, FIELDS WITHHELD", text: `Every disclosed link verified in this browser; ${checks} fields the holder withheld` };
+    return {
+      label: "VERIFIED, FIELDS WITHHELD",
+      text: `Every disclosed link verified in this browser; ${checks} fields the holder withheld${anchorSuffix(results)}`,
+    };
   }
   const certificateOnly = results.length === STEPS.length &&
     results.every((r) => (r.step === "Gate certificate" ? r.status === "pass" : r.status === "unchecked"));

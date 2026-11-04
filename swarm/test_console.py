@@ -2,6 +2,7 @@ import base64
 import fcntl
 import itertools
 import json
+import logging
 import os
 import re
 import signal
@@ -22,7 +23,9 @@ from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
 from bank.verifier import Verifier
 from evidence.conftest import fake_binary
 from evidence.zktls import ZKTLS_BIN_ENV
+from gate.anchor_public import AnchorRound, PublicAnchors
 from gate.certs import generate_keypair, public_key_of
+from gate.conftest import RecordedCalendars, RecordedHeaders, recorded_aggregators
 from gate.state import StateStore
 from swarm import console
 from swarm.conftest import message
@@ -1130,3 +1133,90 @@ async def test_three_paired_holders_each_pay_and_one_unpairs(
         "confirmed",
     ]
     assert desk.bank.get_balance("acme-991") == 40000
+
+
+def test_cli_public_anchor_needs_a_state_dir(monkeypatch, capsys, dist):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--public-anchor")
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "public anchor needs --state-dir: proofs are upgraded hours later\n"
+    )
+
+
+@pytest.mark.anyio
+async def test_cli_public_anchor_starts_the_loop_and_the_route(
+    monkeypatch, capsys, dist, tmp_path
+):
+    started = []
+
+    def quiet_loop(anchors, every, stop):
+        started.append((type(anchors), every))
+        thread = threading.Thread(target=stop.wait, daemon=True)
+        thread.start()
+        return thread
+
+    monkeypatch.setattr(console, "anchor_every", quiet_loop)
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"), "--public-anchor",
+    )  # fmt: skip
+    assert started == [(PublicAnchors, 600)]
+    async with _asgi(seen["app"]) as http:
+        resp = await http.post("/api/anchor", json={"run": 1})
+    assert resp.status_code == 400
+
+
+def test_the_anchor_loop_rounds_at_once_and_until_stopped(
+    state_store, caplog, monkeypatch
+):
+    anchors = PublicAnchors(
+        state_store,
+        public_key_of(generate_keypair()[0]),
+        recorded_aggregators(),
+        RecordedHeaders({}),
+        clock=lambda: 1800002000,
+        calendar_for=RecordedCalendars({}).for_uri,
+    )
+    runs = []
+    stop = threading.Event()
+
+    def counted():
+        runs.append(1)
+        if len(runs) == 2:
+            stop.set()
+        raise RuntimeError("calendar said something")
+
+    monkeypatch.setattr(anchors, "round", counted)
+    console.anchor_every(anchors, 0.001, stop).join(timeout=5)
+    assert len(runs) == 2
+    logged = [r.getMessage() for r in caplog.records if r.name == "swarm.console"]
+    assert logged == ["anchor round failed (RuntimeError)"] * 2
+
+
+def test_an_anchor_round_that_reports_an_error_logs_it(
+    state_store, caplog, monkeypatch
+):
+    anchors = PublicAnchors(
+        state_store,
+        public_key_of(generate_keypair()[0]),
+        recorded_aggregators(),
+        RecordedHeaders({}),
+        clock=lambda: 1800002000,
+        calendar_for=RecordedCalendars({}).for_uri,
+    )
+    rounds = iter(
+        [
+            AnchorRound(0, 0, 1, "anchor: 1 of 4 calendars answered"),
+            AnchorRound(1, 0, 1, None),
+        ]
+    )
+    monkeypatch.setattr(anchors, "round", lambda: next(rounds))
+    console.anchor_round(anchors)
+    console.anchor_round(anchors)
+    logged = [
+        (r.levelno, r.getMessage()) for r in caplog.records if r.name == "swarm.console"
+    ]
+    assert logged == [
+        (logging.WARNING, "anchor round incomplete (anchor: 1 of 4 calendars answered)")
+    ]

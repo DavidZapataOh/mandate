@@ -1,4 +1,4 @@
-import { ascii, concat, fromHex, fromJwsSegment, sha256, toHex, type Bytes } from "./bytes";
+import { ascii, concat, fromBase64, fromHex, fromJwsSegment, sha256, toHex, type Bytes } from "./bytes";
 import { canonicalJson, sha256Hex } from "./canon";
 import { readJws } from "./jws";
 import type { Cava, Entry, Proof, ReasoningAnchor, ReceiptConsent, Seal } from "./receipt";
@@ -77,6 +77,11 @@ export function sealBytes(seal: Seal): Bytes {
   return ascii(`anchor/v1:${canonicalJson([seal.anchor_id, seal.root, seal.seq_from, seal.seq_to, seal.ts, seal.v])}`);
 }
 
+/** gate/anchor_public.py anchor_digest (hex): the digest a public timestamp of this gate's seal commits to. */
+export async function anchorDigest(seal: Seal, gateKey: Bytes): Promise<string> {
+  return toHex(await sha256(concat(ascii("mandate-anchor/v1:"), gateKey, sealBytes(seal), fromBase64(seal.signature))));
+}
+
 /**
  * swarm/meta_client.py reasoning_commitment over encrypted reasoning blobs. Throws `reasoning: malformed blob` for
  * an empty blob, one with a newline (check_blob) or one Python cannot encode as UTF-8: each would let two blob
@@ -89,7 +94,7 @@ export async function reasoningCommitment(blobs: readonly string[]): Promise<str
 }
 
 /** swarm/anchor.py ReasoningAnchor.digest. */
-export async function anchorDigest(anchor: ReasoningAnchor): Promise<string> {
+export async function reasoningAnchorDigest(anchor: ReasoningAnchor): Promise<string> {
   const reasoning = await reasoningCommitment(anchor.blobs);
   return sha256Hex(`mandate/anchor/v1\n${canonicalJson({ model: anchor.model, reasoning, response_id: anchor.response_id })}`);
 }

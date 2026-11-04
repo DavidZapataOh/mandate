@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ATTACK } from "../wire/__fixtures__/lines";
 import { AUDITOR, forge, GATE_KEY, HOLDER_KEY, RECEIPT, tamper } from "./__fixtures__/receipts";
+import OTS from "./__fixtures__/ots.json" with { type: "json" };
 import { WITHHELD } from "./exposure";
 import { mountExplorer, type Explorer } from "./view";
 
@@ -75,7 +76,7 @@ describe("explorer page", () => {
     await verify("pay:000001");
     expect(verdict()).toBe("VERIFIED, FIELDS WITHHELD");
     expect(document.getElementById("verdict")!.dataset.verdict).toBe("withheld");
-    expect(marks()).toEqual(["PASS", "PASS", "PASS", "WITHHELD", "PASS", "WITHHELD", "PASS", "PASS", "PASS", "PASS", "PASS"]);
+    expect(marks()).toEqual(["PASS", "PASS", "PASS", "WITHHELD", "PASS", "WITHHELD", "PASS", "PASS", "NOT CHECKED", "PASS", "PASS", "PASS"]);
     expect(seen).toEqual(["/api/keys", "/api/receipt/pay%3A000001"]);
     expect([...document.querySelectorAll("#reveals dt")].map((d) => d.textContent)).toEqual([
       "Amount", "Payee account", "Debit account", "Reference", "Payment and quote ids", "Consent key (this payment only)",
@@ -133,9 +134,17 @@ describe("explorer page", () => {
     await verify("pay:000001");
     await explorer.holderCopy();
     expect(verdict()).toBe("VERIFIED");
-    expect(marks()).toEqual(Array(11).fill("PASS"));
+    expect(marks()).toEqual([...Array(8).fill("PASS"), "NOT CHECKED", ...Array(3).fill("PASS")]);
     expect(seen.at(-1)).toBe("/api/receipt/pay%3A000001?disclose=all");
     expect(revealed().slice(0, 2)).toEqual(["200.00 USD", "acme-991"]);
+  });
+
+  it("marks a pending public anchor PENDING and keeps the verdict", async () => {
+    const verify = await mount(server().fetchFn);
+    await verify(tamper("public_anchor", { v: 1, ots: OTS.golden.pending, bitcoin: null }));
+    expect(marks()).toEqual([...Array(8).fill("PASS"), "PENDING", ...Array(3).fill("PASS")]);
+    expect(document.querySelector('#steps li[data-step="Public anchor"]')?.getAttribute("data-status")).toBe("pending");
+    expect(verdict()).toBe("VERIFIED");
   });
 
   it("makes an auditor copy that discloses only the ticked fields", async () => {
@@ -166,7 +175,7 @@ describe("explorer page", () => {
     await verify(forge("amount_cents", 2000000));
     expect(verdict()).toBe("NOT VERIFIED");
     expect(verdictText()).toBe("Failed at Receipt disclosures: Disclosures do not verify (sd-jwt: disclosure not referenced)");
-    expect(marks()).toEqual(["PASS", "PASS", "FAIL", ...Array(8).fill("NOT CHECKED")]);
+    expect(marks()).toEqual(["PASS", "PASS", "FAIL", ...Array(9).fill("NOT CHECKED")]);
     expect(document.querySelector('#steps li[data-status="fail"]')?.getAttribute("data-step")).toBe("Receipt disclosures");
   });
 
@@ -272,7 +281,7 @@ describe("explorer page", () => {
     waiting[0]!.release();
     await first;
     expect(verdict()).toBe("VERIFIED");
-    expect(marks()).toEqual(Array(11).fill("PASS"));
+    expect(marks()).toEqual([...Array(8).fill("PASS"), "NOT CHECKED", ...Array(3).fill("PASS")]);
     expect(revealed().slice(0, 2)).toEqual(["200.00 USD", "acme-991"]);
     expect(document.querySelectorAll("#reveals dt")).toHaveLength(9);
     // The superseded lookup leaves no payment id behind for the holder copy.

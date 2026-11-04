@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fromBase64 } from "./bytes";
+import { concat, fromBase64, fromHex, toBase64 } from "./bytes";
 import {
   AUDITOR,
   CONSENT,
@@ -18,8 +18,9 @@ import {
   seedSign,
   tamper,
 } from "./__fixtures__/receipts";
+import OTS from "./__fixtures__/ots.json" with { type: "json" };
 import { keyBytes } from "./canon";
-import { consentBytes } from "./chain";
+import { anchorDigest, consentBytes } from "./chain";
 import { readDisclosure } from "./sdjwt";
 import { parseDisclosed, parseReceipt, ReceiptError } from "./receipt";
 import { disclosedOf, GROUPS, STEPS, verdictOf, verifyCertificate, verifyReceipt, type StepResult, type Trust } from "./verify";
@@ -32,6 +33,7 @@ const statuses = async (text: string, trust: Trust = TRUST) =>
   (await verifyReceipt(JSON.parse(text), trust)).map((r) => `${r.step}: ${r.status}`);
 const failed = async (text: string, trust: Trust = TRUST) =>
   (await verifyReceipt(JSON.parse(text), trust)).find((r) => r.status === "fail");
+const chain = (results: StepResult[]) => results.filter((r) => r.step !== "Public anchor");
 
 describe("verifyReceipt", () => {
   it.each([
@@ -52,7 +54,7 @@ describe("verifyReceipt", () => {
   it("passes every step of a receipt the desk issued", async () => {
     const results = await verifyReceipt(JSON.parse(RECEIPT), TRUST);
     expect(results.map((r) => r.step)).toEqual([...STEPS]);
-    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results).every((r) => r.status === "pass")).toBe(true);
     expect(results.map((r) => r.detail)).toEqual([
       "Receipt for pay:000001",
       "EdDSA signature verifies with gate key iojj3XQJ8ZX9…",
@@ -62,6 +64,7 @@ describe("verifyReceipt", () => {
       "Signed by a one-time key the paired holder key certified: 20000 USD cents to acme-991 (ref A-991)",
       "Entry 1 of 1 recomputes the sealed root 70566024e09c…",
       "Seal anch:000001 over entries 1–1 verifies",
+      "No public timestamp in this receipt: the desk has not stamped its seal",
       "No model reasoning: the certificate commits to an empty chain",
       "SIMULATED ledger payment pay:000001, requested under this certificate; no bank holds it",
       "No funds evidence: this payment was not bound to a holder intent",
@@ -80,7 +83,7 @@ describe("verifyReceipt", () => {
     const results = await verifyReceipt(JSON.parse(tamper(path, value)), TRUST);
     const at = results.findIndex((r) => r.status === "fail");
     expect(results[at]).toEqual({ step, status: "fail", detail });
-    expect(results.slice(0, at).every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results.slice(0, at)).every((r) => r.status === "pass")).toBe(true);
     expect(results.slice(at + 1).map((r) => r.status)).toEqual(results.slice(at + 1).map(() => "unchecked"));
   });
 
@@ -113,15 +116,15 @@ describe("verifyReceipt", () => {
     const results = await verifyReceipt(JSON.parse(AUDITOR), TRUST);
     expect(results.map((r) => `${r.step}: ${r.status}`)).toEqual([
       "Receipt format: pass", "Gate certificate: pass", "Receipt disclosures: pass", "Canonical action: withheld",
-      "Policy: pass", "Holder consent: withheld", "Registry inclusion: pass", "Registry seal: pass", "Reasoning anchor: pass",
-      "Bank transfer: pass", "Funds proof: pass",
+      "Policy: pass", "Holder consent: withheld", "Registry inclusion: pass", "Registry seal: pass", "Public anchor: unchecked",
+      "Reasoning anchor: pass", "Bank transfer: pass", "Funds proof: pass",
     ]);
     expect(results[2]?.detail).toBe("Signed by the gate key; withheld by the holder: amount, payee, account, reference, holder");
     expect(results[3]?.detail).toBe("Withheld: the action's targets and salt were not disclosed; the certificate still fixes its salted hash");
     expect(results[5]?.detail).toBe("Withheld: the holder's signed fields were not all disclosed");
     expect(verdictOf(results)).toEqual({
       label: "VERIFIED, FIELDS WITHHELD",
-      text: "Every disclosed link verified in this browser; 2 checks need fields the holder withheld",
+      text: "Every disclosed link verified in this browser; 2 checks need fields the holder withheld; no public timestamp yet",
     });
   });
 
@@ -130,21 +133,21 @@ describe("verifyReceipt", () => {
     const hidden = ["holder_key", "key_signature"];
     copy.sd = copy.sd.split("~").filter((d: string) => !hidden.includes(readDisclosure(d)?.name ?? "")).join("~");
     const results = await verifyReceipt(copy, TRUST);
-    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results).every((r) => r.status === "pass")).toBe(true);
     expect(results[2]?.detail).toBe("Signed by the gate key; disclosed: amount, payee, account, reference; withheld: holder");
     expect(results[5]?.detail).toBe(
       "Signed by a one-time key; holder identity withheld (the gate checked its certificate): 20000 USD cents to acme-991 (ref A-991)",
     );
     expect(verdictOf(results)).toEqual({
       label: "VERIFIED",
-      text: "Every link of the chain verified in this browser; the holder's identity rests on the gate",
+      text: "Every link of the chain verified in this browser; the holder's identity rests on the gate; no public timestamp yet",
     });
   });
 
   it("says every link verified when the holder group is disclosed too", async () => {
     expect(verdictOf(await verifyReceipt(JSON.parse(RECEIPT), TRUST))).toEqual({
       label: "VERIFIED",
-      text: "Every link of the chain verified in this browser",
+      text: "Every link of the chain verified in this browser; no public timestamp yet",
     });
   });
 
@@ -200,7 +203,7 @@ describe("bank transfer step", () => {
 
   it("names a sandbox transfer and where it can be checked, without claiming it was", async () => {
     const results = await verifyReceipt(JSON.parse(SANDBOX_RECEIPT), TRUST);
-    expect(results.map((r) => r.status)).toEqual(STEPS.map(() => "pass"));
+    expect(results.map((r) => r.status)).toEqual(STEPS.map((s) => (s === "Public anchor" ? "unchecked" : "pass")));
     expect(results.find((r) => r.step === "Bank transfer")).toEqual({
       step: "Bank transfer",
       status: "pass",
@@ -267,7 +270,7 @@ describe("verifyCertificate", () => {
     const results = await verifyCertificate(token, TRUST);
     expect(results.map((r) => r.status)).toEqual([
       "unchecked", "pass", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked",
-      "unchecked", "unchecked",
+      "unchecked", "unchecked", "unchecked",
     ]);
     expect(verdictOf(results)).toEqual({
       label: "INCOMPLETE",
@@ -284,10 +287,137 @@ describe("verifyCertificate", () => {
   });
 });
 
+const H18 = OTS.core29.headers["892418"];
+const anchored = (ots: string, bitcoin: { height: number; header: string } | null = null, text = RECEIPT) =>
+  tamper("public_anchor", { v: 1, ots, bitcoin }, text);
+const anchorOf = (results: StepResult[]) => results.find((r) => r.step === "Public anchor");
+const PENDING_DETAIL =
+  "PENDING: submitted to 4 OpenTimestamps calendars (alice.btc.calendar.opentimestamps.org, " +
+  "bob.btc.calendar.opentimestamps.org, btc.calendar.catallaxy.com, finney.calendar.eternitywall.com); " +
+  "no Bitcoin block attests this seal yet";
+
+// Hand-built proofs over the golden seal's anchor digest, for branches no recorded proof reaches.
+const OTS_MAGIC = "004f70656e54696d657374616d7073000050726f6f6600bf89e2e884e89294";
+const UNKNOWN_TAG = "0102030405060708";
+const varuint = (n: number) => {
+  const out: number[] = [];
+  do {
+    out.push((n & 0x7f) | (n > 0x7f ? 0x80 : 0));
+    n = Math.floor(n / 128);
+  } while (n > 0);
+  return new Uint8Array(out);
+};
+const varbytes = (b: Uint8Array) => concat(varuint(b.length), b);
+const attestation = (tag: string, payload: Uint8Array) => concat(new Uint8Array([0]), fromHex(tag), varbytes(payload));
+const pendingAt = (uri: string) => attestation("83dfe30d2ef90c8e", varbytes(new TextEncoder().encode(uri)));
+const bitcoinAt = (height: number) => attestation("0588960d73d71901", varuint(height));
+const goldenProof = (tree: Uint8Array) =>
+  toBase64(concat(fromHex(OTS_MAGIC), new Uint8Array([1, 0x08]), fromHex(OTS.golden.digest), tree));
+
+describe("public anchor step", () => {
+  it("says a receipt carries no public timestamp without failing it", async () => {
+    const results = await verifyReceipt(JSON.parse(RECEIPT), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor", status: "unchecked",
+      detail: "No public timestamp in this receipt: the desk has not stamped its seal",
+    });
+    expect(results.map((r) => r.step).indexOf("Public anchor")).toBe(8);
+  });
+
+  it("shows a stamp the calendars hold as PENDING, never as a pass", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(OTS.golden.pending)), TRUST);
+    expect(anchorOf(results)).toEqual({ step: "Public anchor", status: "pending", detail: PENDING_DETAIL });
+    expect(verdictOf(results)).toEqual({
+      label: "VERIFIED",
+      text: "Every link of the chain verified in this browser; its Bitcoin timestamp is pending",
+    });
+  });
+
+  it("keeps the auditor copy's label and names the pending timestamp", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(OTS.golden.pending, null, AUDITOR)), TRUST);
+    expect(verdictOf(results)).toEqual({
+      label: "VERIFIED, FIELDS WITHHELD",
+      text: "Every disclosed link verified in this browser; 2 checks need fields the holder withheld; its Bitcoin timestamp is pending",
+    });
+  });
+
+  it.each([
+    [anchored(OTS.core29.upgraded, { height: 892418, header: H18 }), "Public anchor proof is for 94ec151f452a…, not this seal's anchor digest fe28838c6cdc…"],
+    [anchored(OTS.core29.upgraded), "Public anchor proof is for 94ec151f452a…, not this seal's anchor digest fe28838c6cdc…"],
+    [anchored(OTS.golden.pending, { height: 892418, header: H18 }), "Public anchor proof names no Bitcoin block 892418"],
+    [anchored(btoa("nope")), "Public anchor proof is malformed (not an OpenTimestamps proof)"],
+    [anchored(OTS.hello2015.proof), "Public anchor proof is malformed (unsupported operation 0x03)"],
+  ])("fails a proof that does not anchor this seal %#", async (text, detail) => {
+    const results = await verifyReceipt(JSON.parse(text), TRUST);
+    expect(anchorOf(results)).toEqual({ step: "Public anchor", status: "fail", detail });
+    expect(verdictOf(results).label).toBe("NOT VERIFIED");
+    expect(results.slice(9).every((r) => r.status === "unchecked")).toBe(true);
+  });
+
+  it("fails a proof over this seal's anchor digest that attests nothing", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(goldenProof(attestation(UNKNOWN_TAG, new Uint8Array(0))))), TRUST);
+    expect(anchorOf(results)).toEqual({ step: "Public anchor", status: "fail", detail: "Public anchor proof attests nothing" });
+  });
+
+  it("names a calendar URI that does not parse as it is written", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(goldenProof(pendingAt("calendar-without-scheme")))), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor", status: "pending",
+      detail: "PENDING: submitted to 1 OpenTimestamps calendars (calendar-without-scheme); no Bitcoin block attests this seal yet",
+    });
+  });
+
+  it("names the Bitcoin block a proof already holds beside its calendars", async () => {
+    const tree = concat(new Uint8Array([0xff]), bitcoinAt(892418), pendingAt("https://alice.btc.calendar.opentimestamps.org"));
+    const results = await verifyReceipt(JSON.parse(anchored(goldenProof(tree))), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor", status: "pending",
+      detail: "PENDING: the proof names Bitcoin block 892418, but this receipt carries no block header to check it against",
+    });
+  });
+
+  it("keeps a proof with a Bitcoin block but no header pending and names what is missing", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(goldenProof(bitcoinAt(892418)))), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor", status: "pending",
+      detail: "PENDING: the proof names Bitcoin block 892418, but this receipt carries no block header to check it against",
+    });
+    expect(verdictOf(results)).toEqual({
+      label: "VERIFIED",
+      text: "Every link of the chain verified in this browser; its Bitcoin timestamp is pending",
+    });
+  });
+
+  it("refuses a proof over the bare seal root", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(OTS.bare.pending)), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor", status: "fail",
+      detail: "Public anchor proof is for 70566024e09c…, not this seal's anchor digest fe28838c6cdc…",
+    });
+  });
+
+  it("refuses a proof borrowed from another desk whose seal has the same root", async () => {
+    // The golden seal's fields and root, signed by another gate key: the same root, another desk.
+    expect(OTS.foreign.digest).not.toBe(OTS.golden.digest);
+    const results = await verifyReceipt(JSON.parse(anchored(OTS.foreign.pending)), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor", status: "fail",
+      detail: "Public anchor proof is for c46a611449cf…, not this seal's anchor digest fe28838c6cdc…",
+    });
+    expect(verdictOf(results).label).toBe("NOT VERIFIED");
+  });
+
+  it("derives the anchor digest from the gate key and the signed seal", async () => {
+    const seal = parseReceipt(JSON.parse(RECEIPT)).registry.seal;
+    expect(await anchorDigest(seal, TRUST.gateKey)).toBe("fe28838c6cdcfc365aef8d643ea05cd90abb7e58ffe7f60dfb57ea077fcf071a");
+    expect(await anchorDigest(seal, fromBase64(OTS.foreign.gate_key))).not.toBe(OTS.golden.digest);
+  });
+});
+
 describe("verdictOf", () => {
-  it("is VERIFIED only when all eleven steps passed", async () => {
+  it("is VERIFIED only when all twelve steps ran and every chain step passed", async () => {
     expect(verdictOf(await verifyReceipt(JSON.parse(RECEIPT), TRUST)).label).toBe("VERIFIED");
-    expect(verdictOf((await verifyReceipt(JSON.parse(RECEIPT), TRUST)).slice(0, 10)).label).toBe("INCOMPLETE");
+    expect(verdictOf((await verifyReceipt(JSON.parse(RECEIPT), TRUST)).slice(0, 11)).label).toBe("INCOMPLETE");
   });
 
   it("notes when no holder list was published", async () => {
@@ -306,7 +436,7 @@ const without = (text: string, names: readonly string[]) => {
 };
 const ordered = (results: StepResult[]) => {
   const at = results.findIndex((r) => r.status === "fail");
-  if (at < 0) return results.every((r) => r.status !== "unchecked");
+  if (at < 0) return chain(results).every((r) => r.status !== "unchecked");
   return results.slice(at + 1).every((r) => r.status === "unchecked" && r.detail === "Not checked: an earlier step failed");
 };
 const HOSTILE: unknown[] = [null, "", "x", -1, 0, 1.5, 2 ** 53, true, {}, [], ["x"], "\ud800", { toString: 1 }];
@@ -356,7 +486,7 @@ describe("verifyReceipt on hostile input", () => {
     const at = results.findIndex((r) => r.status === "fail");
     expect(results[at]?.step).toBe(step);
     expect(results[at]?.detail.startsWith(detail)).toBe(true);
-    expect(results.slice(0, at).every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results.slice(0, at)).every((r) => r.status === "pass")).toBe(true);
     expect(ordered(results)).toBe(true);
   });
 
@@ -411,14 +541,14 @@ describe("verifyReceipt on hostile input", () => {
   it("withholds the action and the consent when the salt alone is withheld", async () => {
     const results = await verifyReceipt(without(RECEIPT, ["action_salt"]), TRUST);
     expect(results.map((r) => r.status)).toEqual([
-      "pass", "pass", "pass", "withheld", "pass", "withheld", "pass", "pass", "pass", "pass", "pass",
+      "pass", "pass", "pass", "withheld", "pass", "withheld", "pass", "pass", "unchecked", "pass", "pass", "pass",
     ]);
     expect(results[2]?.detail).toBe("Signed by the gate key; disclosed: amount, payee, account, reference, holder; withheld: action_salt");
   });
 
   it("treats a half-disclosed holder group as withheld", async () => {
     const results = await verifyReceipt(without(RECEIPT, ["key_signature"]), TRUST);
-    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results).every((r) => r.status === "pass")).toBe(true);
     expect(results[2]?.detail).toBe("Signed by the gate key; disclosed: amount, payee, account, reference; withheld: holder");
     expect(results[5]?.detail).toContain("holder identity withheld");
   });
@@ -429,7 +559,7 @@ describe("verifyReceipt on hostile input", () => {
     expect(results[2]?.detail).toBe("Signed by the gate key; disclosed: amount, payee, reference, holder; withheld: account");
     expect(verdictOf(results)).toEqual({
       label: "VERIFIED, FIELDS WITHHELD",
-      text: "Every disclosed link verified in this browser; 1 check needs fields the holder withheld",
+      text: "Every disclosed link verified in this browser; 1 check needs fields the holder withheld; no public timestamp yet",
     });
   });
 });
@@ -495,6 +625,7 @@ describe("holder consent signed by real holder keys", () => {
     const results = await verifyReceipt(JSON.parse(await reissue({ recipient: "evil-666", signature })), TRUST);
     expect(results.map((r) => r.status)).toEqual([
       "pass", "pass", "pass", "pass", "pass", "fail", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked",
+      "unchecked",
     ]);
     expect(results[5]).toEqual({ step: "Holder consent", status: "fail", detail: "Consent does not match the canonical action" });
   });
@@ -543,7 +674,7 @@ const funds = (change: Record<string, unknown> | null) => (p: Record<string, unk
 describe("funds proof step", () => {
   it("binds a zkTLS presentation the desk checked", async () => {
     const results = await verifyReceipt(JSON.parse(RECEIPT_ZKTLS), TRUST);
-    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results).every((r) => r.status === "pass")).toBe(true);
     expect(results.at(-1)).toEqual({
       step: "Funds proof",
       status: "pass",
@@ -565,7 +696,7 @@ describe("funds proof step", () => {
   ])("a gate-signed funds view %j fails the funds step", async (change, detail) => {
     const results = await verifyReceipt(JSON.parse(await resign(funds(change), RECEIPT_ZKTLS)), TRUST);
     expect(results.at(-1)).toEqual({ step: "Funds proof", status: "fail", detail });
-    expect(results.slice(0, -1).every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results).slice(0, -1).every((r) => r.status === "pass")).toBe(true);
   });
 
   it("refuses a funds view edited without the gate key", async () => {
@@ -581,7 +712,7 @@ describe("funds proof step", () => {
 
   it("labels a cooperative statement as not a bank proof", async () => {
     const results = await verifyReceipt(JSON.parse(RECEIPT_COOP), TRUST);
-    expect(results.every((r) => r.status === "pass")).toBe(true);
+    expect(chain(results).every((r) => r.status === "pass")).toBe(true);
     expect(results.at(-1)).toEqual({
       step: "Funds proof",
       status: "pass",

@@ -35,6 +35,7 @@ from starlette.responses import (
 
 from bank.api import Bank
 from bank.verifier import Verifier
+from gate.anchor_public import PublicAnchors
 from gate.certs import generate_keypair
 from gate.consent import HolderApproval
 from gate.keys import strict_ed25519_public_key
@@ -113,6 +114,9 @@ _NOT_PAIRED_DEVICE = {"error": "not the paired device"}
 _RECONCILE_UNAVAILABLE = {"error": "reconcile unavailable"}
 _RECONCILE_BUSY = {"error": "reconcile busy"}
 _RECONCILE_FAILED = {"error": "reconcile failed"}
+_ANCHOR_OFF = {"error": "public anchor off"}
+_ANCHOR_BUSY = {"error": "anchor busy"}
+_ANCHOR_FAILED = {"error": "anchor failed"}
 _STATE_UNAVAILABLE = {"error": "state: unavailable"}
 _log = logging.getLogger(__name__)
 _VOICE_SIG = re.compile(r"[A-Za-z0-9_-]{86}")
@@ -401,6 +405,7 @@ def build_server(
     voice: Transcriber | None = None,
     intake: IntentIntake | None = None,
     agent: Responder | None = None,
+    anchors: PublicAnchors | None = None,
     clock: Callable[[], float] = time.time,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
@@ -432,6 +437,8 @@ def build_server(
         agent: When given, Muse Spark pays a signed intent handed to it behind
             `POST /api/agent/start` and `GET /api/agent`; None reports both as
             unavailable.
+        anchors: When given, `POST /api/anchor` runs one stamp and upgrade
+            round; None reports public anchoring as off.
         clock: The server's wall clock, in unix seconds.
 
     Returns:
@@ -794,6 +801,30 @@ state is returned."""
                 return JSONResponse(dict(_RECONCILE_FAILED), status_code=502)
         return JSONResponse(report.view(), headers={"cache-control": "no-store"})
 
+    anchoring = {"round": False}
+
+    async def anchor(request: Request) -> Response:
+        if anchors is None:
+            return JSONResponse(dict(_ANCHOR_OFF), status_code=409)
+        # One round at a time, claimed before the body is read: each round
+        # calls the public calendars and the block source.
+        with _one_at_a_time(anchoring, "round") as free:
+            if not free:
+                return JSONResponse(dict(_ANCHOR_BUSY), status_code=409)
+            if await _fields(request) != {}:
+                return _bad_request()
+            try:
+                # Calendars answer in seconds; the event loop keeps serving.
+                # The background loop's round counts too: never wait on it.
+                done = await anyio.to_thread.run_sync(anchors.try_round)
+            except Exception as exc:
+                # Only the type: a message could carry a third party's text.
+                _log.error("anchor failed (%s)", type(exc).__name__)
+                return JSONResponse(dict(_ANCHOR_FAILED), status_code=502)
+        if done is None:
+            return JSONResponse(dict(_ANCHOR_BUSY), status_code=409)
+        return JSONResponse(done.view(), headers={"cache-control": "no-store"})
+
     async def attack(request: Request) -> Response:
         body = await _fields(request, "kind")
         try:
@@ -853,6 +884,7 @@ state is returned."""
         ("/api/registry", "GET", registry),
         ("/api/receipt/{payment_id}", "GET", receipt),
         ("/api/reconcile", "POST", reconcile),
+        ("/api/anchor", "POST", anchor),
         ("/api/voice", "POST", voice_text),
         ("/api/intent", "POST", sign_intent),
         ("/api/intent/funds-challenge", "POST", funds_challenge),
