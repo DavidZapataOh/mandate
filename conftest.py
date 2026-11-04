@@ -11,6 +11,7 @@ import pytest
 import uvicorn
 
 from bank.api import Bank
+from bank.rail import BankRail
 from bank.verifier import Verifier
 from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair, public_key_of
@@ -116,6 +117,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
         intents: tuple[Intent, ...] = (),
         bank_key: bytes | None = None,
         require_intent: bool = False,
+        bank: BankRail | None = None,
     ) -> tuple[PaymentDesk, bytes | None]:
         gate_priv, gate_pub = _keys(gate_key)
         counter = itertools.count(1)
@@ -123,7 +125,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
         sd_salt = itertools.count(1)
         desk = PaymentDesk(
             source="checking-881",
-            bank=Bank({"checking-881": 50000, "acme-991": 0}),
+            bank=bank or Bank({"checking-881": 50000, "acme-991": 0}),
             verifier=Verifier(gate_pub),
             gate_key=gate_priv,
             clock=clock or (lambda: DESK_NOW),

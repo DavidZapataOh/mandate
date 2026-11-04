@@ -218,6 +218,10 @@ def test_bill_line_carries_the_real_run(fake_meta):
     assert (line.event["verdict"], line.event["action"]) == ("MET", BILL_HASH)
     assert line.meta["response_id"] == "resp_1"
     forensic = line.forensic
+    assert (forensic["bank"]["rail"], forensic["bank"]["transfer_id"]) == (
+        "simulated",
+        "pay:000001",
+    )
     assert forensic["action_hash"] == BILL_HASH
     assert forensic["cava"]["targets"] == [
         "amount:USD:20000",
@@ -248,6 +252,7 @@ def test_bill_line_denied_has_no_claims(fake_meta):
     line = _bill(fake_meta([REASONING, hijacked], [message("Denied.")]))
     assert line.event["reason"] == "recipient differs from intent"
     assert line.forensic["cert_claims"] is None
+    assert line.forensic["bank"] is None
     assert line.forensic["cava"]["targets"][-1] == "to:evil-666"
 
 
@@ -281,7 +286,9 @@ GOLDEN_CONFIRM = (
     'try":{"seq":1,"root":"70566024e09c9a9e301eab2459d8c10dd21d4a8'
     'b28d98cb0010cc3a8be0bde87","leaves":1,"leaf":"70566024e09c9a9'
     'e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87","siblings"'
-    ':[]},"anchor":null}}'
+    ':[]},"anchor":null,"bank":{"rail":"simulated","provider":null'
+    ',"transfer_id":"pay:000001","status":"complete","idempotency'
+    '_key":"mandate-cert-00000000000000000000000000000002"}}}'
 )
 GOLDEN_ATTACK = (
     '{"v":3,"seq":4,"source":"attack","event":{"v":1,"id":"evt:atk'
@@ -301,7 +308,7 @@ GOLDEN_ATTACK = (
     '666"],"version":"cava/1"},"action_hash":"89f0357807b9d6e90a1c'
     '66d00e2a058ad97a5370349978a0ddceb67c50653f9a","policy":{"poli'
     'cy_id":"payments","rule_id":"pay-intent"},"cert_claims":null,'
-    '"consent":null,"registry":null,"anchor":null}}'
+    '"consent":null,"registry":null,"anchor":null,"bank":null}}'
 )
 
 
@@ -428,7 +435,8 @@ GOLDEN_DEPLOY = (
     'nce":"dep00000000000000000000000000009","scope":"nimbus:prod-'
     'eu","reasoning_commitment":"000000000000000000000000000000000'
     '0000000000000000000000000000000","evidence_refs":[],"revocati'
-    'on_index":0},"consent":null,"registry":null,"anchor":null}}'
+    'on_index":0},"consent":null,"registry":null,"anchor":null,"b'
+    'ank":null}}'
 )
 
 
@@ -562,3 +570,36 @@ def test_forensic_consent_is_the_seven_signed_fields():
     }
     text = console_line_json(ConsoleLine(1, "desk", None, None, {}, forensic))
     assert "k5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5M" not in text
+
+
+SANDBOX_VIEW = {
+    "rail": "sandbox",
+    "provider": "increase",
+    "transfer_id": "account_transfer_7k9qe1ysdgqztnt63l7n",
+    "status": "complete",
+    "idempotency_key": "mandate-cert-00000000000000000000000000000002",
+}
+
+
+@pytest.mark.parametrize(
+    "bank",
+    [
+        {"rail": "real"},
+        dict(SANDBOX_VIEW, rail="real"),
+        dict(SANDBOX_VIEW, transfer_id=7),
+        dict(SANDBOX_VIEW, url="https://example.com"),
+        {k: v for k, v in SANDBOX_VIEW.items() if k != "status"},
+        "pay:000001",
+    ],
+)
+def test_reader_refuses_a_malformed_bank_block(bank):
+    line = json.loads(GOLDEN_CONFIRM)
+    line["forensic"]["bank"] = bank
+    with pytest.raises(ValueError, match="console line: malformed"):
+        read_console_line(json.dumps(line))
+
+
+def test_reader_keeps_a_sandbox_transfer():
+    line = json.loads(GOLDEN_CONFIRM)
+    line["forensic"]["bank"] = SANDBOX_VIEW
+    assert read_console_line(json.dumps(line)).forensic["bank"] == SANDBOX_VIEW

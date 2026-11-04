@@ -10,7 +10,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from bank.rail import BankRail
+from bank.api import RailError
+from bank.rail import SANDBOX, BankRail
 from bank.verifier import Verifier
 from evidence.cooperative import sign_state
 from evidence.seams import opaque_cooperative_ref, opaque_intent_ref
@@ -98,7 +99,7 @@ class PaymentDesk:
         bank_key: Raw Ed25519 private key the simulated bank signs funds
             statements with; None generates a fresh one.
         require_intent: When True, a quote naming no intent is denied at
-            confirm before the gate runs.
+            confirm before the gate runs; always on for a sandbox rail.
     """
 
     def __init__(
@@ -130,7 +131,7 @@ class PaymentDesk:
         self._gate_pub = public_key_of(gate_key)
         self._bank_key = generate_keypair()[0] if bank_key is None else bank_key
         self._bank_pub = public_key_of(self._bank_key)
-        self._require_intent = require_intent
+        self._require_intent = require_intent or bank.rail == SANDBOX
         # Seals use the gate key: the "anchor/v1:" prefix cannot collide with
         # a JWS signing input, so one published key verifies both.
         self.registry = Registry(keypair=(gate_key, self._gate_pub))
@@ -473,7 +474,10 @@ class PaymentDesk:
         digest = intent_hash(intent)
         if digest in self._intent_hashes:
             return _denied_intent("intent: already recorded")
-        balance = self.bank.get_balance(self._source)
+        try:
+            balance = self.bank.get_balance(self._source)
+        except RailError as exc:
+            return _denied_intent(str(exc))
         if balance < intent.amount_cents:
             return _denied_intent("state: insufficient funds")
         state = sign_state(
@@ -621,6 +625,7 @@ class PaymentDesk:
                 consent=c,
                 proof=proof,
                 salt=outcome.salt,
+                payment=outcome.payment,
             )
         self._emit("confirm", result, c, outcome.event, forensic)
         return dict(result)

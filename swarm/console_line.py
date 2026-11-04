@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from bank.rail import bank_view
 from gate.cava import CavaAction, action_commitment, action_hash, canonical_bytes
 from gate.certs import read_claims
 from gate.policy import matched_rule
@@ -19,6 +20,7 @@ from swarm.attribution import from_attacker
 from swarm.nimbus import AGENT, SUMMARIES, StepOutcome
 
 if TYPE_CHECKING:
+    from bank.api import Payment
     from gate.consent import Consent
     from gate.events import DecisionEvent
     from gate.policy import Policy
@@ -34,7 +36,16 @@ _EVENT_KEYS = frozenset(
     ("v", "id", "ts", "mode", "verdict", "action", "policy", "cert", "reason", "lat_us")
 )
 _FORENSIC_KEYS = frozenset(
-    ("cava", "action_hash", "policy", "cert_claims", "consent", "registry", "anchor")
+    (
+        "cava",
+        "action_hash",
+        "policy",
+        "cert_claims",
+        "consent",
+        "registry",
+        "anchor",
+        "bank",
+    )
 )
 _SUBJECT_KEYS = {
     "desk": frozenset(
@@ -68,6 +79,8 @@ _CONSENT_FIELDS = (
     "nonce",
     "expires_at",
 )
+_BANK_KEYS = frozenset(("rail", "provider", "transfer_id", "status", "idempotency_key"))
+_RAILS = ("simulated", "sandbox")
 _Check = Callable[[object], bool]
 
 
@@ -175,6 +188,26 @@ def _meta_ok(meta: object) -> bool:
     )
 
 
+def _bank_ok(bank: object) -> bool:
+    return bank is None or (
+        isinstance(bank, dict)
+        and bank.keys() == _BANK_KEYS
+        and bank["rail"] in _RAILS
+        and _is_str(bank["transfer_id"])
+        and _is_str(bank["status"])
+        and _nullable(_is_str)(bank["provider"])
+        and _nullable(_is_str)(bank["idempotency_key"])
+    )
+
+
+def _forensic_ok(forensic: object) -> bool:
+    return forensic is None or (
+        isinstance(forensic, dict)
+        and forensic.keys() == _FORENSIC_KEYS
+        and _bank_ok(forensic["bank"])
+    )
+
+
 def _loads(text: str) -> Any:
     def refuse(name: str) -> None:
         raise ValueError(name)
@@ -241,10 +274,7 @@ def _v3_line(obj: dict[str, Any]) -> ConsoleLine:
         or subject.keys() != _SUBJECT_KEYS[source]
         or not (obj["event"] is None or _event_ok(obj["event"]))
         or not _meta_ok(obj["meta"])
-        or not (
-            forensic is None
-            or (isinstance(forensic, dict) and forensic.keys() == _FORENSIC_KEYS)
-        )
+        or not _forensic_ok(forensic)
     ):
         raise ValueError(_MALFORMED)
     return ConsoleLine(seq, source, obj["event"], obj["meta"], subject, forensic)
@@ -306,6 +336,7 @@ def forensic_of(
     anchor: str | None = None,
     *,
     salt: bytes | None,
+    payment: Payment | None = None,
 ) -> dict[str, Any]:
     """Build the forensic block for one decided action.
 
@@ -319,6 +350,7 @@ def forensic_of(
         anchor: Anchored evidence digest, or None.
         salt: Salt of the gate's action hash; None for a layer that hashes
             the action unsalted (the MCP proxy).
+        payment: Payment the rail executed for the action, or None.
 
     Returns:
         The forensic object in wire key order.
@@ -338,6 +370,7 @@ def forensic_of(
         "consent": None if consent is None else _consent_fields(consent),
         "registry": None if proof is None else _registry_fields(proof),
         "anchor": anchor,
+        "bank": bank_view(payment),
     }
 
 
@@ -445,6 +478,7 @@ def bill_line(run: BillRun, policy: Policy, gate_pub: bytes) -> ConsoleLine:
             gate_pub,
             anchor=run.attribution.anchor,
             salt=result.salt,
+            payment=result.payment,
         )
     )
     subject = {
@@ -497,6 +531,7 @@ def attack_line(
             gate_pub,
             consent=outcome.consent,
             salt=outcome.salt,
+            payment=outcome.payment,
         )
     )
     subject = {

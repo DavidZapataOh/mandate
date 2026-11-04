@@ -74,6 +74,16 @@ export interface RegistryProof {
   siblings: string[];
 }
 
+export type Rail = "simulated" | "sandbox";
+
+export interface BankTransfer {
+  rail: Rail;
+  provider: string | null;
+  transfer_id: string;
+  status: string;
+  idempotency_key: string | null;
+}
+
 export interface Forensic {
   cava: Record<string, unknown>;
   action_hash: string;
@@ -82,6 +92,7 @@ export interface Forensic {
   consent: Record<string, unknown> | null;
   registry: RegistryProof | null;
   anchor: string | null;
+  bank: BankTransfer | null;
 }
 
 export interface Hello {

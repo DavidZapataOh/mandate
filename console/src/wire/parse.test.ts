@@ -68,3 +68,33 @@ describe("parseHello", () => {
     },
   );
 });
+
+describe("bank transfer block", () => {
+  const forensic = JSON.parse(CONFIRM).forensic;
+  const withBank = (bank: unknown) => patch(CONFIRM, { forensic: { ...forensic, bank } });
+
+  it("keeps the transfer a payment moved", () => {
+    expect(parseLine(CONFIRM).forensic?.bank).toEqual({
+      rail: "simulated",
+      provider: null,
+      transfer_id: "pay:000001",
+      status: "complete",
+      idempotency_key: "mandate-cert-00000000000000000000000000000002",
+    });
+  });
+
+  it.each([
+    ["an unknown rail", { ...forensic.bank, rail: "real" }],
+    ["a numeric transfer id", { ...forensic.bank, transfer_id: 7 }],
+    ["a missing key", { rail: "sandbox", provider: "increase", transfer_id: "t", status: "complete" }],
+    ["an extra key", { ...forensic.bank, url: "https://example.com" }],
+    ["a string", "pay:000001"],
+  ])("refuses %s", (_, bank) => {
+    expect(() => parseLine(withBank(bank))).toThrow("wire: malformed line");
+  });
+
+  it("refuses a forensic block without the bank key", () => {
+    const { bank: _, ...rest } = forensic;
+    expect(() => parseLine(patch(CONFIRM, { forensic: rest }))).toThrow("wire: malformed line");
+  });
+});

@@ -6,6 +6,8 @@ import json
 
 import pytest
 
+from bank.api import RailError
+from bank.conftest import RecordingRail
 from evidence.cooperative import SignedState, verify_state
 from evidence.seams import select_cooperative
 from gate.certs import generate_keypair
@@ -13,6 +15,7 @@ from gate.consent import Consent, HolderApproval, sign_approval
 from gate.policy import Intent
 from gate.registry import InclusionProof, Registry, verify_inclusion
 from gate.sdjwt import process
+from swarm.conftest import DEMO_INTENT
 from swarm.console_line import console_line_json
 from swarm.intent import sign_intent
 from swarm.receipt import RECEIPT_TYP, present
@@ -673,3 +676,81 @@ def test_missing_intent_is_a_sealed_denial_without_a_gate_run(make_desk, sign_qu
     assert (last.event, last.forensic) == (None, None)
     assert desk.bank.get_balance("checking-881") == 50000
     assert desk.latest_seal()["seq_to"] == desk.registry.size() == 1
+
+
+def test_confirm_line_names_the_rail_that_paid(make_desk, sign_quote):
+    desk, holder, lines = _published(make_desk)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    assert lines[-1].forensic["bank"] == {
+        "rail": "simulated",
+        "provider": None,
+        "transfer_id": "pay:000001",
+        "status": "complete",
+        "idempotency_key": "mandate-cert-00000000000000000000000000000002",
+    }
+
+
+def test_sandbox_desk_reports_the_banks_own_transfer_id(make_desk, sign_quote):
+    rail = RecordingRail(balance=50000)
+    desk, holder, lines = _published(make_desk, intents=(DEMO_INTENT,), bank=rail)
+    q = _bound(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    result = desk.confirm("q:000001")
+    assert (result["status"], result["payment_id"]) == (
+        "confirmed",
+        "account_transfer_t1",
+    )
+    line = lines[-1]
+    assert line.subject["payment_id"] == "account_transfer_t1"
+    assert line.forensic["bank"] == {
+        "rail": "sandbox",
+        "provider": "increase",
+        "transfer_id": "account_transfer_t1",
+        "status": "complete",
+        "idempotency_key": "mandate-cert-00000000000000000000000000000002",
+    }
+    assert [call[2] for call in rail.calls] == [
+        "mandate-cert-00000000000000000000000000000002"
+    ]
+
+
+def test_sandbox_desk_refuses_an_unbound_quote_before_the_bank(make_desk, sign_quote):
+    rail = RecordingRail(balance=50000)
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=rail)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    result = desk.confirm("q:000001")
+    assert (result["status"], result["reason"], result["payment_id"]) == (
+        "denied",
+        "intent: missing",
+        None,
+    )
+    assert rail.calls == []
+
+
+def test_a_refused_sandbox_transfer_is_a_denied_confirm(make_desk, sign_quote):
+    rail = RecordingRail(RailError("bank: unavailable"), balance=50000)
+    desk, holder, lines = _published(make_desk, intents=(DEMO_INTENT,), bank=rail)
+    q = _bound(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    result = desk.confirm("q:000001")
+    assert (result["status"], result["reason"], result["payment_id"]) == (
+        "denied",
+        "bank: unavailable",
+        None,
+    )
+    assert lines[-1].forensic["bank"] is None
+    assert desk.confirm("q:000001") == result
+
+
+def test_intent_reads_its_funds_from_the_rail(make_desk):
+    rich, holder = make_desk(bank=RecordingRail(balance=20000))
+    view = rich.record_intent(ACME, sign_intent(holder, ACME))
+    assert (view["status"], view["state"]["balance_cents"]) == ("signed", 20000)
+    down, holder = make_desk(bank=RecordingRail(balance=RailError("bank: unavailable")))
+    assert down.record_intent(ACME, sign_intent(holder, ACME)) == {
+        "status": "denied",
+        "reason": "bank: unavailable",
+    }

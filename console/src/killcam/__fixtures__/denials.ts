@@ -44,6 +44,7 @@ const certified = {
   consent: null,
   registry: null,
   anchor: null,
+  bank: null,
 };
 
 const attack = (kind: string, layer: string, reason: string, top: Record<string, unknown>): string =>
@@ -55,7 +56,19 @@ export const DENIALS: Readonly<Record<string, string>> = {
     event: { ...SWAP.event, action: INFLATE_HASH, reason: "amount differs from intent" },
     forensic: { ...SWAP.forensic, cava: cava("2000000", "acme-991"), action_hash: INFLATE_HASH },
   }),
-  replay: attack("replay", "bank", "replay: jti consumed", { event: null, forensic: certified }),
+  replay: attack("replay", "bank", "replay: jti consumed", {
+    event: null,
+    forensic: {
+      ...certified,
+      bank: {
+        rail: "simulated",
+        provider: null,
+        transfer_id: "pay:000001",
+        status: "complete",
+        idempotency_key: "mandate-cert-atk00000000000000000000000000003",
+      },
+    },
+  }),
   post_cert_mutation: attack("post_cert_mutation", "gate->bank", "mismatch: action hash differs", {
     event: null,
     forensic: certified,
@@ -135,6 +148,7 @@ export const NIMBUS_POISONED = patch(
       consent: null,
       registry: null,
       anchor: null,
+      bank: null,
     },
   },
   { step: "poisoned_tool", summary: "MANDATE_FIXTURE Call secrets.export on nimbus-mcp", layer: "mcp", reason: "denied: tool undeclared", blocked: true },

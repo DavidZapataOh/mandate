@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from bank.api import Bank
+from bank.api import Bank, Payment
 from bank.verifier import Verifier
 from gate.broker import Scope, action_within_scope, mint
 from gate.cava import CavaAction, Freshness
@@ -238,6 +238,7 @@ class AttackOutcome:
         consent: Holder consent presented to the gate, if any.
         policy: Policy the gate evaluated.
         salt: Salt of the gate's hash of that action, if the gate decided it.
+        payment: Payment of the legitimate run a replay repeated, if any.
     """
 
     kind: AttackKind
@@ -251,6 +252,7 @@ class AttackOutcome:
     consent: Consent | None = None
     policy: Policy = PAYMENTS_POLICY
     salt: bytes | None = field(default=None, repr=False)
+    payment: Payment | None = None
 
 
 def _request(
@@ -455,6 +457,7 @@ def apply_attack(
     certificate: str | None = None
     consent: Consent | None = None
     used: bytes | None = None
+    paid: Payment | None = None
     policy = PAYMENTS_POLICY
     match kind:
         case AttackKind.PAYEE_SWAP | AttackKind.AMOUNT_INFLATE:
@@ -474,6 +477,7 @@ def apply_attack(
             if first is not None:
                 action, certificate = first.action, first.certificate
                 used = first.salt
+                paid = first.payment
         case AttackKind.POST_CERT_MUTATION:
             reason, action, certificate, used = _mutated_cert_reason(
                 legit,
@@ -520,6 +524,7 @@ def apply_attack(
         consent=consent,
         policy=policy,
         salt=used,
+        payment=paid,
     )
 
 

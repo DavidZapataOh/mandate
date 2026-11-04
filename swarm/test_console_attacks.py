@@ -131,6 +131,11 @@ def _fingerprint(line):
         if raw["forensic"]["cert_claims"] is not None:
             for key in ("action_hash", "freshness_nonce"):
                 raw["forensic"]["cert_claims"].pop(key)
+        if raw["forensic"]["bank"] is not None:
+            # The key derives from the certificate id (the nonce); the
+            # transfer id counts the payments the bank has made so far.
+            for key in ("idempotency_key", "transfer_id"):
+                raw["forensic"]["bank"].pop(key)
     return raw
 
 

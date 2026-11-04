@@ -56,6 +56,14 @@ const META = shape({
 
 const REGISTRY = shape({ seq: int, root: str, leaves: int, leaf: str, siblings: strings });
 
+const BANK = shape({
+  rail: oneOf("simulated", "sandbox"),
+  provider: nullable(str),
+  transfer_id: str,
+  status: str,
+  idempotency_key: nullable(str),
+});
+
 const FORENSIC = shape({
   cava: isObj,
   action_hash: str,
@@ -64,6 +72,7 @@ const FORENSIC = shape({
   consent: nullable(isObj),
   registry: nullable(REGISTRY),
   anchor: nullable(str),
+  bank: nullable(BANK),
 });
 
 const SUBJECTS: Record<Source, Check> = {
