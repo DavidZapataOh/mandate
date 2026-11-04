@@ -1378,6 +1378,8 @@ class PaymentDesk:
 
     def _intent_signer(self, intent: Intent, signature: bytes) -> str | None:
         """Id of the first paired holder whose key signed the intent, or None."""
+        # Every key is tried, so timing does not reveal who signed.
+        found: str | None = None
         for holder_id, key in self._holders.paired:
             try:
                 confirmed_intent(key, intent, signature)
@@ -1386,8 +1388,8 @@ class PaymentDesk:
                 if str(exc) == "intent: malformed":
                     raise
                 continue
-            return holder_id
-        return None
+            found = holder_id if found is None else found
+        return found
 
     def _append(self, kind: str, body: str) -> tuple[int, Anchor]:
         # Every entry is sealed right away, so the newest seal covers the log.

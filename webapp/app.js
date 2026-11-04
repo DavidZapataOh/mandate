@@ -326,9 +326,19 @@ export async function unpairDevice(api, keys, store) {
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
   const signature = await crypto.subtle.sign(ED25519, keys.privateKey, unpairBytes(raw));
   const { unpaired } = await api.unpair(toBase64(raw), toBase64(signature));
-  if (!unpaired) return "This device is not paired with the desk.";
-  await store.forget();
-  return "Unpaired. This device's key is retired; open a new pairing link to pair again.";
+  // The desk never pairs a retired or unknown key, so the key is dead either way.
+  let cleared = true;
+  try {
+    await store.forget();
+  } catch {
+    cleared = false;
+  }
+  if (!unpaired) {
+    return "This device is not paired with the desk; open a new pairing link to pair with a new key.";
+  }
+  return cleared
+    ? "Unpaired. This device's key is retired; open a new pairing link to pair again."
+    : "Unpaired. This device's key is retired but could not be cleared from this browser; clear site data, then open a new pairing link.";
 }
 
 export async function holderKey(store) {
@@ -508,6 +518,7 @@ async function boot() {
     $("fields").replaceChildren(...cells);
   };
   const approver = new Approver(api, keys, (line, consent) => {
+    if (retired) return;
     $("shown").textContent = line;
     $("approve").disabled = false;
     showFields(consent);

@@ -472,14 +472,18 @@ test("unpair bytes and signature match the gate golden", async () => {
   assert.deepEqual(sent, [[HOLDER_KEY, UNPAIR_SIGNATURE]]);
 });
 
-test("an unpaired device forgets its key; a refused one keeps it", async () => {
+test("a device the desk does not know forgets its key like an unpaired one", async () => {
   for (const [unpaired, note, kept] of [
     [
       true,
       "Unpaired. This device's key is retired; open a new pairing link to pair again.",
       false,
     ],
-    [false, "This device is not paired with the desk.", true],
+    [
+      false,
+      "This device is not paired with the desk; open a new pairing link to pair with a new key.",
+      false,
+    ],
   ]) {
     const store = memoryStore();
     const keys = await holderKey(store);
@@ -487,6 +491,18 @@ test("an unpaired device forgets its key; a refused one keeps it", async () => {
     assert.equal(await unpairDevice(api, keys, store), note);
     assert.equal((await store.load()) === keys, kept);
   }
+});
+
+test("a failed key delete after a successful unpair is not reported as a refusal", async () => {
+  const store = memoryStore();
+  const keys = await holderKey(store);
+  store.forget = async () => {
+    throw new Error("storage blocked");
+  };
+  const api = { unpair: async () => ({ unpaired: true }) };
+  const note = await unpairDevice(api, keys, store);
+  assert.match(note, /^Unpaired\./);
+  assert.match(note, /could not be cleared/);
 });
 
 test("unpair posts the device key and its signature", async () => {

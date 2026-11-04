@@ -323,14 +323,12 @@ def _certifier(
     ):
         return None
     certified = key_bytes(c.consent_key, c.nonce)
-    return next(
-        (
-            key
-            for key in holder_keys
-            if _sized(key, _KEY_LEN) and _signed(key, c.key_signature, certified)
-        ),
-        None,
-    )
+    # Every key is tried, so timing does not reveal which one certified.
+    found: bytes | None = None
+    for key in holder_keys:
+        if _sized(key, _KEY_LEN) and _signed(key, c.key_signature, certified):
+            found = key if found is None else found
+    return found
 
 
 def _verifies(c: Consent, message: bytes, holder_keys: tuple[bytes, ...]) -> bool:

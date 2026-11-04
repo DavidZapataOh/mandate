@@ -11,6 +11,7 @@ from gate.consent import (
     Consent,
     ConsentLedger,
     HolderApproval,
+    certifying_key,
     check_consent,
     consent_bytes,
     key_bytes,
@@ -524,3 +525,30 @@ def test_a_crash_between_nonce_and_key_spends_neither(tmp_path, monkeypatch):
     raw.close()
     again = ConsentLedger(state=StateStore(path))
     assert (again.used(c.nonce), again.key_used(c.consent_key)) == (False, False)
+
+
+def test_every_paired_key_is_tried_whichever_one_certified(monkeypatch):
+    import gate.consent as consent
+
+    signed = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    certifier = public_key_of(HOLDER_SEED)
+    others = tuple(generate_keypair()[1] for _ in range(3))
+    real = consent._signed
+    calls = []
+
+    def counting(key, signature, message):
+        calls.append(key)
+        return real(key, signature, message)
+
+    monkeypatch.setattr(consent, "_signed", counting)
+    for keys in ((certifier, *others), (*others[:2], certifier, others[2])):
+        calls.clear()
+        assert certifying_key(signed, keys) == certifier
+        # One check for the one-time signature, then one per paired key.
+        assert len(calls) == 1 + len(keys)
+
+
+def test_the_first_certifying_key_wins_when_several_verify():
+    signed = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    certifier = public_key_of(HOLDER_SEED)
+    assert certifying_key(signed, (certifier, certifier)) == certifier
