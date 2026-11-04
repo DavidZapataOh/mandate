@@ -43,9 +43,43 @@ function button(label: string, onClick: () => void): HTMLButtonElement {
   return el;
 }
 
+interface Return {
+  readonly opener: HTMLElement | null;
+  readonly scope: ParentNode;
+  readonly seq: string;
+}
+
+const returns = new WeakMap<HTMLElement, Return>();
+const listening = new WeakSet<HTMLElement>();
+
+// The opener may be redrawn by a live update; then the same line's control in the opener's own list stands in.
+function hide(aside: HTMLElement): void {
+  aside.hidden = true;
+  const back = returns.get(aside);
+  returns.delete(aside);
+  if (!back) return;
+  const target = back.opener?.isConnected ? back.opener : back.scope.querySelector<HTMLElement>(`[data-seq="${back.seq}"]`);
+  target?.focus();
+}
+
+function remember(aside: HTMLElement, line: ConsoleLine): void {
+  if (!aside.hidden && returns.has(aside)) return;
+  const active = document.activeElement;
+  const opener = active instanceof HTMLElement && active !== document.body && !aside.contains(active) ? active : null;
+  const scope = opener?.parentElement?.closest("[id]") ?? document;
+  returns.set(aside, { opener, scope, seq: opener?.dataset.seq ?? String(line.seq) });
+  if (listening.has(aside)) return;
+  listening.add(aside);
+  aside.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !aside.hidden) hide(aside);
+  });
+}
+
 /** Show every piece of evidence of a line as text. */
 export function renderForensic(aside: HTMLElement, line: ConsoleLine): void {
+  remember(aside, line);
   const heading = document.createElement("h2");
+  heading.tabIndex = -1;
   heading.textContent = `Line #${line.seq} · ${line.source}`;
   const sections = blocks(line).map(([title, value]) => {
     const section = document.createElement("section");
@@ -62,16 +96,16 @@ export function renderForensic(aside: HTMLElement, line: ConsoleLine): void {
   });
   aside.replaceChildren(
     heading,
-    button("Close", () => {
-      aside.hidden = true;
-    }),
+    button("Close", () => hide(aside)),
     ...sections,
   );
   aside.hidden = false;
+  heading.focus();
 }
 
 /** Hide the drawer and drop the line it showed. */
 export function closeForensic(aside: HTMLElement): void {
+  returns.delete(aside);
   aside.hidden = true;
   aside.replaceChildren();
 }

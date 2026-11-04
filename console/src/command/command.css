@@ -590,7 +590,9 @@ button.drill:hover {
   text-align: left;
 }
 
+/* 24px tall: the smallest target the tables' stacked drill buttons may have. */
 .scroll button.drill {
+  min-height: 24px;
   margin: 0;
   font-size: 11px;
 }

@@ -38,7 +38,7 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
   if (line.source === "attack" || line.source === "deploy") {
     button.dataset.blocked = String(line.subject.blocked);
     const origin = line.source === "deploy" ? "SCENARIO" : line.subject.origin.toUpperCase();
-    button.append(cell("span", "origin", origin));
+    button.append(cell("span", "origin", origin), " ");
     name.push(origin);
   }
   const rail = railOf(line);
@@ -47,14 +47,20 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
     button.append(cell("span", "rail", RAIL_LABEL[rail]), " ");
     name.push(RAIL_LABEL[rail]);
   }
-  // Spoken name carries its own separators so it never depends on stylesheet spacing.
-  name.push(cells.time, cells.actor, sentence, `hash ${cells.hash}${cells.struck ? " struck" : ""}`, cells.verdict);
+  // Spoken name carries its own separators so it never depends on stylesheet spacing; the words the row
+  // only shows by style are parenthesised, so the visible text stays a run of the name for speech input.
+  name.push(cells.time, cells.actor, sentence, `(hash) ${cells.hash}${cells.struck ? " (struck)" : ""}`, cells.verdict);
   button.setAttribute("aria-label", name.join(" · "));
+  // Whitespace between flex items is not rendered; it keeps the cells separate words in the text.
   button.append(
     cell("span", "t", cells.time),
+    " ",
     cell("span", "who", cells.actor),
+    " ",
     cell("span", "text", sentence),
+    " ",
     cell(cells.struck ? "s" : "span", "hash", cells.hash),
+    " ",
     cell("span", "verdict", cells.verdict),
     icon(cells.outcome),
   );
@@ -71,6 +77,9 @@ export function mountLedger(
 ): { setMode(mode: Mode): void } {
   let mode: Mode = "game";
   const render = (lines: readonly ConsoleLine[]): void => {
+    const active = document.activeElement;
+    // Every line redraws the list; a keyboard user stays on the row they were on.
+    const kept = active instanceof HTMLElement && list.contains(active) ? active.closest<HTMLElement>("[data-seq]")?.dataset.seq : undefined;
     list.dataset.mode = mode;
     list.replaceChildren(
       ...lines
@@ -78,6 +87,7 @@ export function mountLedger(
         .reverse()
         .map((line) => row(line, mode, onOpen)),
     );
+    if (kept !== undefined) list.querySelector<HTMLElement>(`button[data-seq="${kept}"]`)?.focus({ preventScroll: true });
   };
   store.subscribe(render);
   render(store.lines());

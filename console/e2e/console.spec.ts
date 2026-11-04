@@ -16,7 +16,7 @@ test("a template attack lands in the ledger and opens its forensic detail", asyn
   const time = await row(page, line.seq).locator(".t").textContent();
   await expect(
     page.getByRole("button", {
-      name: `TEMPLATE · ${time} · template attack · ${SWAP} · hash ${line.forensic.action_hash.slice(0, 6).toUpperCase()} struck · DENIED`,
+      name: `TEMPLATE · ${time} · template attack · ${SWAP} · (hash) ${line.forensic.action_hash.slice(0, 6).toUpperCase()} (struck) · DENIED`,
       exact: true,
     }),
   ).toHaveAttribute("data-seq", String(line.seq));
