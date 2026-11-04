@@ -23,7 +23,8 @@ html {
 body {
   min-height: 100vh;
   font: 400 15px / 1.4 var(--mono);
-  letter-spacing: -0.02em;
+  /* The comp sets its mono tighter still; the brand's tracking floor stops here. */
+  letter-spacing: -0.04em;
 }
 
 /* Top bar: the brand lockup over one full-width hairline. */
@@ -107,6 +108,7 @@ label[for="intent-text"] {
   background: none;
   color: var(--bone);
   font: 400 15px / 21px var(--mono);
+  letter-spacing: inherit;
   text-align: center;
   resize: none;
   field-sizing: content;
@@ -217,12 +219,16 @@ label[for="intent-file"]:has(+ #intent-file:disabled) {
   color: var(--alert);
 }
 
-/* The cheque: the fields Muse Spark drafted, as a mono list. */
+/* The cheque: the fields Muse Spark drafted, as a mono list under its label. */
+#intent-review .fields-label {
+  margin: 18px 0 0;
+}
+
 #intent-review dl {
   display: grid;
   grid-template-columns: 49% 1fr;
   row-gap: 14.5px;
-  margin: 20px 0 0;
+  margin: 6px 0 0;
 }
 
 #intent-review dt {
@@ -248,16 +254,18 @@ label[for="intent-file"]:has(+ #intent-file:disabled) {
   column-gap: 12px;
 }
 
-#intent-review dl {
+#intent-review dl,
+#intent-review .fields-label {
   grid-column: 1 / -1;
 }
 
 /* The stub: the receipt kept on this device, Bone paper with a perforated edge. */
 #intent-receipt {
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
-.receipt-label {
+.receipt-label,
+.fields-label {
   margin: 0 0 12px;
   font: 400 16px / 21px var(--mono);
   color: var(--muted);
@@ -341,31 +349,72 @@ label[for="intent-file"]:has(+ #intent-file:disabled) {
     center / contain no-repeat;
 }
 
+/* The seam is read, not skimmed: Bone at 82% (10:1 on Ink), never Verify. */
 #intent-seam {
-  margin: 7px -14px 0 0;
+  margin: 18px -14px 0 0;
   font: 400 14px / 20px var(--mono);
-  color: var(--muted);
+  color: color-mix(in srgb, var(--bone) 82%, var(--ink));
 }
 
 #intent-handoff {
   width: 100%;
   min-height: 43px;
-  margin-top: 21px;
+  margin-top: 14px;
   font-size: 21px;
 }
 
 #agent-state {
   min-height: 22px;
-  margin: 14px 0 0;
+  margin: 10px 0 0;
   font: 400 14px / 22px var(--mono);
   text-align: center;
   overflow-wrap: anywhere;
 }
 
-/* The review and the receipt arrive with the seam snap: fast in, dead stop. */
+/* Under the comp's width the three ways in still sit on one line inside the slip. */
+@media (max-width: 420px) {
+  #intent-form {
+    column-gap: 8px;
+    padding-inline: 10px;
+  }
+
+  #intent-read,
+  #intent-record,
+  label[for="intent-file"] {
+    padding-inline: 6px;
+  }
+}
+
+/* On the smallest phones the clip control takes its own row under the other two. */
+@media (max-width: 379px) {
+  #intent-form {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "label label"
+      "text text"
+      "read record"
+      "clip clip";
+  }
+
+  label[for="intent-file"] {
+    margin-top: 8px;
+  }
+}
+
+/* The one authored moment: the review and the stub arrive with the seam snap
+   (fast in, dead stop), and on the stub the funds stamp lands a beat after the
+   paper, so the verified line is the last thing to settle. No box moves. */
 #intent-review,
 #intent-receipt {
   transition: opacity 120ms var(--snap);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+#intent-receipt .funds {
+  transition: opacity 120ms var(--snap) 180ms;
 
   @starting-style {
     opacity: 0;

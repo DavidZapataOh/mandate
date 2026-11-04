@@ -75,7 +75,7 @@ describe("signing", () => {
     expect([flow.view.phase, flow.view.status, flow.view.funds, flow.view.fundsOk]).toEqual([
       "signed",
       "Signed. The agent gets only the intent id.",
-      "Funds sufficient: desk-signed statement verified on this device.",
+      "sufficient: desk-signed statement verified on this device.",
       true,
     ]);
   });
@@ -93,7 +93,7 @@ describe("signing", () => {
     desk.signs.push({ ...SIGNED, state: { ...SIGNED.state, balance_cents: 90000 } });
     await flow.read("Pay my Acme Corp bill A-991, 200 USD");
     await flow.sign();
-    expect(flow.view.funds).toBe("Statement not verified: bad-signature: state signature invalid");
+    expect(flow.view.funds).toBe("not verified: bad-signature: state signature invalid");
     await flow.handoff();
     expect(desk.calls.map((c) => c[0])).toEqual(["draftText", "sign"]);
   });

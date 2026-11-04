@@ -22,6 +22,7 @@
       </form>
       <p id="intent-status" role="status" aria-live="polite"></p>
       <section id="intent-review" aria-label="Parsed intent" hidden>
+        <h2 class="fields-label">parsed fields</h2>
         <dl>
           <dt>Amount</dt><dd id="review-amount"></dd>
           <dt>Payee account</dt><dd id="review-recipient"></dd>
@@ -32,16 +33,16 @@
         <button type="button" id="intent-discard">Discard</button>
       </section>
       <section id="intent-receipt" aria-label="Intent receipt" hidden>
-        <h2 class="receipt-label">Receipt</h2>
+        <h2 class="receipt-label">receipt</h2>
         <dl>
           <dt>Intent</dt><dd id="receipt-id"></dd>
           <dt>Intent hash</dt><dd id="receipt-hash"></dd>
           <div class="funds"><dt>Funds</dt><dd id="receipt-funds"></dd></div>
           <dt>Evidence</dt><dd id="receipt-evidence"></dd>
         </dl>
-        <p id="intent-seam">Funds proof: a statement the desk signs over the balance its bank reports (cooperative). On the sandbox rail, run mandate-holder-proof to add a zkTLS proof of your Increase balance; Mandate's verifier sees the balance and checks it covers the payment.</p>
         <button type="button" id="intent-handoff">Hand to Muse Spark</button>
         <p id="agent-state" role="status" aria-live="polite"></p>
+        <p id="intent-seam">Funds proof: a statement the desk signs over the balance its bank reports (cooperative). On the sandbox rail, run mandate-holder-proof to add a zkTLS proof of your Increase balance; Mandate's verifier sees the balance and checks it covers the payment.</p>
       </section>
     </main>
     <script type="module" src="/src/holder.ts"></script>
