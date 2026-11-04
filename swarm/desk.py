@@ -8,10 +8,17 @@ import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import Any, TypeVar, overload
 
 from bank.api import Payment, PaymentRequest, RailError
 from bank.rail import SANDBOX, BankRail, idempotency_key
+from bank.reconcile import (
+    CANCELED,
+    BankTransfer,
+    Reconciliation,
+    TransferLedger,
+    compare,
+)
 from bank.verifier import Verifier, action_commitment
 from evidence.cooperative import sign_state
 from evidence.seams import opaque_cooperative_ref, opaque_intent_ref
@@ -65,6 +72,9 @@ _UNSETTLED = ("bank: outcome unknown", "bank: not complete", _DIFFERS)
 SETTLE_WINDOW_S = 60
 _NOT_YET = "bank: no transfer yet"
 _OUTCOME_UNKNOWN = "bank: outcome unknown"
+_NOT_COMPLETE = "bank: not complete"
+_RECONCILED = "ok: reconciled at the bank"
+_NOT_PAID = "bank: no transfer under this certificate"
 _BYTE_FIELDS = ("signature", "consent_key", "key_signature")
 _T = TypeVar("_T")
 
@@ -194,14 +204,23 @@ class PaymentDesk:
         self._intent_hashes: set[str] = set()
         # Final results of quotes from an earlier process, by quote id.
         self._closed: dict[str, dict[str, Any]] = {}
+        # Transfers made before this registry existed are not its to explain.
+        self._genesis = iso_utc(clock())
+        self._reconciliation: dict[str, Any] | None = None
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
         if state is not None:
             self._load(state)
 
     def _load(self, state: StateStore) -> None:
-        if state.get("genesis") is None:
-            state.put("genesis", iso_utc(self._clock()))
+        genesis = state.get("genesis")
+        if genesis is None:
+            state.put("genesis", self._genesis)
+        else:
+            self._genesis = genesis
+        reconciliation = state.get("reconciliation")
+        if reconciliation is not None:
+            self._reconciliation = json.loads(reconciliation)
         holders = json.loads(state.get("holders") or "[]")
         self._holders = tuple(base64.b64decode(k) for k in holders)
         self._seq = int(state.get("quote_seq") or "0")
@@ -441,7 +460,287 @@ class PaymentDesk:
             self._source,
         )
 
-    def reconcile(self, intent_id: str) -> dict[str, Any]:
+    @overload
+    def reconcile(self) -> Reconciliation: ...
+
+    @overload
+    def reconcile(self, intent_id: str) -> dict[str, Any]: ...
+
+    def reconcile(
+        self, intent_id: str | None = None
+    ) -> Reconciliation | dict[str, Any]:
+        """Reconcile the whole desk with the bank, or settle one intent.
+
+        Without an intent id: settles every journaled payment (see
+        ``_settle_journal``), in quote order, then compares the transfers the
+        bank lists from the debit account since the registry began with the
+        sealed receipts. Reads only; the bank is never asked to move money.
+        The view is kept as the latest reconciliation. A bank that cannot be
+        read stops the settling and is named in ``error``; the comparison then
+        does not run and writes nothing.
+
+        With an intent id: see ``_reconcile_intent``.
+
+        Args:
+            intent_id: Intent to settle, or None for the whole desk.
+
+        Returns:
+            The ``Reconciliation``, or the intent's view.
+
+        Raises:
+            ValueError: Without an intent id, if the rail cannot list its
+                transfers.
+        """
+        if intent_id is not None:
+            return self._reconcile_intent(intent_id)
+        ledger = self.bank
+        if not isinstance(ledger, TransferLedger):
+            raise ValueError("reconcile: the rail cannot list transfers")
+        with self._lock:
+            return self._reconcile_bank(ledger)
+
+    def latest_reconciliation(self) -> dict[str, Any] | None:
+        """View of the newest reconciliation, or None before the first one."""
+        with self._lock:
+            latest = self._reconciliation
+            return None if latest is None else json.loads(json.dumps(latest))
+
+    def _reconcile_bank(self, ledger: TransferLedger) -> Reconciliation:
+        resolved, pending, error = self._settle_journals(ledger)
+        transfers = certified = 0
+        unbacked: tuple[str, ...] = ()
+        missing: tuple[str, ...] = ()
+        if error is None:
+            try:
+                listed = ledger.transfers(self._source, self._genesis)
+            except RailError as exc:
+                error = str(exc)
+            else:
+                sealed = self._sealed(ledger.rail)
+                certified, unbacked, missing = compare(listed, sealed, ledger.rail)
+                transfers = sum(1 for t in listed if t.status != CANCELED)
+        report = Reconciliation(
+            ledger.rail,
+            ledger.provider,
+            self._genesis,
+            self._clock(),
+            transfers,
+            certified,
+            unbacked,
+            missing,
+            resolved,
+            pending,
+            error,
+        )
+        view = report.view()
+        if self._state is not None:
+            self._state.put("reconciliation", json.dumps(view))
+        self._reconciliation = view
+        return report
+
+    def _sealed(self, rail: str) -> dict[str, tuple[str, bool]]:
+        """Each stored receipt on a rail: its jti and whether its entry is ours."""
+        sealed: dict[str, tuple[str, bool]] = {}
+        for receipt in self._proofs.values():
+            bank = _jws_payload(receipt["sd"].split("~")[0]).get("bank")
+            if bank is None or bank.get("rail") != rail:
+                continue
+            entry = LogEntry(**receipt["registry"]["entry"])
+            ours = 0 < entry.seq <= self.registry.size()
+            ours = ours and self.registry.entry(entry.seq) == entry
+            jti = _jws_payload(receipt["certificate"])["jti"]
+            sealed[receipt["payment_id"]] = (jti, ours)
+        return sealed
+
+    def _settle_journals(
+        self, ledger: TransferLedger
+    ) -> tuple[tuple[str, ...], tuple[str, ...], str | None]:
+        """Settle every journaled payment the bank can now answer for."""
+        if self._state is None:
+            return (), (), None
+        resolved: list[str] = []
+        pending: list[str] = []
+        error: str | None = None
+        for quote_id, value in sorted(self._state.records("pending")):
+            if error is not None or not self.registry.has_room():
+                pending.append(quote_id)
+                continue
+            try:
+                outcome = self._settle_journal(ledger, quote_id, json.loads(value))
+            except RailError as exc:
+                error = str(exc)
+                outcome = None
+            if outcome is None:
+                pending.append(quote_id)
+            else:
+                resolved.append(f"{quote_id} -> {outcome}")
+        return tuple(resolved), tuple(pending), error
+
+    def _settle_journal(
+        self, ledger: TransferLedger, quote_id: str, journal: dict[str, Any]
+    ) -> str | None:
+        """Settle one journaled payment by a lookup of its idempotency key.
+
+        A complete transfer that matches the journal field by field becomes
+        the sealed payment; no transfer (or a canceled one) once the
+        certificate has expired becomes a sealed "not paid". Anything else,
+        a transfer still awaiting approval included, stays pending.
+
+        Returns:
+            The transfer id, ``not paid``, or None while it stays pending.
+
+        Raises:
+            RailError: If the bank cannot be read.
+        """
+        transfer = ledger.transfer_by_key(journal["idempotency_key"])
+        if transfer is not None and transfer.status == "complete":
+            held = self._matching(journal, transfer)
+            if held is None:
+                return None
+            self._seal_transfer(quote_id, journal, held)
+            return held.payment_id
+        absent = transfer is None or transfer.status == CANCELED
+        if absent and self._clock() > journal["expires_at"]:
+            self._seal_not_paid(quote_id, journal)
+            return "not paid"
+        return None
+
+    def _matching(
+        self, journal: dict[str, Any], transfer: BankTransfer
+    ) -> Payment | None:
+        """The bank's payment for a found transfer, when it is the journal's."""
+        key = journal["idempotency_key"]
+        request = _request_of(Consent(**_consent_from(journal["consent"])))
+        if (transfer.idempotency_key, transfer.amount_cents) != (
+            key,
+            request.amount_cents,
+        ):
+            return None
+        # The rail's own lookup compares the accounts and currency it holds.
+        try:
+            held = self.bank.reconcile(request, _journal_hash(journal), key)
+        except RailError as exc:
+            if str(exc) in (_DIFFERS, _NOT_COMPLETE):
+                return None
+            raise RailError("bank: unavailable") from None
+        except ValueError:
+            return None
+        if held is None or held.payment_id != transfer.transfer_id:
+            return None
+        return held if _same_payment(held, request, key) else None
+
+    def _seal_transfer(
+        self, quote_id: str, journal: dict[str, Any], held: Payment
+    ) -> None:
+        """Make a journaled transfer the bank completed a sealed payment."""
+        consent = Consent(**_consent_from(journal["consent"]))
+        action = _action_from(journal["action"])
+        salt = bytes.fromhex(journal["action_salt"])
+        certificate = journal["certificate"]
+        payment = Payment(
+            held.payment_id,
+            consent.source,
+            consent.recipient,
+            consent.amount_cents,
+            consent.currency,
+            consent.reference,
+            _journal_hash(journal),
+            rail=self.bank.rail,
+            provider=held.provider,
+            status=held.status,
+            idempotency_key=journal["idempotency_key"],
+        )
+        result: dict[str, Any] = {
+            "status": "confirmed",
+            "quote_id": quote_id,
+            "payment_id": payment.payment_id,
+            "reason": _RECONCILED,
+        }
+        # The registry body is the ordinary one, so inclusion checks hold.
+        body = _result_body({**result, "reason": "ok: executed"})
+        iid = journal["intent_id"] or ""
+        bound = self._intents.get(iid)
+        changes = _paid_changes(bound, quote_id, payment.payment_id)
+
+        def work() -> tuple[InclusionProof, dict[str, Any]]:
+            seq, seal = self._append("execution", body)
+            proof = self.registry.prove(seq)
+            receipt = proof_receipt(
+                payment.payment_id,
+                certificate,
+                action,
+                DESK_POLICY,
+                consent,
+                base64.b64decode(journal["holder_key"]),
+                LogEntry(seq, "execution", body),
+                proof,
+                seal,
+                self._gate_key,
+                self._salts,
+                action_salt=salt,
+                payment=payment,
+                funds=_funds_view(bound),
+            )
+            self._put("receipt", payment.payment_id, receipt)
+            self._put("result", payment.payment_id, result)
+            self._put("quote", quote_id, result)
+            if bound is not None and changes:
+                self._put("intent", iid, _intent_record(_replace(bound, changes)))
+            self._drop("pending", quote_id)
+            return proof, receipt
+
+        proof, receipt = self._durably(work)
+        self._proofs[payment.payment_id] = receipt
+        self._receipts[payment.payment_id] = result
+        if bound is not None:
+            for name, value in changes.items():
+                setattr(bound, name, value)
+        self._close_quote(quote_id, result)
+        forensic = forensic_of(
+            action,
+            DESK_POLICY,
+            certificate,
+            self._gate_pub,
+            consent=consent,
+            proof=proof,
+            salt=salt,
+            payment=payment,
+        )
+        self._emit("confirm", result, consent, None, forensic)
+
+    def _seal_not_paid(self, quote_id: str, journal: dict[str, Any]) -> None:
+        """Seal that an expired certificate moved no money; release its intent."""
+        result: dict[str, Any] = {
+            "status": "denied",
+            "quote_id": quote_id,
+            "reason": _NOT_PAID,
+            "payment_id": None,
+        }
+        iid = journal["intent_id"] or ""
+        bound = self._intents.get(iid)
+        changes: dict[str, Any] = {}
+        if bound is not None and _unsettled_by(bound, quote_id):
+            changes = {"unsettled": None}
+
+        def work() -> None:
+            self._append("denial", _result_body(result))
+            self._put("quote", quote_id, result)
+            if bound is not None and changes:
+                self._put("intent", iid, _intent_record(_replace(bound, changes)))
+            self._drop("pending", quote_id)
+
+        self._durably(work)
+        if bound is not None and changes:
+            bound.unsettled = None
+        self._close_quote(quote_id, result)
+
+    def _journal_of(self, quote_id: str) -> dict[str, Any] | None:
+        if self._state is None:
+            return None
+        value = self._state.record("pending", quote_id)
+        return None if value is None else dict(json.loads(value))
+
+    def _reconcile_intent(self, intent_id: str) -> dict[str, Any]:
         """Settle an unsettled intent by one bank lookup of its idempotency key.
 
         A transfer found complete and matching spends the intent: the quote
@@ -477,8 +776,12 @@ class PaymentDesk:
                 still = dataclasses.replace(pending, reason=_NOT_YET)
                 self._keep_intent(intent_id, found, unsettled=still)
                 return self._intent_view(intent_id)
+            journal = self._journal_of(pending.quote_id)
             if payment is None:
                 self._keep_intent(intent_id, found, unsettled=None)
+            elif journal is not None:
+                # One settlement for both paths: a receipt the reconciler counts.
+                self._seal_transfer(pending.quote_id, journal, payment)
             else:
                 self._settle(intent_id, found, pending.quote_id, payment)
             return self._intent_view(intent_id)
@@ -864,7 +1167,7 @@ class PaymentDesk:
         def issued(certificate: str, action: CavaAction, salt: bytes) -> None:
             if state is None:
                 return
-            claims = _cert_payload(certificate)
+            claims = _jws_payload(certificate)
             entry = {
                 "quote_id": quote_id,
                 "intent_id": record.intent_id,
@@ -1202,15 +1505,6 @@ def _dumps(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def _cert_payload(certificate: str) -> dict[str, Any]:
-    """The desk's own certificate's claims; the gate signed it a moment ago."""
-    part = certificate.split(".")[1]
-    payload: dict[str, Any] = json.loads(
-        base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
-    )
-    return payload
-
-
 def _consent_record(consent: Consent) -> dict[str, Any]:
     record = dataclasses.asdict(consent)
     for name in _BYTE_FIELDS:
@@ -1238,6 +1532,68 @@ def _action_from(record: dict[str, Any]) -> CavaAction:
         freshness=Freshness(**record["freshness"]),
         evidence_refs=tuple(record["evidence_refs"]),
     )
+
+
+def _jws_payload(token: str) -> dict[str, Any]:
+    """Claims of a token the desk's gate signed; read, not verified."""
+    part = token.split(".")[1]
+    payload: dict[str, Any] = json.loads(
+        base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+    )
+    return payload
+
+
+def _journal_hash(journal: dict[str, Any]) -> str:
+    """The salted action hash the journaled certificate signed."""
+    action = _action_from(journal["action"])
+    return action_commitment(to_proposed(action), bytes.fromhex(journal["action_salt"]))
+
+
+def _same_payment(held: Payment, request: PaymentRequest, key: str) -> bool:
+    """Whether the bank's payment is the request, complete, under the key."""
+    return (
+        held.from_acct,
+        held.to_acct,
+        held.amount_cents,
+        held.currency,
+        held.ref,
+        held.idempotency_key,
+        held.status,
+    ) == (
+        request.from_acct,
+        request.to_acct,
+        request.amount_cents,
+        request.currency,
+        request.ref,
+        key,
+        "complete",
+    )
+
+
+def _unsettled_by(found: _Intent, quote_id: str) -> bool:
+    return found.unsettled is not None and found.unsettled.quote_id == quote_id
+
+
+def _paid_changes(
+    found: _Intent | None, quote_id: str, payment_id: str
+) -> dict[str, Any]:
+    """An intent's new fields once a transfer under its certificate moved.
+
+    The intent may already have been released by a lookup that found nothing,
+    or have paid since; a payment it already holds is never replaced.
+    """
+    if found is None:
+        return {}
+    changes: dict[str, Any] = {}
+    if found.payment_id is None:
+        changes["payment_id"] = payment_id
+    if _unsettled_by(found, quote_id):
+        changes["unsettled"] = None
+    return changes
+
+
+def _replace(found: _Intent, changes: dict[str, Any]) -> _Intent:
+    return dataclasses.replace(found, **changes)
 
 
 def _intent_record(found: _Intent) -> dict[str, Any]:

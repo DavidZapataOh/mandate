@@ -211,7 +211,8 @@ def test_an_unsettled_intent_is_settled_after_a_restart(state_store):
     assert store.records("pending") == []
     third, _ = _restart(store, bank=rail)
     assert third.intent_receipt("i:000001")["payment_id"] == "account_transfer_t1"
-    assert third.status("q:000001")["reason"] == "ok: reconciled"
+    assert third.status("q:000001")["reason"] == "ok: reconciled at the bank"
+    assert third.proof_receipt("account_transfer_t1") is not None
     assert third.receipt("account_transfer_t1")["status"] == "confirmed"
 
 

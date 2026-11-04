@@ -1,5 +1,6 @@
 """Test-only rails and recorded bank answers for the verifier and the desk."""
 
+import dataclasses
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -8,7 +9,7 @@ from typing import Any
 import httpx
 from increase import Increase
 
-from bank.api import Payment, PaymentRequest
+from bank.api import Payment, PaymentRequest, RailError
 from bank.increase import sandbox_client
 from bank.rail import SANDBOX
 from bank.reconcile import BankTransfer
@@ -30,7 +31,9 @@ class RecordingRail:
         error: Raised by every ``execute`` after the call is recorded.
         balance: Returned (or raised) by every ``get_balance``.
         found: Returned (or raised) by every ``reconcile``: True for the
-            payment ``execute`` would have made, None for nothing found.
+            payment ``execute`` would have made, None to answer from
+            ``listed`` by the key as the sandbox does (nothing, a payment for
+            a complete transfer, or ``bank: not complete``).
     """
 
     def __init__(
@@ -73,8 +76,21 @@ class RecordingRail:
         if isinstance(self.found, Exception):
             raise self.found
         if self.found is None:
-            return None
+            return self._held(request, action_hash, idempotency_key)
         return self._payment(request, action_hash, idempotency_key)
+
+    def _held(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment | None:
+        held = next(
+            (t for t in self.listed if t.idempotency_key == idempotency_key), None
+        )
+        if held is None:
+            return None
+        if held.status != "complete":
+            raise RailError("bank: not complete")
+        paid = self._payment(request, action_hash, idempotency_key)
+        return dataclasses.replace(paid, payment_id=held.transfer_id)
 
     def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
         """Raise the configured listing error or return ``listed``."""
