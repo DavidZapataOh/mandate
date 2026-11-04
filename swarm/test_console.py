@@ -14,6 +14,7 @@ import anyio
 import httpx
 import pytest
 import uvicorn
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from bank.api import Bank
 from bank.conftest import SENTINEL_KEY, Cassette, RecordingRail, named_accounts
@@ -21,20 +22,21 @@ from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
 from bank.verifier import Verifier
 from evidence.conftest import fake_binary
 from evidence.zktls import ZKTLS_BIN_ENV
-from gate.certs import generate_keypair
+from gate.certs import generate_keypair, public_key_of
 from gate.state import StateStore
 from swarm import console
 from swarm.conftest import message
 from swarm.console import AttackRunner, DeployRunner
 from swarm.console_line import ConsoleLine, console_line_json, read_console_line
 from swarm.desk import PaymentDesk
+from swarm.holders import unpair_bytes
 from swarm.hub import EventHub
 from swarm.nimbus import PINNED as NIMBUS_PINNED
 from swarm.nimbus import NimbusStep
 from swarm.redteam import PINNED, AttackKind
 from swarm.server import build_server
 from swarm.test_console_line import RECORD
-from swarm.test_server import FOREIGN, PAIR, _asgi
+from swarm.test_server import FOREIGN, PAIR, _approval_json, _asgi, _b64
 from swarm.test_server_intent import _text
 from swarm.test_voice import CLIP
 from swarm.voice import NO_VOICE_KEY
@@ -978,3 +980,153 @@ def test_a_stopped_sandbox_console_ends_its_reconcile_loop(
     )  # fmt: skip
     assert "reconcile" not in [t.name for t in threading.enumerate()]
     assert not (tmp_path / "state" / "state.db-wal").exists()
+
+
+PAIR_URL = r"Pair the holder device: http://127\.0\.0\.1:18780/app/#pair=(\S{16,})"
+HOLDER = public_key_of(b"\x02" * 32)
+LISTED = r"Holder (h:[0-9a-f]{16}): device 6a3803d5f059902a"
+
+
+def _tokens(out):
+    return [m.group(1) for m in (re.fullmatch(PAIR_URL, x) for x in out) if m]
+
+
+async def _pair(app, key, token):
+    async with _asgi(app) as http:
+        body = {"public_key": _b64(key), "pairing": token}
+        return (await http.post("/api/holder", json=body)).json()
+
+
+@pytest.mark.anyio
+async def test_cli_prints_one_pairing_url_per_holder(monkeypatch, capsys, dist):
+    seen, out = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist), "--holders", "3"
+    )
+    tokens = _tokens(out[:3])
+    assert len(set(tokens)) == 3
+    assert out[3] == "Console: http://127.0.0.1:18780/console/"
+    for n, token in enumerate(tokens, start=3):
+        assert await _pair(seen["app"], public_key_of(bytes([n]) * 32), token) == {
+            "registered": True
+        }
+
+
+def test_cli_with_no_new_holder_prints_no_pairing_url(monkeypatch, capsys, dist):
+    _, out = _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--holders", "0")
+    assert out == ["Console: http://127.0.0.1:18780/console/"]
+
+
+@pytest.mark.parametrize("count", ["17", "-1"])
+def test_cli_refuses_a_holder_count_out_of_bounds(monkeypatch, capsys, dist, count):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--holders", count)
+    assert stopped.value.code == 2
+    assert "--holders must be 0 to 16" in capsys.readouterr().err
+
+
+def test_cli_lists_and_unpairs_holders_in_the_state_dir(
+    monkeypatch,
+    capsys,
+    dist,
+    tmp_path,
+):
+    state = ("--console-dir", str(dist), "--state-dir", str(tmp_path / "s"))
+
+    async def pairing(app, printed):
+        return await _pair(app, HOLDER, _tokens(printed)[0])
+
+    seen, _ = _run_cli(monkeypatch, capsys, *state, serving=pairing)
+    assert seen["served"] == {"registered": True}
+    _, out = _run_cli(monkeypatch, capsys, *state, "--holders", "0")
+    listed = re.fullmatch(LISTED, out[1])
+    assert listed is not None
+    holder_id = listed.group(1)
+
+    async def counting(app, printed):
+        async with _asgi(app) as http:
+            return (await http.get("/api/device")).json()
+
+    seen, out = _run_cli(
+        monkeypatch,
+        capsys,
+        *state,
+        "--holders",
+        "0",
+        "--unpair",
+        holder_id,
+        serving=counting,
+    )
+    assert out == [
+        f"Unpaired holder {holder_id}.",
+        "Console: http://127.0.0.1:18780/console/",
+    ]
+    assert seen["served"] == {"holders": 0, "voice": False}
+
+
+@pytest.mark.parametrize(
+    ("extra", "error"),
+    [
+        (("--unpair", "h:0000000000000001"), "--unpair needs --state-dir"),
+        (("--state-dir", "S", "--unpair", "h:nope"), "not a paired holder: h:nope"),
+    ],
+)
+def test_cli_refuses_an_unpair_it_cannot_apply(
+    monkeypatch,
+    capsys,
+    dist,
+    tmp_path,
+    extra,
+    error,
+):
+    argv = [str(tmp_path / "s") if x == "S" else x for x in extra]
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), *argv)
+    assert stopped.value.code == 2
+    assert error in capsys.readouterr().err
+
+
+@pytest.mark.anyio
+async def test_three_paired_holders_each_pay_and_one_unpairs(
+    monkeypatch, capsys, dist, sign_quote
+):
+    desks = []
+
+    class Recorded(console.PaymentDesk):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            desks.append(self)
+
+    monkeypatch.setattr(console, "PaymentDesk", Recorded)
+    seen, out = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist), "--holders", "3"
+    )
+    seeds = [bytes([n]) * 32 for n in (2, 3, 4)]
+    async with _asgi(seen["app"]) as http:
+        for seed, token in zip(seeds, _tokens(out), strict=True):
+            key = public_key_of(seed)
+            body = {"public_key": _b64(key), "pairing": token}
+            assert (await http.post("/api/holder", json=body)).json() == {
+                "registered": True
+            }
+        assert (await http.get("/api/device")).json() == {"holders": 3, "voice": False}
+        (desk,) = desks
+        quotes = [
+            desk.quote("acme-991", 20000, "USD", ref) for ref in ("A-991", "B-204")
+        ]
+        for seed, q in zip(seeds[:2], quotes, strict=True):
+            sent = _approval_json(q["quote_id"], sign_quote(seed, q))
+            approved = await http.post("/api/approve", json=sent)
+            assert approved.json()["status"] == "approved"
+        third = public_key_of(seeds[2])
+        signature = Ed25519PrivateKey.from_private_bytes(seeds[2]).sign(
+            unpair_bytes(third)
+        )
+        body = {"public_key": _b64(third), "signature": _b64(signature)}
+        unpaired = await http.post("/api/holder/unpair", json=body)
+        assert unpaired.json() == {"unpaired": True}
+        assert (await http.get("/api/device")).json() == {"holders": 2, "voice": False}
+    assert [desk.confirm(q["quote_id"])["status"] for q in quotes] == [
+        "confirmed",
+        "confirmed",
+    ]
+    assert desk.bank.get_balance("acme-991") == 40000

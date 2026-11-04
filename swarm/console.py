@@ -41,6 +41,7 @@ from gate.state import StateStore, load_gate_key
 from swarm.attacker import AttackerTrace
 from swarm.console_line import ConsoleLine, attack_line, deploy_line
 from swarm.desk import PaymentDesk
+from swarm.holders import MAX_HOLDERS, fingerprint
 from swarm.hub import EventHub
 from swarm.intake import IntentIntake
 from swarm.intent import IntentError, PayeeBook
@@ -485,7 +486,8 @@ def cli(argv: list[str] | None = None) -> None:
     """Console entry point for `mandate-console`.
 
     Serves the payment desk, the template attack route and the built console,
-    and prints the pairing URL followed by the console URL. With
+    and prints one pairing URL per new holder device, the console URL, and the
+    paired holders by id and fingerprint. ``--unpair`` retires a holder first. With
     ``--rail sandbox`` the desk pays through the Increase sandbox; the bank key
     leaves this process's environment either way, so nothing it spawns holds it.
     With ``--state-dir`` the gate key, registry, receipts and fences live in
@@ -522,6 +524,19 @@ def cli(argv: list[str] | None = None) -> None:
             "fences across restarts (keep it outside any repository, e.g. "
             "~/.mandate-demo); needed by --rail sandbox; default: in memory"
         ),
+    )
+    parser.add_argument(
+        "--holders",
+        type=int,
+        default=1,
+        help="new holder devices to pair this start: one pairing URL each",
+    )
+    parser.add_argument(
+        "--unpair",
+        action="append",
+        default=[],
+        metavar="HOLDER_ID",
+        help="stop trusting a paired holder before serving (needs --state-dir)",
     )
     parser.add_argument("--journal", type=Path, help="hook journal to follow")
     parser.add_argument("--record", type=Path, help="append every line as JSONL")
@@ -561,6 +576,10 @@ def cli(argv: list[str] | None = None) -> None:
     index = args.console_dir / "index.html"
     if not index.is_file():
         parser.exit(2, f"console build missing: {index}\n")
+    if not 0 <= args.holders <= MAX_HOLDERS:
+        parser.error(f"--holders must be 0 to {MAX_HOLDERS}")
+    if args.unpair and args.state_dir is None:
+        parser.error("--unpair needs --state-dir: holders live in the state directory")
     book = _payee_book(args.payees)
     if book is None:
         parser.exit(2, f"payee book unreadable: {args.payees}\n")
@@ -592,6 +611,10 @@ def cli(argv: list[str] | None = None) -> None:
         if args.record is not None:
             hub.record(args.record)
         desk = _desk(parser, args.source, rail, gate_key, zktls, state, hub)
+        for holder_id in args.unpair:
+            if not desk.unpair_holder(holder_id):
+                parser.error(f"not a paired holder: {holder_id}")
+            print(f"Unpaired holder {holder_id}.", flush=True)
         _serve(parser, args, book, desk, gate_key, hub, held)
 
 
@@ -630,7 +653,7 @@ def _serve(
     held: ExitStack,
 ) -> None:
     intake, agent = _spark(os.environ, book)
-    token = secrets.token_urlsafe(16)
+    tokens = tuple(secrets.token_urlsafe(16) for _ in range(args.holders))
     # Attacks move money on a bank of their own, never the desk's store.
     attack_bank = Bank({args.source: _DEMO_BALANCE_CENTS, "acme-991": 0})
     runner = AttackRunner(
@@ -640,7 +663,7 @@ def _serve(
     allowed = (*_LOCAL_HOSTS, *args.public_host)
     app = build_server(
         desk,
-        token,
+        tokens,
         allowed,
         hub=hub,
         attacks=runner,
@@ -663,8 +686,11 @@ def _serve(
         # A daemon thread: the process ends with the server.
         JournalTail(args.journal, hub).start()
     base = f"http://{args.host}:{args.port}"
-    print(f"Pair the holder device: {base}/app/#pair={token}", flush=True)
+    for token in tokens:
+        print(f"Pair the holder device: {base}/app/#pair={token}", flush=True)
     print(f"Console: {base}/console/", flush=True)
+    for holder_id, key in desk.paired_holders():
+        print(f"Holder {holder_id}: device {fingerprint(key)}", flush=True)
     console_server(app, args.host, args.port, hub, held.close).run()
 
 
