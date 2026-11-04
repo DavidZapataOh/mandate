@@ -18,6 +18,7 @@ from opentimestamps.core.serialize import (
 )
 from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
+from gate.anchor_public import stamp
 from gate.conftest import OTS, OTS_FILE
 
 GOLDEN = OTS_FILE.parent / "receipt.json"
@@ -60,15 +61,15 @@ def _upgraded(pending):
     """What `ots upgrade` does, keeping every calendar answer."""
     proof = DetachedTimestampFile.deserialize(BytesDeserializationContext(pending))
     answers = {}
-    for stamp in list(_pending_stamps(proof.timestamp)):
-        for att in list(stamp.attestations):
+    for node in list(_pending_stamps(proof.timestamp)):
+        for att in list(node.attestations):
             if isinstance(att, PendingAttestation) and (
                 att.uri in DEFAULT_CALENDAR_WHITELIST
             ):
-                got = RemoteCalendar(att.uri).get_timestamp(stamp.msg, timeout=10)
+                got = RemoteCalendar(att.uri).get_timestamp(node.msg, timeout=10)
                 answer = _b64(_bytes(got))
-                answers[stamp.msg.hex()] = {"uri": att.uri, "answer": answer}
-                stamp.merge(got)
+                answers[node.msg.hex()] = {"uri": att.uri, "answer": answer}
+                node.merge(got)
     return _bytes(proof), answers
 
 
@@ -167,3 +168,13 @@ def test_capture_public_anchor_fixtures():
         },
     }
     OTS_FILE.write_text(json.dumps(fixture, indent=2, sort_keys=True) + "\n")
+
+
+@pytest.mark.live
+def test_stamp_reaches_the_public_calendars():
+    root = os.urandom(32)
+    calendars = [RemoteCalendar(url) for url in AGGREGATORS]
+    (proof,) = stamp([root], calendars, lambda: os.urandom(16))
+    read = DetachedTimestampFile.deserialize(BytesDeserializationContext(proof))
+    assert read.file_digest == root
+    assert len(list(read.timestamp.all_attestations())) >= 2
