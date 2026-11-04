@@ -13,6 +13,7 @@ import uvicorn
 from bank.api import Bank
 from bank.rail import BankRail
 from bank.verifier import Verifier
+from evidence.zktls import BankProofSetup
 from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair, public_key_of
 from gate.consent import Consent, HolderApproval, sign_approval
@@ -118,6 +119,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
         bank_key: bytes | None = None,
         require_intent: bool = False,
         bank: BankRail | None = None,
+        zktls: BankProofSetup | None = None,
     ) -> tuple[PaymentDesk, bytes | None]:
         gate_priv, gate_pub = _keys(gate_key)
         counter = itertools.count(1)
@@ -135,6 +137,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             salts=lambda: bytes([next(sd_salt)]) * 16,
             bank_key=bank_key,
             require_intent=require_intent,
+            zktls=zktls,
         )
         if not register:
             return desk, None

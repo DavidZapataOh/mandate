@@ -17,6 +17,7 @@ from bank.rail import SANDBOX, BankRail, idempotency_key
 from bank.verifier import Verifier, action_commitment
 from evidence.cooperative import sign_state
 from evidence.seams import opaque_cooperative_ref, opaque_intent_ref
+from evidence.zktls import BANK_HOST, BankProofSetup, ZktlsError
 from gate.cava import ACTION_SALT_LEN
 from gate.certs import generate_keypair, public_key_of
 from gate.consent import (
@@ -88,6 +89,7 @@ class _Intent:
     intent_ref: str
     payment_id: str | None = None
     unsettled: _Unsettled | None = None
+    funds: dict[str, Any] | None = None
 
 
 # The debit account stays out of the certificate: the salted action hash
@@ -121,6 +123,12 @@ class PaymentDesk:
             statements with; None generates a fresh one.
         require_intent: When True, a quote naming no intent is denied at
             confirm before the gate runs; always on for a sandbox rail.
+        zktls: Verifier, notary and accounts for zkTLS balance proofs of an
+            intent's funds; None leaves the cooperative statement as the only
+            funds evidence.
+
+    Raises:
+        ValueError: If ``zktls`` is given for a rail other than the sandbox.
     """
 
     def __init__(
@@ -138,8 +146,13 @@ class PaymentDesk:
         *,
         bank_key: bytes | None = None,
         require_intent: bool = False,
+        zktls: BankProofSetup | None = None,
     ) -> None:
+        # A proof of an Increase balance says nothing about any other bank.
+        if zktls is not None and bank.rail != SANDBOX:
+            raise ValueError("zktls needs the sandbox rail")
         self.bank = bank
+        self._zktls = zktls
         self._source = source
         self._verifier = verifier
         self._gate_key = gate_key
@@ -237,13 +250,7 @@ class PaymentDesk:
             reference, the statement and the bank's public key; or a denied
             dict with the reason.
         """
-        summary = pay_summary(
-            str(intent.amount_cents),
-            intent.currency,
-            intent.recipient,
-            intent.reference,
-            self._source,
-        )
+        summary = self._summary(intent)
         with self._lock:
             view = self._record_intent(intent, signature, summary)
             self._line("intent", view, summary)
@@ -264,6 +271,102 @@ class PaymentDesk:
         """
         with self._lock:
             return self._intent_view(intent_id)
+
+    def funds_challenge(self, intent_id: str) -> dict[str, Any]:
+        """The one balance lookup the holder must prove for an intent.
+
+        Args:
+            intent_id: Recorded intent the proof is for.
+
+        Returns:
+            An open view with the host, path, nonce (the intent hash), notary
+            address and key, and the revealed fields; an unknown view when no
+            such intent exists; an unavailable view with the reason when the
+            desk has no zkTLS setup or cannot prove the debit account.
+        """
+        with self._lock:
+            if self._zktls is None:
+                return _unavailable(intent_id, "zktls: not configured")
+            found = self._intents.get(intent_id)
+            if found is None:
+                return {"status": "unknown", "intent_id": intent_id}
+            try:
+                session = self._zktls.challenge(self._source, found.hash)
+            except ZktlsError as exc:
+                return _unavailable(intent_id, str(exc))
+            return {"status": "open", "intent_id": intent_id, **session}
+
+    def record_funds_proof(self, intent_id: str, presentation: bytes) -> dict[str, Any]:
+        """Verify a zkTLS balance proof and make it the intent's funds evidence.
+
+        The verifier sees the balance; the desk keeps only the comparison
+        with the intent's amount. A refused proof leaves the cooperative
+        statement in place.
+
+        Args:
+            intent_id: Recorded intent the proof is for.
+            presentation: The holder's TLSNotary presentation bytes.
+
+        Returns:
+            A proven view with the new evidence reference, the server and the
+            session time; a denied view with the reason; or an unknown view
+            when no such intent exists.
+        """
+        with self._lock:
+            found = self._intents.get(intent_id)
+            if self._zktls is None:
+                view = _denied_proof(intent_id, "zktls: not configured")
+            elif found is None:
+                return {"status": "unknown", "intent_id": intent_id}
+            else:
+                view = self._prove_funds(intent_id, found, self._zktls, presentation)
+            summary = "" if found is None else self._summary(found.intent)
+            self._line("intent", view, summary)
+            return view
+
+    def _prove_funds(
+        self,
+        intent_id: str,
+        found: _Intent,
+        zktls: BankProofSetup,
+        presentation: bytes,
+    ) -> dict[str, Any]:
+        if found.payment_id is not None:
+            return _denied_proof(intent_id, "intent: already used")
+        # A transfer may already carry the current reference in its certificate.
+        if found.unsettled is not None:
+            return _denied_proof(intent_id, "intent: unsettled")
+        try:
+            proof = zktls.verify(presentation, self._source, found.hash, self._clock())
+        except ZktlsError as exc:
+            return _denied_proof(intent_id, str(exc))
+        if proof.available_balance < found.intent.amount_cents:
+            return _denied_proof(intent_id, "zktls: insufficient funds")
+        found.funds_ref = proof.evidence_ref
+        found.funds = {
+            "kind": "zktls",
+            "evidence_ref": proof.evidence_ref,
+            "presentation_sha256": proof.presentation_sha256,
+            "server_name": BANK_HOST,
+            "session_time": proof.session_time,
+            "notary_key": proof.notary_key,
+        }
+        return {
+            "status": "proven",
+            "intent_id": intent_id,
+            "evidence_ref": proof.evidence_ref,
+            "server": BANK_HOST,
+            "session_time": proof.session_time,
+        }
+
+    def _summary(self, intent: Intent) -> str:
+        return pay_summary(
+            str(intent.amount_cents),
+            intent.currency,
+            intent.recipient,
+            intent.reference,
+            self._source,
+        )
 
     def reconcile(self, intent_id: str) -> dict[str, Any]:
         """Settle an unsettled intent by one bank lookup of its idempotency key.
@@ -327,13 +430,7 @@ class PaymentDesk:
             "status": status,
             "intent_id": intent_id,
             "intent_hash": found.hash,
-            "summary": pay_summary(
-                str(i.amount_cents),
-                i.currency,
-                i.recipient,
-                i.reference,
-                self._source,
-            ),
+            "summary": self._summary(i),
             "amount_cents": i.amount_cents,
             "currency": i.currency,
             "recipient": i.recipient,
@@ -700,6 +797,7 @@ class PaymentDesk:
                     self._salts,
                     action_salt=outcome.salt,
                     payment=outcome.payment,
+                    funds=_funds_view(bound),
                 )
             except Exception as exc:
                 # Only the type: a message could carry consent fields or keys.
@@ -823,6 +921,30 @@ def _unsettled_detail(pending: _Unsettled) -> str:
         f"({pending.reason}). This intent pays nothing more until a lookup by "
         "that idempotency key settles it."
     )
+
+
+def _funds_view(bound: _Intent | None) -> dict[str, Any] | None:
+    """The receipt's funds evidence: never the balance or the bank account."""
+    if bound is None:
+        return None
+    if bound.funds is not None:
+        return dict(bound.funds)
+    return {
+        "kind": "cooperative",
+        "evidence_ref": bound.funds_ref,
+        "presentation_sha256": None,
+        "server_name": None,
+        "session_time": None,
+        "notary_key": None,
+    }
+
+
+def _unavailable(intent_id: str, reason: str) -> dict[str, Any]:
+    return {"status": "unavailable", "intent_id": intent_id, "reason": reason}
+
+
+def _denied_proof(intent_id: str, reason: str) -> dict[str, Any]:
+    return {"status": "denied", "intent_id": intent_id, "reason": reason}
 
 
 def _quote_id(number: int) -> str:

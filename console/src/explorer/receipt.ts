@@ -80,6 +80,16 @@ export interface ReceiptBank {
   idempotency_key: string | null;
 }
 
+/** The funds evidence of the intent a payment was bound to, as the gate signed it; never the balance. */
+export interface ReceiptFunds {
+  kind: "cooperative" | "zktls";
+  evidence_ref: string;
+  presentation_sha256: string | null;
+  server_name: string | null;
+  session_time: number | null;
+  notary_key: string | null;
+}
+
 /** Proof receipt v2, field for field in wire order. */
 export interface Receipt {
   v: 2;
@@ -107,6 +117,8 @@ export interface Disclosed {
     >;
   /** Null when no rail ran. */
   bank: ReceiptBank | null;
+  /** Null when the payment was bound to no intent. */
+  funds: ReceiptFunds | null;
 }
 
 /** A receipt that does not have the exact v2 shape; the message names the first malformed path. */
@@ -144,6 +156,19 @@ export const DISCLOSED_EXTENSIONS: Readonly<Record<string, Kind>> = {
         transfer_id: "string",
         status: "string",
         idempotency_key: optStr,
+      },
+    },
+  },
+  // Signed too, so only the gate can drop or relabel the funds evidence.
+  funds: {
+    nullable: {
+      shape: {
+        kind: { pattern: /^(?:cooperative|zktls)$/ },
+        evidence_ref: "string",
+        presentation_sha256: optStr,
+        server_name: optStr,
+        session_time: { nullable: "integer" },
+        notary_key: optStr,
       },
     },
   },

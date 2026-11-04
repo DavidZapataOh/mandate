@@ -88,6 +88,7 @@ def proof_receipt(
     *,
     action_salt: bytes,
     payment: Payment | None = None,
+    funds: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Holder copy of a payment's receipt, with every Disclosure.
 
@@ -107,6 +108,9 @@ def proof_receipt(
         action_salt: 32-byte key of the certificate's action hash.
         payment: The payment the bank rail executed; its rail, transfer id
             and idempotency key are signed, always visible, as ``bank``.
+        funds: The funds evidence of the intent the payment was bound to
+            (its kind and reference, never the balance), signed and always
+            visible; None for a payment bound to no intent.
 
     Returns:
         The receipt dict in wire order.
@@ -137,6 +141,7 @@ def proof_receipt(
             "cava": cava,
             "consent": signed,
             "bank": bank_view(payment),
+            "funds": funds,
         },
         gate_key,
         RECEIPT_TYP,

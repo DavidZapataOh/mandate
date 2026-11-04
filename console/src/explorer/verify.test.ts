@@ -8,6 +8,7 @@ import {
   GATE_KEY,
   HOLDER_KEY,
   RECEIPT,
+  RECEIPT_ZKTLS,
   regate,
   reissue,
   resign,
@@ -490,5 +491,28 @@ describe("holder consent signed by real holder keys", () => {
     expect(results.slice(0, 5).every((r) => r.status === "pass")).toBe(true);
     const trusting = await verifyReceipt(receipt, { ...TRUST, holderKeys: [fromBase64(foreign)] });
     expect(verdictOf(trusting).label).toBe("VERIFIED");
+  });
+});
+
+describe("gate-signed funds view", () => {
+  it("is read from the signed payload, never from a top-level key", async () => {
+    const r = parseReceipt(JSON.parse(RECEIPT_ZKTLS));
+    expect("funds" in r).toBe(false);
+    const d = (await disclosedOf(r, fromBase64(GATE_KEY)))!;
+    expect(d.funds).toEqual({
+      kind: "zktls",
+      evidence_ref: "ev:zktls-attestation:c1cda26362828b69266512052b97cb37",
+      presentation_sha256: "c1cda26362828b69266512052b97cb3729e3b052e4ade47c0a1e3383defe73c7",
+      server_name: "sandbox.increase.com",
+      session_time: 1800000995,
+      notary_key: "02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+    });
+  });
+
+  it("refuses a funds kind it does not know", async () => {
+    const odd = (p: Record<string, unknown>) => {
+      p.funds = { ...(p.funds as object), kind: "bank" };
+    };
+    expect((await failed(await resign(odd, RECEIPT_ZKTLS)))?.detail).toBe("receipt: sd.funds.kind malformed");
   });
 });
