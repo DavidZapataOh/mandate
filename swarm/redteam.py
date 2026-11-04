@@ -8,6 +8,8 @@ own layer without touching the bank. The forged approval runs the desk's
 consent rule with a holder key the gate trusts.
 """
 
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import Callable
