@@ -1,6 +1,8 @@
 """Mandate console: desk, event hub, template attacks, Nimbus steps, console."""
 
 import argparse
+import itertools
+import os
 import secrets
 import threading
 import time
@@ -16,12 +18,14 @@ from bank.verifier import Verifier
 from gate.certs import generate_keypair, public_key_of
 from gate.policy import Intent
 from gate.shim import RawCall
+from swarm.attacker import AttackerTrace
 from swarm.console_line import ConsoleLine, attack_line, deploy_line
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
 from swarm.journal_tail import JournalTail
+from swarm.live_attack import live_attacker
 from swarm.nimbus import NimbusStep, ProdTarget, run_step
-from swarm.redteam import TEMPLATES, AttackKind, apply_attack
+from swarm.redteam import TEMPLATES, AttackKind, AttackPlan, apply_attack
 from swarm.server import build_server
 
 CONSOLE_DIST = Path(__file__).resolve().parent.parent / "console" / "dist"
@@ -59,6 +63,22 @@ def _nonce() -> str:
     return secrets.token_hex(16)
 
 
+def counted_nonces(prefix: str) -> Callable[[], str]:
+    """Build a nonce source that counts up from 1.
+
+    A counter makes the n-th press the same action after every restart. The
+    prefix is never hex, so these nonces cannot collide with the desk's.
+
+    Args:
+        prefix: Letters that open every nonce.
+
+    Returns:
+        A function giving ``prefix`` plus a 29-digit counter on each call.
+    """
+    count = itertools.count(1)
+    return lambda: f"{prefix}{next(count):029d}"
+
+
 class AttackRunner:
     """Applies the pinned template attacks to the desk's bank.
 
@@ -84,7 +104,10 @@ class AttackRunner:
         self._hub = hub
         self._clock = clock
         self._nonces = nonces
-        self._legit = _legit_call(desk.source)
+
+    def legit_call(self) -> RawCall:
+        """Return the pinned legitimate call the attacks start from."""
+        return _legit_call(self._desk.source)
 
     def run(self, kind: AttackKind) -> ConsoleLine:
         """Apply one template attack and publish its line.
@@ -95,12 +118,23 @@ class AttackRunner:
         Returns:
             The published (numbered) attack line.
         """
-        plan = TEMPLATES[kind]
+        return self.apply(TEMPLATES[kind], None)
+
+    def apply(self, plan: AttackPlan, trace: AttackerTrace | None) -> ConsoleLine:
+        """Apply one plan to the desk's bank and publish its line.
+
+        Args:
+            plan: The attack to run.
+            trace: The model call behind the plan, or None for a template.
+
+        Returns:
+            The published (numbered) attack line.
+        """
         now, nonce = self._clock(), self._nonces()
         outcome = self._desk.guarded(
             lambda bank, verifier: apply_attack(
                 plan,
-                self._legit,
+                self.legit_call(),
                 _INTENT,
                 self._gate_key,
                 bank,
@@ -110,7 +144,8 @@ class AttackRunner:
                 nonce,
             )
         )
-        line = attack_line(plan, outcome, None, "template", self._gate_pub)
+        origin = "template" if trace is None else "model"
+        line = attack_line(plan, outcome, trace, origin, self._gate_pub)
         return self._hub.publish(line)
 
 
@@ -189,6 +224,11 @@ def cli(argv: list[str] | None = None) -> None:
     parser.add_argument("--source", default="checking-881")
     parser.add_argument("--journal", type=Path, help="hook journal to follow")
     parser.add_argument("--record", type=Path, help="append every line as JSONL")
+    parser.add_argument(
+        "--live-attacker",
+        action="store_true",
+        help="let the console ask the open-weights attacker (spends model calls)",
+    )
     parser.add_argument("--console-dir", type=Path, default=CONSOLE_DIST)
     parser.add_argument(
         "--public-host",
@@ -214,8 +254,8 @@ def cli(argv: list[str] | None = None) -> None:
         nonces=_nonce,
         publish=hub.publish,
     )
-    runner = AttackRunner(desk, gate_key, hub, _now, _nonce)
-    deploys = DeployRunner(gate_key, hub, _now, _nonce)
+    runner = AttackRunner(desk, gate_key, hub, _now, counted_nonces("atk"))
+    deploys = DeployRunner(gate_key, hub, _now, counted_nonces("dep"))
     allowed = (*_LOCAL_HOSTS, *args.public_host)
     app = build_server(
         desk,
@@ -224,6 +264,7 @@ def cli(argv: list[str] | None = None) -> None:
         hub=hub,
         attacks=runner,
         deploys=deploys,
+        live=live_attacker(runner, os.environ, enabled=args.live_attacker),
         console_dir=args.console_dir,
     ).streamable_http_app()
     if args.journal is not None:

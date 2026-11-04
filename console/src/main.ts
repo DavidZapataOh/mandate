@@ -1,4 +1,6 @@
+import { mountAttackPanel } from "./attacks/panel";
 import { closeForensic, forensicFetcher, openForensic } from "./forensic/drawer";
+import { decorateForensic, mountKillCam } from "./killcam/view";
 import { mountLedger } from "./ledger/ledger";
 import type { Mode } from "./ledger/narrate";
 import { mountScene } from "./scene/mount";
@@ -26,8 +28,10 @@ const name = selectedReplay();
 const fetchLine = forensicFetcher(name !== null);
 const store = new LineStore();
 const aside = byId("forensic");
+const motion = matchMedia("(prefers-reduced-motion: reduce)");
+const killcam = mountKillCam(byId("killcam"), { reducedMotion: () => motion.matches });
 const open = (seq: number): void => {
-  void openForensic(aside, seq, store, fetchLine);
+  void openForensic(aside, seq, store, fetchLine, (drawer, line) => decorateForensic(drawer, line, killcam));
 };
 const ledger = mountLedger(byId("ledger"), store, open);
 const scene = mountScene(document, store, open);
@@ -74,8 +78,11 @@ function start(): void {
     onReset: () => {
       store.reset();
       closeForensic(aside);
+      killcam.close(byId("ledger"));
     },
   });
 }
+
+void mountAttackPanel(byId("attacks"), byId<HTMLButtonElement>("attacks-toggle")).ready;
 
 start();

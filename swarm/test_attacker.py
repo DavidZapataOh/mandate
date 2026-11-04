@@ -169,3 +169,8 @@ def test_provider_must_match_client():
 def test_attacker_needs_a_key():
     with pytest.raises(KeyError, match="set BASETEN_API_KEY or a Meta key"):
         attacker_from_env({})
+
+
+@pytest.mark.parametrize("kind", list(AttackKind))
+def test_preamble_describes_every_kind_the_parser_accepts(kind):
+    assert f"\n- {kind}: " in ATTACKER_PREAMBLE

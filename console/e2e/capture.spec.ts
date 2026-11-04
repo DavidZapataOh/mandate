@@ -50,3 +50,18 @@ test("mobile", async ({ page }) => {
   await denial(page, 390, 844);
   await page.screenshot({ path: `${REVIEW}/mobile.png`, fullPage: true });
 });
+
+test("attack panel and kill-cam", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/console/");
+  await expect(page.locator("#stream-state")).toHaveText("LIVE");
+  await page.getByRole("button", { name: "ATTACK", exact: true }).click();
+  const reply = page.waitForResponse((r) => r.url().endsWith("/api/attack") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Replay the certificate TEMPLATE" }).click();
+  const line = (await (await reply).json()) as { seq: number };
+  await page.screenshot({ path: `${REVIEW}/attacks.png` });
+  await page.locator(`#ledger button[data-seq="${line.seq}"]`).click();
+  await page.locator("#forensic").getByRole("button", { name: "KILL-CAM", exact: true }).click();
+  await expect(page.locator('#killcam li[aria-current="step"]')).toHaveAttribute("data-step", "bank", { timeout: 10_000 });
+  await page.screenshot({ path: `${REVIEW}/killcam.png` });
+});

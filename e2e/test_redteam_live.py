@@ -73,4 +73,4 @@ def test_live_campaign_all_blocked(tmp_path):
             out.write(json.dumps(row) + "\n")
     assert applied >= 4
     print(log.read_text())
-    print(f"{applied}/6 attack kinds exercised, all {applied} blocked")
+    print(f"{applied}/{len(AttackKind)} attack kinds exercised, all {applied} blocked")

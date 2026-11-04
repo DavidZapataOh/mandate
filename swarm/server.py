@@ -31,8 +31,15 @@ from gate.certs import generate_keypair
 from swarm.console_line import ConsoleLine, console_line_json
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
+from swarm.live_attack import (
+    ATTACKER_OFF,
+    AttackerBusyError,
+    AttackerUnavailableError,
+    LiveAttacker,
+    NoPlanError,
+)
 from swarm.nimbus import NimbusStep
-from swarm.redteam import AttackKind
+from swarm.redteam import TEMPLATES, AttackKind
 
 _MAX_BODY = 4096
 _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
@@ -199,6 +206,7 @@ def build_server(
     attacks: AttackSource | None = None,
     console_dir: Path | None = None,
     deploys: DeploySource | None = None,
+    live: LiveAttacker | None = None,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
@@ -216,6 +224,8 @@ def build_server(
         console_dir: When given, serves the files found in it at startup under
             `/console/`.
         deploys: When given, POST /api/deploy runs one pinned Nimbus step.
+        live: With `attacks`, the open-weights attacker behind
+            `POST /api/attack/model`; None reports it as off.
 
     Returns:
         An MCP server named `mandate`.
@@ -340,6 +350,7 @@ state is returned."""
             _route(srv, path, "GET", _host_guard(handler, allowed_hosts))
     if attacks is not None:
         _route(srv, "/api/attack", "POST", _host_guard(attack, allowed_hosts))
+        _attacker_routes(srv, live, allowed_hosts)
     if deploys is not None:
         _route(srv, "/api/deploy", "POST", _host_guard(deploy, allowed_hosts))
     if console_dir is not None:
@@ -360,6 +371,61 @@ state is returned."""
     ):
         _route(srv, path, method, _host_guard(handler, allowed_hosts))
     return srv
+
+
+def _attacker_routes(
+    srv: MCPServer, live: LiveAttacker | None, allowed: tuple[str, ...]
+) -> None:
+    async def menu(request: Request) -> Response:
+        off: dict[str, object] = {
+            "available": False,
+            "provider": None,
+            "model": None,
+            "reason": ATTACKER_OFF,
+        }
+        return JSONResponse(
+            {
+                "templates": [
+                    {"kind": str(kind), "narrative": TEMPLATES[kind].narrative}
+                    for kind in AttackKind
+                ],
+                "attacker": off if live is None else live.status(),
+            }
+        )
+
+    async def model(request: Request) -> Response:
+        body = await _fields(request, "kind")
+        try:
+            kind = AttackKind(body["kind"]) if body else None
+        except ValueError:
+            kind = None
+        if kind is None:
+            return _bad_request()
+        if live is None:
+            return JSONResponse(
+                {"error": "attacker unavailable", "reason": ATTACKER_OFF},
+                status_code=503,
+            )
+        try:
+            # A worker thread keeps the loop serving presses and the stream
+            # while the provider call blocks.
+            line = await anyio.to_thread.run_sync(live.ask, kind)
+        except AttackerUnavailableError as err:
+            return JSONResponse(
+                {"error": "attacker unavailable", "reason": str(err)},
+                status_code=503,
+            )
+        except AttackerBusyError:
+            return JSONResponse({"error": "attacker busy"}, status_code=409)
+        except NoPlanError as err:
+            return JSONResponse(
+                {"error": "attacker gave no plan", "detail": str(err)},
+                status_code=502,
+            )
+        return Response(console_line_json(line), media_type="application/json")
+
+    _route(srv, "/api/attack", "GET", _host_guard(menu, allowed))
+    _route(srv, "/api/attack/model", "POST", _host_guard(model, allowed))
 
 
 def _snapshot(root: Path) -> dict[str, Path]:

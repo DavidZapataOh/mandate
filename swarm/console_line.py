@@ -16,7 +16,6 @@ from gate.cava import CavaAction, action_hash, canonical_bytes
 from gate.certs import read_claims
 from gate.policy import matched_rule
 from swarm.attribution import from_attacker
-from swarm.flow import PAYMENTS_POLICY
 from swarm.nimbus import AGENT, SUMMARIES, StepOutcome
 
 if TYPE_CHECKING:
@@ -478,7 +477,13 @@ def attack_line(
     forensic = (
         None
         if outcome.action is None
-        else forensic_of(outcome.action, PAYMENTS_POLICY, outcome.certificate, gate_pub)
+        else forensic_of(
+            outcome.action,
+            outcome.policy,
+            outcome.certificate,
+            gate_pub,
+            consent=outcome.consent,
+        )
     )
     subject = {
         "attack": str(outcome.kind),

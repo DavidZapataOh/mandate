@@ -18,6 +18,7 @@
         <button type="button" id="venue-bank" aria-pressed="true">BRANCH</button>
         <button type="button" id="venue-hq" aria-pressed="false">NIMBUS HQ</button>
       </div>
+      <button type="button" id="attacks-toggle" aria-expanded="false" aria-controls="attacks">ATTACK</button>
       <p class="counters">verified <b id="c-verified">0</b> · denied <b id="c-denied">0</b> · p50 <b id="c-p50">—</b></p>
     </header>
     <main>
@@ -38,7 +39,9 @@
         <ol id="ledger" aria-label="Ledger" aria-live="polite"></ol>
       </section>
     </main>
+    <aside id="attacks" hidden></aside>
     <aside id="forensic" aria-label="Forensic detail" hidden></aside>
+    <aside id="killcam" hidden></aside>
     <svg class="sprite" aria-hidden="true" width="0" height="0">
       <symbol id="i-verified" viewBox="0 0 256 256"><path fill="#F6F4EE" d="M32 32H224V128H128V108H32ZM32 224H224V148H128V128H32Z"/><path fill="#1FD598" d="M32 108H128V128H32ZM128 128H224V148H128Z"/></symbol>
       <symbol id="i-denied" viewBox="0 0 256 256"><path fill="#F6F4EE" d="M32 16H224V112H128V92H32ZM32 240H224V164H128V144H32Z"/><path fill="#FF5C5C" d="M32 118H224V138H32Z"/></symbol>

@@ -106,6 +106,7 @@ button {
 
 #stream-state,
 .bar [role="group"] button,
+#attacks-toggle,
 .origin {
   margin: 0;
   padding: 4px 8px;
@@ -141,6 +142,22 @@ button {
 
 .bar [role="group"] button:hover:not(:disabled) {
   color: var(--bone);
+}
+
+#attacks-toggle {
+  color: var(--bone);
+  outline: 2px solid var(--alert);
+  outline-offset: 0;
+}
+
+#attacks-toggle:focus-visible {
+  outline-color: var(--bone);
+  outline-offset: 2px;
+}
+
+#attacks-toggle[aria-expanded="true"] {
+  background: var(--bone);
+  color: var(--ink);
 }
 
 .counters {
@@ -476,6 +493,352 @@ s.hash {
 .bar [role="group"] button:active {
   background: var(--bone);
   color: var(--ink);
+}
+
+#attacks,
+#killcam {
+  position: fixed;
+  bottom: 0;
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--ink);
+  color: var(--bone);
+}
+
+#attacks {
+  z-index: 5;
+  top: 64px;
+  left: 0;
+  width: min(360px, 100%);
+  border-right: var(--hairline);
+}
+
+#killcam {
+  z-index: 11;
+  top: 0;
+  right: 0;
+  width: min(520px, 100%);
+  border-left: var(--hairline);
+}
+
+/* The forensic drawer is wider than the tape; narrow it while the tape is over it. */
+body:has(#killcam:not([hidden])) #forensic {
+  width: min(520px, 100%);
+}
+
+#attacks h2,
+#killcam h2 {
+  margin: 0 0 4px;
+  font: 700 22px/1.2 var(--sans);
+}
+
+#attacks h3 {
+  margin: 8px 0 8px;
+  color: var(--muted);
+  font: 700 14px/1.2 var(--mono);
+}
+
+#attacks .note,
+#attacks .what,
+#killcam .basis {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font: 400 12px/1.3 var(--sans);
+}
+
+#attacks ul {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#attacks li {
+  margin-bottom: 8px;
+}
+
+/* Collapsed, not display:none: a live region must already be in the tree to be announced. */
+#attacks .result:empty {
+  height: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+button.attack,
+button.scenario,
+#ask-model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 2px solid var(--alert);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--bone);
+  font: 700 14px/1.2 var(--mono);
+  text-align: left;
+}
+
+button.attack::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  background: var(--alert);
+}
+
+button.scenario,
+#ask-model {
+  border: var(--hairline);
+  border-color: var(--bone);
+  border-width: 1px;
+}
+
+button.attack:hover,
+button.scenario:hover,
+#ask-model:hover:not(:disabled) {
+  background: rgb(246 244 238 / 0.06);
+}
+
+button.attack .name,
+button.scenario .name {
+  flex: 1 1 auto;
+}
+
+button.attack .badge,
+button.scenario .badge {
+  flex: none;
+  padding: 4px 8px;
+  border: var(--hairline);
+  font: 400 14px/1.2 var(--mono);
+  letter-spacing: 0.02em;
+}
+
+#attacks button:disabled {
+  color: var(--muted);
+  border: 1px dashed rgb(246 244 238 / 0.14);
+  cursor: default;
+}
+
+#attacks button:disabled::before {
+  background: var(--muted);
+}
+
+#attacks button[aria-busy="true"] {
+  color: var(--muted);
+}
+
+#attacks .result,
+#model-status {
+  margin: 2px 0 0;
+  color: var(--bone);
+  font: 400 12px/1.3 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+#model-status {
+  color: var(--muted);
+}
+
+#attacks .model label {
+  display: block;
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font: 400 14px/1.2 var(--mono);
+}
+
+#attacks .model select {
+  width: 100%;
+  min-height: 40px;
+  margin-bottom: 8px;
+  padding: 4px 8px;
+  border: var(--hairline);
+  border-radius: 0;
+  background: var(--ink);
+  color: var(--bone);
+  font: 400 14px/1.2 var(--mono);
+}
+
+#attacks .menu-error {
+  margin: 16px 0 0;
+  color: var(--muted);
+  font: 400 14px/1.4 var(--mono);
+}
+
+#killcam > button:first-of-type {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+}
+
+#killcam > button,
+#killcam .controls button {
+  padding: 4px 8px;
+  border: var(--hairline);
+  border-radius: 0;
+  background: var(--ink);
+  font: 400 14px/1.2 var(--mono);
+}
+
+#killcam > button:hover,
+#killcam .controls button:hover {
+  border-color: var(--bone);
+}
+
+#killcam > button:active,
+#killcam .controls button:active {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+#killcam .timecode {
+  margin: 4px 0 0;
+  padding: 6px 12px;
+  border: 1px solid var(--bone);
+  background: var(--ink);
+  color: var(--bone);
+  font: 700 12px/1.3 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+#killcam canvas.tape {
+  display: block;
+  width: 300px;
+  max-width: 100%;
+  aspect-ratio: 150 / 134;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+#killcam .tape-frame {
+  position: relative;
+  width: 300px;
+  max-width: 100%;
+  margin: 4px 0 0;
+}
+
+/* Static scanlines: no animation. */
+#killcam .tape-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(to bottom, rgb(246 244 238 / 0.06) 0 1px, transparent 1px 3px);
+}
+
+#killcam .caption {
+  margin: 8px 0 0;
+  font: 700 14px/1.3 var(--mono);
+}
+
+#killcam .tried {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font: 400 12px/1.3 var(--sans);
+}
+
+/* The still sits beside its caption so every step fits below without scrolling. */
+@media (min-width: 720px) {
+  #killcam {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    column-gap: 12px;
+    align-content: start;
+  }
+
+  #killcam > * {
+    grid-column: 1 / -1;
+  }
+
+  #killcam .tape-frame {
+    grid-column: 1;
+    grid-row: 3 / span 3;
+  }
+
+  #killcam .basis,
+  #killcam .caption,
+  #killcam .tried {
+    grid-column: 2;
+  }
+}
+
+#killcam ol.steps {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#killcam ol.steps li {
+  padding: 4px 0 4px 12px;
+  border-bottom: var(--hairline);
+  border-left: 2px solid transparent;
+  font: 400 13px/1.3 var(--mono);
+}
+
+#killcam li .word {
+  font-weight: 700;
+}
+
+#killcam li .title {
+  color: var(--bone);
+}
+
+#killcam li .detail {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+#killcam li[data-status="passed"] .word {
+  color: var(--verify);
+}
+
+#killcam li[data-status="failed"] {
+  border-bottom-color: var(--alert);
+}
+
+#killcam li[data-status="failed"] .word {
+  color: var(--alert);
+}
+
+#killcam li[data-status="skipped"] .word,
+#killcam li[data-status="unreached"] .word,
+#killcam li[data-shown="false"] {
+  color: var(--muted);
+}
+
+#killcam li[aria-current="step"] {
+  border-left-color: var(--bone);
+}
+
+/* One truncated line; the full value stays in the DOM and in the title. */
+#killcam pre.evidence {
+  margin: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: 400 12px/1.3 var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#killcam .controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+#killcam .scrub {
+  flex: 1 1 auto;
+  min-width: 0;
+  accent-color: var(--bone);
+}
+
+#killcam .now {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font: 400 12px/1.3 var(--mono);
 }
 
 @media (max-width: 719.98px) {

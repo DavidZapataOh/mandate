@@ -94,9 +94,11 @@ export async function openForensic(
   seq: number,
   store: LineStore,
   fetchLine: FetchLine,
+  decorate?: (aside: HTMLElement, line: ConsoleLine) => void,
 ): Promise<boolean> {
   const line = store.get(seq) ?? (await fetchLine(seq));
   if (!line) return false;
   renderForensic(aside, line);
+  decorate?.(aside, line);
   return true;
 }

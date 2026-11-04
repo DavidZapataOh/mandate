@@ -476,3 +476,32 @@ def test_reader_rejects_a_deploy_line_with_other_subject_keys():
     line = json.loads(GOLDEN_DEPLOY)
     with pytest.raises(ValueError, match="console line: malformed"):
         read_console_line(json.dumps({**line, "subject": HOOK_SUBJECT}))
+
+
+def test_attack_line_forged_approval_shows_the_consent_it_refused():
+    outcome, pub = _attack(AttackKind.FORGED_APPROVAL)
+    plan = TEMPLATES[AttackKind.FORGED_APPROVAL]
+    line = attack_line(plan, outcome, None, "template", pub)
+    assert (line.subject["layer"], line.subject["reason"]) == (
+        "holder->gate",
+        "consent: bad signature",
+    )
+    assert (line.event["verdict"], line.event["reason"]) == (
+        "NOT_MET",
+        "consent: bad signature",
+    )
+    assert line.forensic["policy"] == {
+        "policy_id": "desk",
+        "rule_id": "pay-with-consent",
+    }
+    assert line.forensic["cava"]["runtime"] == "mcp"
+    assert line.forensic["consent"] == {
+        "amount_cents": 20000,
+        "currency": "USD",
+        "recipient": "evil-666",
+        "reference": "A-991",
+        "source": "checking-881",
+        "nonce": "a" * 32,
+        "expires_at": 1800000300,
+    }
+    assert line.forensic["cert_claims"] is None

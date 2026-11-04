@@ -117,7 +117,8 @@ function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
     case "attack": {
       const s = line.subject;
       const actor = INTRUDERS[s.attack] ?? "thief";
-      const tag = s.origin === "model" ? "open-weights attacker" : "template attack";
+      // Only a Baseten-served plan is open weights; the Meta API fallback must never wear that label.
+      const tag = s.origin !== "model" ? "template attack" : line.meta?.provider === "baseten" ? "open-weights attacker" : "Meta fallback attacker";
       const label = attackLabel(s.attack);
       const common = { ...base, actor, tag, route: "door" as const, bubble: clip(s.narrative) };
       if (!s.blocked) {

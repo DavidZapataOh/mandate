@@ -1,6 +1,6 @@
 import type { SealInput } from "../scene/cues";
 import type { SealEngine } from "./booth";
-import { sealPose } from "./pose";
+import { type SealPose, sealPose } from "./pose";
 
 const INK = "#0B0D10";
 const VERIFY = "#1FD598";
@@ -37,6 +37,17 @@ function poly(ctx: CanvasRenderingContext2D, pts: readonly number[], dx: number,
   ctx.fill();
 }
 
+/** Draw one seal pose into a 256 canvas. */
+export function paintSeal(ctx: CanvasRenderingContext2D, pose: SealPose): void {
+  ctx.clearRect(0, 0, 256, 256);
+  ctx.fillStyle = INK;
+  poly(ctx, TOP, pose.shakeX, -pose.gap);
+  poly(ctx, BOTTOM, pose.shakeX, pose.gap);
+  if (pose.seam === "none") return;
+  ctx.fillStyle = pose.seam === "verify" ? VERIFY : ALERT;
+  ctx.fillRect(32, 118, 192, 20);
+}
+
 /** The seal drawn in canvas, used until the Rive file loads or when it cannot. */
 export class CanvasSeal implements SealEngine {
   readonly name = "canvas" as const;
@@ -58,14 +69,6 @@ export class CanvasSeal implements SealEngine {
 
   draw(now: number): void {
     if (this.since === null) this.since = now;
-    const pose = sealPose(this.input, this.fired ? now - this.since : 0);
-    const { ctx } = this;
-    ctx.clearRect(0, 0, 256, 256);
-    ctx.fillStyle = INK;
-    poly(ctx, TOP, pose.shakeX, -pose.gap);
-    poly(ctx, BOTTOM, pose.shakeX, pose.gap);
-    if (pose.seam === "none") return;
-    ctx.fillStyle = pose.seam === "verify" ? VERIFY : ALERT;
-    ctx.fillRect(32, 118, 192, 20);
+    paintSeal(this.ctx, sealPose(this.input, this.fired ? now - this.since : 0));
   }
 }

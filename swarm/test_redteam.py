@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import pytest
@@ -6,6 +7,7 @@ from bank.api import Bank
 from bank.verifier import Verifier
 from gate.cava import action_hash
 from gate.certs import generate_keypair
+from gate.consent import ConsentLedger, check_consent, sign_consent, verify_signature
 from gate.policy import Intent
 from gate.shim import RawCall
 from swarm.redteam import (
@@ -27,6 +29,8 @@ VALID = [
     ("post_cert_mutation", {"target": "to:evil-666"}),
     ("scope_escalation", {"target": "domain:evil.com"}),
     ("mcp_exfil", {"server": "evil-mcp", "tool": "dump_secrets"}),
+    ("forged_approval", {"to": "evil-666", "forge": "own_key"}),
+    ("forged_approval", {"to": "evil-666", "forge": "edited"}),
 ]
 
 
@@ -83,6 +87,9 @@ def test_unknown_kind_message_is_bounded():
         ("post_cert_mutation", {"target": "domain:evil.com"}),
         ("mcp_exfil", {"server": "bank-mcp", "tool": "pay"}),
         ("replay", {"extra": 1}),
+        ("forged_approval", {"to": "evil 666", "forge": "own_key"}),
+        ("forged_approval", {"to": "evil-666", "forge": "stolen"}),
+        ("forged_approval", {"to": "evil-666"}),
     ],
 )
 def test_plan_rejects_bad_params(kind, params):
@@ -150,7 +157,7 @@ def test_campaign_keeps_legit_payment():
     outcomes, legit = run_campaign(
         steps, LEGIT, INTENT, priv, bank, verifier, "checking-881", NOW
     )
-    assert [o.blocked for o in outcomes] == [True] * 6
+    assert [o.blocked for o in outcomes] == [True] * 8
     assert legit.reason == "ok: executed"
     assert bank.get_balance("evil-666") == 0
     assert bank.get_balance("acme-991") == 20000
@@ -174,6 +181,9 @@ def _plan(kind, params):
         ("replay", {}, True),
         ("post_cert_mutation", {"target": "to:evil-666"}, True),
         ("mcp_exfil", {"server": "evil-mcp", "tool": "dump"}, True),
+        ("forged_approval", {"to": "acme-991", "forge": "edited"}, False),
+        ("forged_approval", {"to": "acme-991", "forge": "own_key"}, False),
+        ("forged_approval", {"to": "evil-666", "forge": "edited"}, True),
     ],
 )
 def test_is_attack(kind, params, expected):
@@ -183,6 +193,7 @@ def test_is_attack(kind, params, expected):
 LEGIT_HASH = "59d56124b4db16283066a8f98110b17e904ae513df293c2e6bcb3c9201e60226"
 SWAP_HASH = "c79a9cf132c7dc173c1c9b0b71c11b97292214bbed08b4af4fe39cc57b714bf4"
 INFLATE_HASH = "ac2d1941116c6245b49fb4b46b029cce0fb67c0d4f1472ec50d99380e7fe039f"
+FORGED_HASH = "304778e2a615d693efe2fdd9504596b9bb42851bcc07f8a27b1921d88870139d"
 
 
 def _apply(plan):
@@ -212,6 +223,7 @@ def test_templates_are_strict_blocked_attacks(kind):
         (AttackKind.POST_CERT_MUTATION, (None, LEGIT_HASH, True)),
         (AttackKind.SCOPE_ESCALATION, (None, None, False)),
         (AttackKind.MCP_EXFIL, (None, None, False)),
+        (AttackKind.FORGED_APPROVAL, ("NOT_MET", FORGED_HASH, False)),
     ],
 )
 def test_outcome_keeps_what_the_gate_saw(kind, want):
@@ -222,3 +234,41 @@ def test_outcome_keeps_what_the_gate_saw(kind, want):
         outcome.certificate is not None,
     )
     assert got == want
+
+
+def _forged(forge, holder_priv):
+    priv, bank, verifier = _world()
+    plan = _plan("forged_approval", {"to": "evil-666", "forge": forge})
+    return apply_attack(
+        plan,
+        LEGIT,
+        INTENT,
+        priv,
+        bank,
+        verifier,
+        "checking-881",
+        NOW,
+        "a" * 32,
+        holder_key=holder_priv,
+    )
+
+
+def test_approval_signed_by_another_key_dies_at_the_consent():
+    holder_priv, holder_pub = generate_keypair()
+    outcome = _forged("own_key", holder_priv)
+    assert (outcome.reason, outcome.event.reason) == ("consent: bad signature",) * 2
+    assert (outcome.consent.recipient, outcome.moved_cents) == ("evil-666", 0)
+    assert outcome.policy.policy_id == "desk"
+    resigned = sign_consent(holder_priv, outcome.consent)
+    assert check_consent(
+        resigned, (holder_pub,), outcome.action, NOW, ConsentLedger()
+    ) == (True, "ok: consent")
+
+
+def test_approval_edited_after_the_holder_signed_dies_at_the_consent():
+    holder_priv, holder_pub = generate_keypair()
+    outcome = _forged("edited", holder_priv)
+    assert outcome.reason == "consent: bad signature"
+    assert outcome.consent.recipient == "evil-666"
+    signed = dataclasses.replace(outcome.consent, recipient="acme-991")
+    assert verify_signature(signed, (holder_pub,)) is True

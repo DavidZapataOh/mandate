@@ -71,6 +71,8 @@ module = [
     "swarm.test_anchor",
     "swarm.test_attribution",
     "swarm.test_console",
+    "e2e.test_console_attacker_live",
+    "swarm.test_console_attacks",
     "swarm.test_console_line",
     "swarm.test_desk",
     "swarm.test_flow",

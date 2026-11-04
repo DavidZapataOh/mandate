@@ -28,6 +28,14 @@ test("the golden model-planned exfiltration is the open-weights attacker as a th
   expect([c.seq, c.actor, c.tag, c.alert]).toEqual([7, "thief", "open-weights attacker", "denied · poisoned MCP tool · at the MCP proxy"]);
 });
 
+test.each([
+  ["baseten", "open-weights attacker"],
+  ["meta-fallback", "Meta fallback attacker"],
+])("a model attack served by %s is tagged %s", (provider, tag) => {
+  const hostile = JSON.parse(HOSTILE);
+  expect(cueFor(parseLine(JSON.stringify({ ...hostile, meta: { ...hostile.meta, provider } }))).tag).toBe(tag);
+});
+
 test("an unknown attack kind still dies at the booth under its wire name", () => {
   expect(cueFor(attack("tool_swap", "mcp")).alert).toBe("denied · tool swap · at the MCP proxy");
 });
