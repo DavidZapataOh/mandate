@@ -1,3 +1,4 @@
+import { rawKey, toBase64 } from "./bytes";
 import type { Disclosed, Receipt } from "./receipt";
 
 /** What no receipt carries, whatever the holder discloses. */
@@ -13,7 +14,12 @@ export const NEVER_IN_A_RECEIPT = [
 /** How many holder keys the server publishes, as the set a receipt's reader cannot tell apart; the issuing gate can. */
 export function anonymityText(holderKeys: readonly string[] | null): string {
   if (holderKeys === null) return "Anonymity set unknown: this page has no holder list from the server.";
-  const n = holderKeys.length;
+  const distinct = new Set<string>();
+  for (const text of holderKeys) {
+    const key = rawKey(text);
+    if (key !== null) distinct.add(toBase64(key));
+  }
+  const n = distinct.size;
   if (n === 0) return "Anonymity set: no holder has paired with this server yet.";
   if (n === 1) return "Anonymity set: 1 holder key. Every receipt this server issued was approved by that one holder.";
   return `Anonymity set: ${n} holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can.`;

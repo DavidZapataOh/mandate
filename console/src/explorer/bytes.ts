@@ -25,6 +25,36 @@ export function fromBase64(text: string): Bytes {
   return bytes;
 }
 
+// Small-order Ed25519 encodings, compared over the low 31 bytes and the top byte without its sign bit.
+const SMALL_ORDER = new Set(
+  [
+    "00".repeat(32),
+    "01" + "00".repeat(31),
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "ec" + "ff".repeat(30) + "7f",
+    "ed" + "ff".repeat(30) + "7f",
+    "ee" + "ff".repeat(30) + "7f",
+  ],
+);
+const FIELD = (1n << 255n) - 19n;
+
+/** Raw 32-byte key from standard base64, or null when the text is anything else, a non-canonical y, or a small-order point. */
+export function rawKey(text: string): Bytes | null {
+  try {
+    const key = fromBase64(text.trim());
+    if (key.length !== 32) return null;
+    let y = 0n;
+    for (let i = 31; i >= 0; i--) y = (y << 8n) | BigInt(i === 31 ? key[i]! & 0x7f : key[i]!);
+    if (y >= FIELD) return null;
+    const masked = new Uint8Array(key);
+    masked[31] = masked[31]! & 0x7f;
+    return SMALL_ORDER.has(toHex(masked)) ? null : key;
+  } catch {
+    return null;
+  }
+}
+
 /** Unpadded base64url to bytes; anything non-canonical is refused. */
 export function fromBase64Url(text: string): Bytes {
   if (!URL_SAFE.test(text) || text.length % 4 === 1) throw new Error("bytes: bad base64url");

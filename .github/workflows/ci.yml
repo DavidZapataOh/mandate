@@ -73,7 +73,7 @@ jobs:
         env:
           MANDATE_CONSOLE: mandate-console
           MANDATE_PYTHON: python
-      - run: python -m pytest -q e2e/test_explorer_walkthrough.py
+      - run: python -m pytest -q e2e/test_explorer_walkthrough.py e2e/test_public_deploy.py
         working-directory: .
         env:
           MANDATE_WALKTHROUGH: "1"

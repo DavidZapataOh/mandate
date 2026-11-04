@@ -69,12 +69,26 @@ describe("exposure", () => {
 });
 
 describe("anonymityText", () => {
+  const A = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+  const B = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
+  const SMALL = "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+  const SMALL_SIGN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIA=";
+  const NONCANON = "8P///////////////////////////////////////38=";
+  const SHORT = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ==";
+  const NONE = "Anonymity set: no holder has paired with this server yet.";
+  const ONE = "Anonymity set: 1 holder key. Every receipt this server issued was approved by that one holder.";
+  const TWO =
+    "Anonymity set: 2 holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can.";
   it.each([
     [null, "Anonymity set unknown: this page has no holder list from the server."],
-    [[], "Anonymity set: no holder has paired with this server yet."],
-    [["K1"], "Anonymity set: 1 holder key. Every receipt this server issued was approved by that one holder."],
-    [["K1", "K2"], "Anonymity set: 2 holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can."],
-    [["K1", "K2", "K3"], "Anonymity set: 3 holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can."],
+    [[], NONE],
+    [[A], ONE],
+    [[A, B], TWO],
+    [[A, A, ` ${A}`], ONE],
+    [[A, "K1", SHORT], ONE],
+    [["K1", SHORT], NONE],
+    [[SMALL, SMALL_SIGN, NONCANON], NONE],
+    [[A, SMALL, NONCANON, A], ONE],
   ])("%j", (keys, want) => {
     expect(anonymityText(keys)).toBe(want);
   });

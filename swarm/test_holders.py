@@ -163,3 +163,21 @@ def test_a_stored_small_order_key_is_refused(state_store):
     state_store.put_record("holder", "h:0000000000000001", text)
     with pytest.raises(ValueError, match="^holder record malformed$"):
         HolderRegistry(lambda: "h:0000000000000002", state=state_store)
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    [
+        ["!!!!"],
+        [base64.b64encode(b"\x01" * 31).decode()],
+        [base64.b64encode(HOLDER).decode()] * 2,
+        [base64.b64encode(_key(n)).decode() for n in range(3, 4 + MAX_HOLDERS)],
+    ],
+    ids=["not-base64", "short-key", "duplicate", "past-the-bound"],
+)
+def test_a_legacy_holder_list_that_does_not_pair_whole_is_refused(state_store, legacy):
+    state_store.put("holders", json.dumps(legacy))
+    with pytest.raises(ValueError, match="^holder record malformed$"):
+        HolderRegistry(_ids(), state=state_store)
+    assert state_store.get("holders") == json.dumps(legacy)
+    assert state_store.records("holder") == []

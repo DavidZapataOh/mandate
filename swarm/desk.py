@@ -419,6 +419,26 @@ class PaymentDesk:
         with self._lock:
             return self._holders.all_keys
 
+    def approver_keys(self, quote_id: str) -> tuple[bytes, ...]:
+        """The keys whose device may speak for this quote.
+
+        Args:
+            quote_id: Id `quote` returned.
+
+        Returns:
+            Nothing for an unknown quote; the bound holder's key while it is
+            paired (nothing once it unpairs); every paired key for a quote no
+            holder is bound to yet.
+        """
+        with self._lock:
+            record = self._quotes.get(quote_id)
+            if record is None:
+                return ()
+            if record.holder is None:
+                return self._holders.paired_keys
+            key = self._holders.key_of(record.holder)
+            return () if key is None else (key,)
+
     def paired_holders(self) -> tuple[tuple[str, bytes], ...]:
         """(holder id, key) of each paired holder, for the operator only."""
         with self._lock:

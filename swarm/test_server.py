@@ -8,11 +8,13 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from mcp import Client
 
-from gate.certs import generate_keypair
+from gate.certs import generate_keypair, public_key_of
 from gate.consent import HolderApproval
 from swarm import server
 from swarm.hub import EventHub
+from swarm.intent import sign_intent
 from swarm.server import build_server
+from swarm.test_desk_holders import ACME, SECOND
 from swarm.test_voice import CLIP, RESPONSE, _wav
 from swarm.voice import (
     NO_VOICE_KEY,
@@ -43,6 +45,12 @@ FOREIGN = {"host": "evil.example:8765"}
 CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; "
     "connect-src 'self'; object-src 'none'; base-uri 'none'"
+)
+
+HEADER_CSP = (
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'"
 )
 
 
@@ -238,9 +246,9 @@ def test_cli_prints_one_fresh_pairing_url(monkeypatch, capsys):
 
 @pytest.mark.anyio
 async def test_cli_app_pairs_with_printed_token(monkeypatch, capsys):
-    app, (token,) = _run_cli(monkeypatch, capsys, "--public-host", "desk.example.com")
+    app, (token,) = _run_cli(monkeypatch, capsys)
     _, key = generate_keypair()
-    async with _asgi(app, "https://desk.example.com") as http:
+    async with _asgi(app) as http:
         public = await http.get("/api/pending")
         wrong = await http.post(
             "/api/holder", json={"public_key": _b64(key), "pairing": token + "x"}
@@ -486,7 +494,7 @@ async def test_holder_page_grants_the_microphone_to_itself_only(make_desk):
     async with _http(desk) as http:
         page = await http.get("/app/")
     assert page.headers["permissions-policy"] == PERMISSIONS
-    assert page.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert page.headers["content-security-policy"] == HEADER_CSP
 
 
 @pytest.mark.anyio
@@ -614,3 +622,76 @@ async def test_web_app_serves_its_three_fonts_and_nothing_else(make_desk):
     assert {f.content[:4] for f in fonts} == {b"wOF2"}
     assert [licence.status_code, script.status_code] == [404, 404]
     assert foreign.status_code == 400
+
+
+def test_desk_cli_serves_this_machine_only(monkeypatch, capsys):
+    served = {}
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, **kw: served.update(kw))
+    server.cli(["--port", "18779"])
+    assert served == {"host": "127.0.0.1", "port": 18779, "proxy_headers": False}
+
+
+def test_desk_cli_refuses_another_interface(monkeypatch, capsys):
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, **kw: None)
+    with pytest.raises(SystemExit) as stopped:
+        server.cli(["--port", "18779", "--host", "192.0.2.10"])
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        "mandate-desk serves this machine only; "
+        "mandate-console --public-host publishes a desk\n"
+    )
+
+
+def test_desk_cli_has_no_public_host(monkeypatch, capsys):
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, **kw: None)
+    with pytest.raises(SystemExit) as stopped:
+        server.cli(["--port", "18779", "--public-host", "desk.example.com"])
+    assert stopped.value.code == 2
+    assert "unrecognized arguments: --public-host" in capsys.readouterr().err
+
+
+def test_desk_cli_refuses_a_missing_web_app(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, **kw: None)
+    with pytest.raises(SystemExit) as stopped:
+        server.cli(["--port", "18779", "--webapp-dir", str(tmp_path)])
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        f"holder web app missing: {tmp_path / 'index.html'}\n"
+    )
+
+
+@pytest.mark.anyio
+async def test_voice_is_transcribed_only_for_the_quote_holder(make_desk):
+    desk, first = make_desk()
+    desk.register_holder(public_key_of(SECOND))
+    desk.record_intent(ACME, sign_intent(SECOND, ACME))
+    q = desk.quote("acme-991", 20000, "USD", "A-991", intent_id="i:000001")
+    seen = []
+    async with _voice_http(desk, _meta(seen)) as http:
+        other = await _speak(
+            http, quote=q["quote_id"], sig=_voice_sig(first, q["quote_id"], SPOKEN)
+        )
+        bound = await _speak(
+            http, quote=q["quote_id"], sig=_voice_sig(SECOND, q["quote_id"], SPOKEN)
+        )
+    assert (other.status_code, other.json()) == (
+        401,
+        {"error": "not the paired device"},
+    )
+    assert bound.json() == {"transcript": RESPONSE["transcript"]}
+    assert len(seen) == 1
+
+
+@pytest.mark.anyio
+async def test_a_new_pairing_is_announced_to_the_operator(make_desk):
+    desk, _ = make_desk(register=False)
+    told = []
+    srv = build_server(desk, PAIR, on_paired=lambda *pairing: told.append(pairing))
+    key = public_key_of(b"\x05" * 32)
+    body = {"public_key": _b64(key), "pairing": PAIR}
+    async with _asgi(srv.streamable_http_app()) as http:
+        first = await http.post("/api/holder", json=body)
+        again = await http.post("/api/holder", json=body)
+    assert first.json() == {"registered": True}
+    assert again.status_code == 400
+    assert told == [("h:0000000000000001", key)]

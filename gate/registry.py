@@ -86,23 +86,75 @@ def _node_hash(left: bytes, right: bytes) -> bytes:
     return hashlib.sha256(_NODE_PREFIX + left + right).digest()
 
 
-def _parent_level(level: list[bytes]) -> list[bytes]:
-    """Hash pairs upward, duplicating the odd node out."""
-    if len(level) % 2 == 1:
-        level = [*level, level[-1]]
-    return [_node_hash(level[i], level[i + 1]) for i in range(0, len(level), 2)]
+def _push(levels: list[list[bytes]], leaf: bytes) -> None:
+    """Append a leaf; each level keeps the roots of its complete pairs."""
+    levels[0].append(leaf)
+    level = 0
+    while len(levels[level]) % 2 == 0:
+        if len(levels) == level + 1:
+            levels.append([])
+        left, right = levels[level][-2], levels[level][-1]
+        levels[level + 1].append(_node_hash(left, right))
+        level += 1
 
 
-def _tree_root(leaves: list[bytes]) -> bytes:
-    """Reduce leaf digests to the root digest (non-empty input)."""
-    level = leaves
-    while len(level) > 1:
-        level = _parent_level(level)
-    return level[0]
+def _edges(levels: list[list[bytes]]) -> list[bytes | None]:
+    """Per level, the right-edge node that covers fewer than 2**level leaves."""
+    edges: list[bytes | None] = []
+    carry: bytes | None = None
+    for nodes in levels:
+        edges.append(carry)
+        full = nodes[-1] if len(nodes) % 2 == 1 else None
+        if full is not None:
+            carry = _node_hash(full, carry if carry is not None else full)
+        elif carry is not None:
+            carry = _node_hash(carry, carry)
+    edges.append(carry)
+    return edges
+
+
+def _node(
+    levels: list[list[bytes]], edges: list[bytes | None], level: int, index: int
+) -> bytes:
+    nodes = levels[level] if level < len(levels) else []
+    found = nodes[index] if index < len(nodes) else edges[level]
+    if found is None:
+        raise ValueError("registry: no node at that position")
+    return found
+
+
+def _width(size: int, level: int) -> int:
+    """Nodes at a level of a tree over size leaves (odd ones duplicated up)."""
+    return -(-size // (1 << level))
+
+
+def _root(levels: list[list[bytes]], edges: list[bytes | None]) -> bytes:
+    """Root digest of a non-empty tree."""
+    size, top = len(levels[0]), 0
+    while _width(size, top) > 1:
+        top += 1
+    return _node(levels, edges, top, 0)
+
+
+def _siblings(
+    levels: list[list[bytes]], edges: list[bytes | None], index: int
+) -> list[bytes]:
+    """Bottom-up sibling digests of the leaf at index."""
+    size, out, level = len(levels[0]), [], 0
+    while _width(size, level) > 1:
+        pair = index ^ 1
+        out.append(_node(levels, edges, level, min(pair, _width(size, level) - 1)))
+        index //= 2
+        level += 1
+    return out
 
 
 class Registry:
-    """Append-only log of execution, denial and reasoning-anchor entries."""
+    """Append-only log of execution, denial and reasoning-anchor entries.
+
+    Not thread-safe: callers serialize every call (the desk holds its lock);
+    a read concurrent with append may see a tree between two levels.
+    """
 
     def __init__(
         self,
@@ -128,6 +180,10 @@ class Registry:
         self._keypair = keypair
         self._state = state
         self._entries: list[LogEntry] = []
+        # Every level of the Merkle tree: leaf digests, then the roots of
+        # complete pairs, so a root or a proof reads O(log n) nodes. About
+        # 150 B per entry (~15 MB at 100,000 entries).
+        self._levels: list[list[bytes]] = [[]]
         self._anchors: list[Anchor] = []
         self._last_anchored = 0
         if state is not None:
@@ -148,14 +204,19 @@ class Registry:
             public is None or not all(verify_anchor(a, public) for a in anchors)
         ):
             raise ValueError("state: seal does not verify")
-        leaves = [_leaf_hash(entry) for entry in entries]
+        levels: list[list[bytes]] = [[]]
         last = 0
         for anchor in anchors:
             if (
-                anchor.seq_from != last + 1
-                or not anchor.seq_from <= anchor.seq_to <= len(leaves)
-                or anchor.root != _tree_root(leaves[: anchor.seq_to]).hex()
+                type(anchor.seq_from) is not int
+                or type(anchor.seq_to) is not int
+                or anchor.seq_from != last + 1
+                or not anchor.seq_from <= anchor.seq_to <= len(entries)
             ):
+                raise ValueError(_MISMATCH)
+            while len(levels[0]) < anchor.seq_to:
+                _push(levels, _leaf_hash(entries[len(levels[0])]))
+            if anchor.root != _root(levels, _edges(levels)).hex():
                 raise ValueError(_MISMATCH)
             last = anchor.seq_to
         # Every append is sealed in the same commit, so a stored entry no
@@ -163,6 +224,7 @@ class Registry:
         if last != len(entries):
             raise ValueError(_UNSEALED)
         self._entries = entries
+        self._levels = levels
         self._anchors = anchors
         self._last_anchored = last
 
@@ -176,9 +238,13 @@ class Registry:
             raise ValueError("registry full: budget exceeded")
         seq = len(self._entries) + 1
         entry = LogEntry(seq=seq, kind=kind, body=body)
+        # Hash first: a body that cannot be encoded leaves the store, the
+        # log and the cached tree untouched.
+        leaf = _leaf_hash(entry)
         if self._state is not None:
             self._state.add_entry(entry)
         self._entries.append(entry)
+        _push(self._levels, leaf)
         return seq
 
     def has_room(self) -> bool:
@@ -203,29 +269,20 @@ class Registry:
         """Hex Merkle root of the log (EMPTY_ROOT when empty)."""
         if not self._entries:
             return EMPTY_ROOT
-        leaves = [_leaf_hash(entry) for entry in self._entries]
-        return _tree_root(leaves).hex()
+        return _root(self._levels, _edges(self._levels)).hex()
 
     def prove(self, seq: int) -> InclusionProof:
         """Inclusion proof for seq with bottom-up sibling hashes."""
         if seq < 1 or seq > len(self._entries):
             raise ValueError(f"unknown seq: {seq}")
-        leaves = [_leaf_hash(entry) for entry in self._entries]
-        siblings: list[str] = []
-        index = seq - 1
-        level = leaves
-        while len(level) > 1:
-            if len(level) % 2 == 1:
-                level = [*level, level[-1]]
-            siblings.append(level[index ^ 1].hex())
-            level = _parent_level(level)
-            index //= 2
+        edges = _edges(self._levels)
+        siblings = _siblings(self._levels, edges, seq - 1)
         return InclusionProof(
             seq=seq,
             leaves=len(self._entries),
-            leaf=leaves[seq - 1].hex(),
-            siblings=tuple(siblings),
-            root=self.root(),
+            leaf=self._levels[0][seq - 1].hex(),
+            siblings=tuple(sibling.hex() for sibling in siblings),
+            root=_root(self._levels, edges).hex(),
         )
 
     def anchor(self, ts: int) -> Anchor:

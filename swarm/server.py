@@ -32,6 +32,8 @@ from starlette.responses import (
     Response,
     StreamingResponse,
 )
+from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.websockets import WebSocketClose
 
 from bank.api import Bank
 from bank.verifier import Verifier
@@ -77,7 +79,7 @@ _DRAFT_DOMAIN = "mandate/intent-draft/v1"
 _VOICE_DOMAIN = "mandate/intent-voice/v1"
 _AGENT_DOMAIN = "mandate/agent-start/v1"
 _INTENT_KEYS = frozenset({"amount_cents", "currency", "recipient", "reference"})
-_WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
+WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 _FONTS = frozenset(
     {
         "inter-latin-400-normal.woff2",
@@ -118,20 +120,22 @@ _ANCHOR_OFF = {"error": "public anchor off"}
 _ANCHOR_BUSY = {"error": "anchor busy"}
 _ANCHOR_FAILED = {"error": "anchor failed"}
 _STATE_UNAVAILABLE = {"error": "state: unavailable"}
+_LOCAL_ONLY_PATHS = frozenset({"/mcp", "/api/reconcile", "/api/anchor"})
 _log = logging.getLogger(__name__)
 _VOICE_SIG = re.compile(r"[A-Za-z0-9_-]{86}")
 _HASH = re.compile(r"[0-9a-f]{64}")
-_PAGE_HEADERS = {
-    "permissions-policy": "microphone=(self), camera=(), geolocation=()",
-    # A meta CSP cannot carry frame-ancestors; without it a foreign page could
-    # frame the holder page and overlay its Approve button.
-    "content-security-policy": "frame-ancestors 'none'",
-}
-_CONSOLE_CSP = (
+_CSP = (
     "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; frame-ancestors 'none'"
 )
+_PAGE_HEADERS = {
+    "permissions-policy": "microphone=(self), camera=(), geolocation=()",
+    # A meta CSP cannot carry frame-ancestors; without it a foreign page could
+    # frame the holder page and overlay its Approve button. The page keeps its
+    # own, stricter meta policy as well.
+    "content-security-policy": _CSP,
+}
 _CONTENT_TYPES = {
     ".html": "text/html",
     ".js": "text/javascript",
@@ -408,6 +412,9 @@ def build_server(
     agent: Responder | None = None,
     anchors: PublicAnchors | None = None,
     clock: Callable[[], float] = time.time,
+    local_port: int | None = None,
+    webapp_dir: Path = WEBAPP_DIR,
+    on_paired: Callable[[str, bytes], object] | None = None,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
@@ -441,6 +448,12 @@ def build_server(
         anchors: When given, `POST /api/anchor` runs one stamp and upgrade
             round; None reports public anchoring as off.
         clock: The server's wall clock, in unix seconds.
+        local_port: The loopback listener that alone serves holder copies;
+            None keeps the single-listener rule.
+        webapp_dir: Directory holding the holder web app (index.html, app.js,
+            app.css, fonts/).
+        on_paired: Told each new holder id and key, for the operator's own
+            terminal; never published.
 
     Returns:
         An MCP server named `mandate`.
@@ -616,6 +629,8 @@ state is returned."""
         if not pairing.spend(body["pairing"]):
             return _bad_request()
         holder_id = await anyio.to_thread.run_sync(desk.register_holder, key)
+        if holder_id is not None and on_paired is not None:
+            on_paired(holder_id, key)
         return JSONResponse({"registered": holder_id is not None})
 
     async def unpair(request: Request) -> Response:
@@ -648,7 +663,7 @@ state is returned."""
         if query.keys() - {"disclose"} or query.get("disclose", "all") != "all":
             return _bad_request()
         everything = "disclose" in query
-        if everything and not _loopback_only(request):
+        if everything and not _loopback_only(request, local_port):
             return JSONResponse({"error": "holder copy is local only"}, status_code=403)
         found = await anyio.to_thread.run_sync(
             desk.proof_receipt, request.path_params["payment_id"]
@@ -742,7 +757,7 @@ state is returned."""
             return JSONResponse({"error": "audio too large"}, status_code=413)
         # The digest covers the body actually received, so a signature over
         # other audio or another quote fails here, before any model call.
-        if not verify_voice(quote_id, audio, signature, desk.holder_keys):
+        if not verify_voice(quote_id, audio, signature, desk.approver_keys(quote_id)):
             return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
         transcribed.setdefault(quote_id, set()).add(signature)
         keywords = (consent["recipient"], consent["reference"])
@@ -757,19 +772,19 @@ state is returned."""
         return JSONResponse({"transcript": heard.text})
 
     async def page(request: Request) -> Response:
-        return FileResponse(_WEBAPP / "index.html", headers=dict(_PAGE_HEADERS))
+        return FileResponse(webapp_dir / "index.html", headers=dict(_PAGE_HEADERS))
 
     async def script(request: Request) -> Response:
-        return FileResponse(_WEBAPP / "app.js", media_type="text/javascript")
+        return FileResponse(webapp_dir / "app.js", media_type="text/javascript")
 
     async def style(request: Request) -> Response:
-        return FileResponse(_WEBAPP / "app.css", media_type="text/css")
+        return FileResponse(webapp_dir / "app.css", media_type="text/css")
 
     async def font(request: Request) -> Response:
         name = request.path_params["name"]
         if name not in _FONTS:
             return JSONResponse({"error": "not found"}, status_code=404)
-        return FileResponse(_WEBAPP / "fonts" / name, media_type="font/woff2")
+        return FileResponse(webapp_dir / "fonts" / name, media_type="font/woff2")
 
     async def events(request: Request) -> Response:
         since = _since(request)
@@ -799,6 +814,16 @@ state is returned."""
         if hub is None:
             return _bad_request()
         view = await anyio.to_thread.run_sync(provenance, hub, desk)
+        return JSONResponse(view, headers={"cache-control": "no-store"})
+
+    async def health(request: Request) -> Response:
+        # Memory only: a host polls this, and each poll must not page the bank.
+        latest = await anyio.to_thread.run_sync(desk.latest_reconciliation)
+        view = {
+            "rail": desk.bank.rail,
+            "reconciled_at": None if latest is None else latest["checked_at"],
+            "bank": None if latest is None else latest["error"],
+        }
         return JSONResponse(view, headers={"cache-control": "no-store"})
 
     reconciling = {"round": False}
@@ -908,6 +933,7 @@ state is returned."""
         ("/api/receipt/by-hash/{digest}", "GET", receipt_by_hash),
         ("/api/receipt/{payment_id}", "GET", receipt),
         ("/api/lifecycle/{payment_id}", "GET", lifecycle),
+        ("/api/health", "GET", health),
         ("/api/reconcile", "POST", reconcile),
         ("/api/anchor", "POST", anchor),
         ("/api/voice", "POST", voice_text),
@@ -994,21 +1020,72 @@ def _console_response(served: dict[str, Path], name: str) -> Response:
     kind = _CONTENT_TYPES.get(file.suffix, "application/octet-stream")
     headers = {"cache-control": "no-cache"}
     if file.suffix == ".html":
-        headers["content-security-policy"] = _CONSOLE_CSP
+        headers["content-security-policy"] = _CSP
     return FileResponse(file, media_type=kind, headers=headers)
 
 
 _Handler = Callable[[Request], Awaitable[Response]]
 
 
-def _loopback_only(request: Request) -> bool:
+def split_listeners(app: ASGIApp, local_port: int) -> ASGIApp:
+    """Serve the local-only paths on the local listener alone.
+
+    The local port is the loopback socket the proxy is never pointed at, so
+    `/mcp` and the operator rounds (`/api/reconcile`, `/api/anchor`, which
+    call the bank or public calendars) answer only there; every other path
+    answers on both listeners.
+
+    Args:
+        app: The application served on both listeners.
+        local_port: Port of the loopback listener.
+
+    Returns:
+        An application that answers 404 to a local-only path that arrived
+        on any other listener.
+    """
+
+    async def split(scope: Scope, receive: Receive, send: Send) -> None:
+        if (
+            scope["type"] in ("http", "websocket")
+            and _local_only_path(scope["path"])
+            and not _on_local_listener(scope, local_port)
+        ):
+            refusal: ASGIApp = (
+                JSONResponse(dict(_NOT_FOUND), status_code=404)
+                if scope["type"] == "http"
+                else WebSocketClose()
+            )
+            await refusal(scope, receive, send)
+            return
+        await app(scope, receive, send)
+
+    return split
+
+
+def _local_only_path(path: str) -> bool:
+    return path in _LOCAL_ONLY_PATHS or path.startswith("/mcp/")
+
+
+def _on_local_listener(scope: Scope, local_port: int) -> bool:
+    server = scope.get("server")
+    return (
+        server is not None
+        and server[0] in _LOOPBACK_CLIENTS
+        and server[1] == local_port
+    )
+
+
+def _loopback_only(request: Request, local_port: int | None) -> bool:
     # Not authentication: anyone who can open a loopback connection to the
     # desk passes. It keeps the holder copy off every remote or proxied path.
+    # The socket a request arrived on is the one thing a relaying proxy
+    # cannot rewrite.
     client = request.client.host if request.client else None
     return (
         client in _LOOPBACK_CLIENTS
         and request.url.hostname in _LOCAL_HOSTS
         and not any(name in request.headers for name in _PROXY_HEADERS)
+        and (local_port is None or _on_local_listener(request.scope, local_port))
     )
 
 
@@ -1037,26 +1114,35 @@ def _route(srv: MCPServer, path: str, method: str, handler: _Handler) -> None:
 def cli(argv: list[str] | None = None) -> None:
     """Console entry point: `mandate-desk [--host H] [--port P] [--voice]`.
 
-    Prints the one-time pairing URL the holder device must open first.
+    Serves this machine only, and prints the one-time pairing URL the holder
+    device must open first.
     """
     parser = argparse.ArgumentParser(
         prog="mandate-desk", description="Serve the Mandate payment desk over MCP."
     )
-    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="loopback interface to bind (127.0.0.1, localhost or ::1)",
+    )
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--source", default="checking-881")
-    parser.add_argument(
-        "--public-host",
-        action="append",
-        default=[],
-        help="extra Host name the holder routes accept, e.g. an HTTPS proxy name",
-    )
     parser.add_argument(
         "--voice",
         action="store_true",
         help="let the holder page transcribe spoken confirmations (spends Meta calls)",
     )
+    parser.add_argument("--webapp-dir", type=Path, default=WEBAPP_DIR)
     args = parser.parse_args(argv)
+    if args.host not in _LOCAL_HOSTS:
+        parser.exit(
+            2,
+            "mandate-desk serves this machine only; "
+            "mandate-console --public-host publishes a desk\n",
+        )
+    index = args.webapp_dir / "index.html"
+    if not index.is_file():
+        parser.exit(2, f"holder web app missing: {index}\n")
     token = secrets.token_urlsafe(16)
     gate_key, gate_pub = generate_keypair()
     desk = PaymentDesk(
@@ -1067,11 +1153,13 @@ def cli(argv: list[str] | None = None) -> None:
         clock=lambda: int(time.time()),
         nonces=lambda: secrets.token_hex(16),
     )
-    allowed = (*_LOCAL_HOSTS, *args.public_host)
     voice = transcriber_from_env(os.environ, enabled=args.voice)
-    app = build_server(desk, token, allowed, voice=voice).streamable_http_app()
+    app = build_server(
+        desk, token, _LOCAL_HOSTS, voice=voice, webapp_dir=args.webapp_dir
+    ).streamable_http_app()
     print(
         f"Pair the holder device: http://{args.host}:{args.port}/app/#pair={token}",
         flush=True,
     )
-    uvicorn.run(app, host=args.host, port=args.port)
+    # Its gate key lives for one start, so its receipts are not for publishing.
+    uvicorn.run(app, host=args.host, port=args.port, proxy_headers=False)

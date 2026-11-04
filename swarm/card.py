@@ -348,6 +348,11 @@ def card_webhook_server(app: Any, port: int) -> uvicorn.Server:
     """
     return uvicorn.Server(
         uvicorn.Config(
-            app, host="127.0.0.1", port=port, limit_concurrency=_MAX_CONNECTIONS
+            app,
+            host="127.0.0.1",
+            port=port,
+            limit_concurrency=_MAX_CONNECTIONS,
+            # The tunnel relays from loopback, which uvicorn trusts by default.
+            proxy_headers=False,
         )
     )

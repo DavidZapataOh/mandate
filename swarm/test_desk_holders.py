@@ -153,3 +153,18 @@ def test_the_intent_of_an_unpaired_holder_cannot_be_approved(make_desk, sign_quo
     q = desk.quote("acme-991", 20000, "USD", "A-991", intent_id="i:000001")
     out = desk.approve(q["quote_id"], sign_quote(SECOND, q))
     assert (out["status"], out["reason"]) == ("denied", "consent: bad signature")
+
+
+def test_a_bound_quote_names_only_its_holder_as_approver(make_desk):
+    desk, first = _two(make_desk)
+    open_quote = _quote(desk, "A-992")
+    desk.record_intent(ACME, sign_intent(SECOND, ACME))
+    bound = desk.quote("acme-991", 20000, "USD", "A-991", intent_id="i:000001")
+    assert desk.approver_keys(bound["quote_id"]) == (public_key_of(SECOND),)
+    assert desk.approver_keys(open_quote["quote_id"]) == (
+        public_key_of(first),
+        public_key_of(SECOND),
+    )
+    assert desk.unpair_holder("h:0000000000000002") is True
+    assert desk.approver_keys(bound["quote_id"]) == ()
+    assert desk.approver_keys("q:000009") == ()

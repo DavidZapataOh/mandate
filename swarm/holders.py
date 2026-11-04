@@ -125,9 +125,16 @@ class HolderRegistry:
         for number, holder_id, key, paired in sorted(stored):
             self._holders[holder_id] = _Holder(key, paired, number)
         legacy = json.loads(state.get(_LEGACY) or "[]")
+        # Older stores wrote at most one key: a list that does not pair whole
+        # is corruption, refused inside the transaction so nothing is written.
         with state.transaction():
             for text in legacy:
-                self.pair(base64.b64decode(text))
+                try:
+                    key = base64.b64decode(text, validate=True)
+                except ValueError as err:
+                    raise ValueError("holder record malformed") from err
+                if len(key) != _KEY_LEN or self.pair(key) is None:
+                    raise ValueError("holder record malformed")
             if legacy:
                 state.put(_LEGACY, "[]")
 

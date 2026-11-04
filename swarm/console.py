@@ -1,11 +1,14 @@
 """Mandate console: desk, event hub, template attacks, Nimbus steps, console."""
 
 import argparse
+import errno
 import fcntl
+import ipaddress
 import itertools
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import sqlite3
@@ -16,7 +19,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import Any, NoReturn
 
 import uvicorn
 from increase import (
@@ -31,6 +34,8 @@ from bank.api import Bank
 from bank.card import NO_AGENT_CARD, agent_card
 from bank.credentials import (
     BANK_KEY_ENV,
+    BANK_KEY_NAMES,
+    HOLDER_KEY_ENV,
     WEBHOOK_SECRET_ENV,
     take_bank_key,
     take_holder_key,
@@ -77,13 +82,18 @@ from swarm.live_attack import live_attacker
 from swarm.meta_client import MetaClient, api_key_from_env
 from swarm.nimbus import NimbusStep, ProdTarget, run_step
 from swarm.redteam import TEMPLATES, AttackKind, AttackPlan, apply_attack
-from swarm.server import build_server
+from swarm.server import WEBAPP_DIR, build_server, split_listeners
 from swarm.voice import transcribe, transcriber_from_env
 
 CONSOLE_DIST = Path(__file__).resolve().parent.parent / "console" / "dist"
 DEMO_PAYEES = Path(__file__).resolve().parent.parent / "demo" / "payees.json"
 _DEMO_BALANCE_CENTS = 10000000
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+_MAX_PORT = 65535
+_LOOPBACK_BINDS = ("127.0.0.1", "localhost", "::1")
+_DNS_NAME = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]"
+)
 _GRACEFUL_SHUTDOWN_S = 2
 RECONCILE_EVERY_S = 60
 ANCHOR_EVERY_S = 600
@@ -296,10 +306,22 @@ class _ConsoleServer(uvicorn.Server):
         config: uvicorn.Config,
         hub: EventHub,
         on_shutdown: Callable[[], object] | None = None,
+        local_port: int | None = None,
     ) -> None:
         super().__init__(config)
         self._hub = hub
         self._on_shutdown = on_shutdown
+        self.local_port = local_port
+
+    def run(self, sockets: list[socket.socket] | None = None) -> None:
+        # One server, two sockets: the request's scope names the socket it
+        # arrived on, which is what keeps local-only paths local.
+        if sockets is None and self.local_port is not None:
+            sockets = [
+                self.config.bind_socket(),
+                socket.create_server(("127.0.0.1", self.local_port)),
+            ]
+        super().run(sockets)
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._hub.close()
@@ -319,6 +341,9 @@ def console_server(
     port: int,
     hub: EventHub,
     on_shutdown: Callable[[], object] | None = None,
+    *,
+    trusted: tuple[str, ...] = (),
+    local_port: int | None = None,
 ) -> _ConsoleServer:
     """Build the console's uvicorn server with a bounded graceful shutdown.
 
@@ -328,14 +353,25 @@ def console_server(
         port: Port to bind.
         hub: Event hub closed on the exit signal.
         on_shutdown: Called once after every connection has closed.
+        trusted: Addresses or networks whose X-Forwarded-Proto and
+            X-Forwarded-For are believed; empty believes none.
+        local_port: When given, a second socket on 127.0.0.1 at this port,
+            served by the same app.
 
     Returns:
         The server.
     """
+    # Passed explicitly: uvicorn's defaults trust loopback and whatever
+    # FORWARDED_ALLOW_IPS names.
     config = uvicorn.Config(
-        app, host=host, port=port, timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_S
+        app,
+        host=host,
+        port=port,
+        timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_S,
+        proxy_headers=bool(trusted),
+        forwarded_allow_ips=list(trusted),
     )
-    return _ConsoleServer(config, hub, on_shutdown)
+    return _ConsoleServer(config, hub, on_shutdown, local_port)
 
 
 def _payee_book(path: Path) -> PayeeBook | None:
@@ -413,6 +449,33 @@ def _state_errors(parser: argparse.ArgumentParser) -> Iterator[None]:
         parser.exit(2, f"state: {exc}\n")
 
 
+def _work_tree(path: Path) -> Path | None:
+    """The first of a path and its parents that holds ``.git``, if any."""
+    resolved = path.resolve()
+    for folder in (resolved, *resolved.parents):
+        if (folder / ".git").exists():
+            return folder
+    return None
+
+
+def _state_dir_problem(path: Path) -> str | None:
+    """Why a state directory cannot serve, or None; nothing is created."""
+    tree = _work_tree(path)
+    if tree is not None:
+        return (
+            f"state: directory is inside a git work tree ({tree}); "
+            "keep it outside any repository"
+        )
+    if not path.exists() and not path.is_symlink():
+        return None
+    found = os.lstat(path)
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.geteuid():
+        return "state: directory must be this user's own directory"
+    if found.st_mode & 0o077:
+        return "state: directory must be private (chmod 700)"
+    return None
+
+
 def _hold(path: Path) -> int:
     """Lock a state directory for this process, creating it private.
 
@@ -423,17 +486,18 @@ def _hold(path: Path) -> int:
         The descriptor holding the lock; closing it releases the directory.
 
     Raises:
-        ValueError: If the directory is a link, not this user's, open to
-            group or others, or held by another process.
+        ValueError: If the directory is inside a git work tree, a link, not
+            this user's, open to group or others, or held by another process.
     """
+    problem = _state_dir_problem(path)
+    if problem is not None:
+        raise ValueError(problem)
     if not path.exists():
         path.mkdir(mode=_PRIVATE_DIR, parents=True)
         path.chmod(_PRIVATE_DIR)
-    found = os.lstat(path)
-    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.geteuid():
-        raise ValueError("state: directory must be this user's own directory")
-    if found.st_mode & 0o077:
-        raise ValueError("state: directory must be private (chmod 700)")
+    problem = _state_dir_problem(path)
+    if problem is not None:
+        raise ValueError(problem)
     held = os.open(path / "lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -628,11 +692,8 @@ def _port_free(listen: str) -> bool:
     return True
 
 
-def _zktls(
-    parser: argparse.ArgumentParser, rail: BankRail, source: str
-) -> tuple[Notary, BankProofSetup]:
-    if not isinstance(rail, IncreaseRail):
-        parser.exit(2, "zktls needs --rail sandbox\n")
+def _zktls_ready(parser: argparse.ArgumentParser) -> str:
+    """The verifier binary, once the notary could start; nothing is started."""
     binary = find_verifier(os.environ)
     if binary is None:
         parser.exit(
@@ -643,6 +704,15 @@ def _zktls(
         parser.exit(
             2, f"zktls unavailable: notary: {NOTARY_LISTEN} is already in use\n"
         )
+    return binary
+
+
+def _zktls(
+    parser: argparse.ArgumentParser, rail: BankRail, source: str
+) -> tuple[Notary, BankProofSetup]:
+    if not isinstance(rail, IncreaseRail):
+        parser.exit(2, "zktls needs --rail sandbox\n")
+    binary = _zktls_ready(parser)
     try:
         notary = start_notary(binary, new_notary_key(), NOTARY_LISTEN)
     except NotaryError as exc:
@@ -677,6 +747,8 @@ def cli(argv: list[str] | None = None) -> None:
     127.0.0.1 alone, signed with ``INCREASE_SANDBOX_WEBHOOK_SECRET``; the
     secret leaves this process's environment either way. Template attacks
     always run on a simulated bank of their own and an in-memory verifier.
+    ``--doctor`` runs the same checks, prints each credential only as present
+    or absent, opens no store and exits.
     """
     parser = argparse.ArgumentParser(
         prog="mandate-console", description="Serve the Mandate live console."
@@ -768,6 +840,7 @@ def cli(argv: list[str] | None = None) -> None:
         help="let the holder page transcribe spoken confirmations (spends Meta calls)",
     )
     parser.add_argument("--console-dir", type=Path, default=CONSOLE_DIST)
+    parser.add_argument("--webapp-dir", type=Path, default=WEBAPP_DIR)
     parser.add_argument(
         "--payees",
         type=Path,
@@ -775,44 +848,70 @@ def cli(argv: list[str] | None = None) -> None:
         help="the holder's payee book, JSON of name to account and open invoices",
     )
     parser.add_argument(
+        "--trusted-proxy",
+        action="append",
+        default=[],
+        metavar="ADDR",
+        help=(
+            "address or network of the HTTPS proxy in front of this console; "
+            "forwarded headers from anyone else are ignored"
+        ),
+    )
+    parser.add_argument(
+        "--local-port",
+        type=int,
+        metavar="PORT",
+        help=(
+            "loopback port that alone serves /mcp and holder copies; "
+            "needed whenever the console is published"
+        ),
+    )
+    parser.add_argument(
         "--public-host",
         action="append",
         default=[],
         help=(
-            "extra Host name the routes accept, e.g. an HTTPS proxy name; "
+            "DNS name the HTTPS proxy publishes this console under; the routes "
+            "accept it and the printed URLs use the first one; "
             "the console routes (/api/lines, /api/events, /api/forensic) show "
             "every payment's amount, payee, reference and debit account in "
             "clear to anyone who reaches that name: use a public host for "
             "demo data only"
         ),
     )
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help=(
+            "check what a start needs and exit: keys by presence only, "
+            "no store opened, no money moved"
+        ),
+    )
     args = parser.parse_args(argv)
+    _check_deploy_flags(parser, args)
     if args.two_step and args.rail != "sandbox":
         parser.exit(2, "--two-step needs --rail sandbox\n")
     if args.ach and args.rail != "sandbox":
         parser.exit(2, "--ach needs --rail sandbox\n")
     if args.ach and args.two_step:
         parser.exit(2, "--ach and --two-step are exclusive\n")
+    if args.zktls:
+        _zktls_flags(parser, args)
+    present = frozenset(name for name in BANK_KEY_NAMES if os.environ.get(name))
     bank_key = take_bank_key(os.environ)
     # The holder proves in its own process; the value is never read here.
     take_holder_key(os.environ)
     # Taken whatever the flags, so nothing this process spawns holds it.
     webhook_secret = take_webhook_secret(os.environ)
+    if args.doctor:
+        _doctor(parser, args, bank_key, webhook_secret, present)
     hook_port: int | None = args.card_webhook_port
     if hook_port is not None:
         _card_flags(parser, args, webhook_secret)
-    index = args.console_dir / "index.html"
-    if not index.is_file():
-        parser.exit(2, f"console build missing: {index}\n")
-    if not 0 <= args.holders <= MAX_HOLDERS:
-        parser.error(f"--holders must be 0 to {MAX_HOLDERS}")
-    if args.unpair and args.state_dir is None:
-        parser.error("--unpair needs --state-dir: holders live in the state directory")
-    if args.public_anchor and args.state_dir is None:
-        parser.exit(2, _ANCHOR_NEEDS_STATE_DIR)
-    book = _payee_book(args.payees)
-    if book is None:
-        parser.exit(2, f"payee book unreadable: {args.payees}\n")
+    _console_builds(parser, args)
+    book = _start_inputs(parser, args)
+    _console_port_free(parser, args.host, args.port)
+    _local_port_free(parser, args.local_port)
     sandbox_key = (
         _sandbox_key(parser, bank_key, args.state_dir)
         if args.rail == "sandbox"
@@ -885,6 +984,196 @@ def cli(argv: list[str] | None = None) -> None:
         _serve(parser, args, book, desk, gate_key, hub, held, anchors, feed, card)
 
 
+def _console_builds(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    index = args.console_dir / "index.html"
+    if not index.is_file():
+        parser.exit(2, f"console build missing: {index}\n")
+    webapp_index = args.webapp_dir / "index.html"
+    if not webapp_index.is_file():
+        parser.exit(2, f"holder web app missing: {webapp_index}\n")
+
+
+def _start_inputs(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> PayeeBook:
+    if not 0 <= args.holders <= MAX_HOLDERS:
+        parser.error(f"--holders must be 0 to {MAX_HOLDERS}")
+    if args.unpair and args.state_dir is None:
+        parser.error("--unpair needs --state-dir: holders live in the state directory")
+    if args.public_anchor and args.state_dir is None:
+        parser.exit(2, _ANCHOR_NEEDS_STATE_DIR)
+    book = _payee_book(args.payees)
+    if book is None:
+        parser.exit(2, f"payee book unreadable: {args.payees}\n")
+    return book
+
+
+def _doctor(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    bank_key: str | None,
+    webhook_secret: str | None,
+    present: frozenset[str],
+) -> NoReturn:
+    """Run a start's own checks in its order, print one line each, and exit.
+
+    Opens no store: opening one creates the gate key and takes the
+    directory's lock. On the sandbox rail it makes only the reads a start
+    makes before serving; the agent card read and the notary are left to it.
+    """
+    hook_port: int | None = args.card_webhook_port
+    if hook_port is not None:
+        _card_flags(parser, args, webhook_secret)
+    _console_builds(parser, args)
+    print("console build: ok")
+    print("holder web app: ok")
+    _start_inputs(parser, args)
+    _console_port_free(parser, args.host, args.port)
+    _local_port_free(parser, args.local_port)
+    for label, name, note in (
+        ("bank key", BANK_KEY_ENV, ""),
+        ("holder key", HOLDER_KEY_ENV, " (it belongs in the holder's own shell)"),
+        ("webhook secret", WEBHOOK_SECRET_ENV, ""),
+        (
+            "sdk key",
+            "INCREASE_API_KEY",
+            " (never read here; keep it out of agent shells)",
+        ),
+        (
+            "sdk webhook secret",
+            "INCREASE_WEBHOOK_SECRET",
+            " (never read here; removed at start)",
+        ),
+    ):
+        state = f"present{note}" if name in present else "absent"
+        print(f"{label} ({name}): {state}", flush=True)
+    sandbox_key = (
+        _sandbox_key(parser, bank_key, args.state_dir)
+        if args.rail == "sandbox"
+        else None
+    )
+    if args.state_dir is None:
+        print("state dir: not set (state lives in memory)")
+    else:
+        problem = _state_dir_problem(args.state_dir)
+        if problem is not None:
+            parser.exit(2, f"{problem}\n")
+        kept = (
+            "private" if args.state_dir.exists() else "created private at first start"
+        )
+        print(f"state dir: {args.state_dir} ({kept})")
+    if sandbox_key is None:
+        print("bank rail: simulated")
+    else:
+        names = (args.source, "acme-991")
+        _sandbox(parser, sandbox_key, names, args.two_step, args.ach)
+        print(f"bank rail: sandbox, accounts {args.source} and acme-991 open")
+    if args.two_step:
+        print("two-step: each quote held at the bank until the certified confirm")
+    if args.ach:
+        print("ach: acme-991 has an active account number")
+    if args.zktls:
+        _zktls_ready(parser)
+        print(
+            f"zktls: verifier found, notary {NOTARY_LISTEN} free "
+            "(the notary starts at start)"
+        )
+    if hook_port is not None:
+        if not _port_free(f"127.0.0.1:{hook_port}"):
+            parser.exit(
+                2, f"card webhook unavailable: 127.0.0.1:{hook_port} is in use\n"
+            )
+        print(
+            f"card webhook: 127.0.0.1:{hook_port} free "
+            "(the agent card is read at start)"
+        )
+    if args.local_port is not None:
+        print(f"local port: 127.0.0.1:{args.local_port} free")
+    print("doctor: ready", flush=True)
+    parser.exit(0)
+
+
+def _check_deploy_flags(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
+    trusted = []
+    for value in args.trusted_proxy:
+        try:
+            network = ipaddress.ip_network(value, strict=False)
+        except ValueError:
+            network = None
+        # A /0 trusts everyone, like "*".
+        if network is None or network.prefixlen == 0:
+            parser.exit(
+                2, f"--trusted-proxy must be an IP address or network: {value}\n"
+            )
+        single = network.prefixlen == network.max_prefixlen
+        trusted.append(str(network.network_address if single else network))
+    # Normalised: uvicorn parses networks strictly, and would silently never
+    # match one written with host bits (10.1.2.3/8).
+    args.trusted_proxy = trusted
+    for value in args.public_host:
+        if _DNS_NAME.fullmatch(value.lower()) is None:
+            parser.exit(
+                2,
+                f"--public-host must be a DNS name such as desk.example.com: {value}\n",
+            )
+    args.public_host = [value.lower() for value in args.public_host]
+    if args.local_port is not None and not 1 <= args.local_port <= _MAX_PORT:
+        parser.exit(2, f"--local-port must be 1 to {_MAX_PORT}\n")
+    if args.local_port is not None and args.local_port == args.port:
+        parser.exit(2, "--local-port must differ from --port\n")
+    public = bool(args.public_host) or args.host not in _LOOPBACK_BINDS
+    if public and args.local_port is None:
+        parser.exit(
+            2,
+            "a public listener needs --local-port: /mcp and holder copies stay "
+            "on a loopback port the public never reaches\n",
+        )
+    if args.public_host and not args.trusted_proxy:
+        parser.exit(
+            2,
+            "--public-host needs --trusted-proxy: the address of the HTTPS "
+            "proxy in front of the console\n",
+        )
+
+
+def _zktls_flags(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.rail != "sandbox":
+        parser.exit(2, "zktls needs --rail sandbox\n")
+    notary_port = int(NOTARY_LISTEN.rpartition(":")[2])
+    for flag, port in (
+        ("--local-port", args.local_port),
+        ("--card-webhook-port", args.card_webhook_port),
+    ):
+        if port == notary_port:
+            parser.exit(2, f"{flag} must differ from the notary's port ({port})\n")
+
+
+def _console_port_free(parser: argparse.ArgumentParser, host: str, port: int) -> None:
+    # The main socket binds inside the server's run, after the URLs are
+    # printed and the store is open; a busy port is named here instead.
+    try:
+        family, kind, _, _, address = socket.getaddrinfo(
+            host, port, type=socket.SOCK_STREAM
+        )[0]
+        with socket.socket(family, kind) as probe:
+            # As uvicorn binds: a closed connection's TIME_WAIT is no tenant.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(address)
+    except OSError as exc:
+        if exc.errno == errno.EADDRINUSE:
+            parser.exit(2, f"port unavailable: {host}:{port} is in use\n")
+        parser.exit(2, f"port unavailable: {host}:{port}: {exc.strerror}\n")
+
+
+def _local_port_free(parser: argparse.ArgumentParser, port: int | None) -> None:
+    # The second socket binds inside the server's run, after the URLs are
+    # printed and the store is open; a busy port is named here instead.
+    if port is not None and not _port_free(f"127.0.0.1:{port}"):
+        parser.exit(2, f"local port unavailable: 127.0.0.1:{port} is in use\n")
+
+
 def _card_flags(
     parser: argparse.ArgumentParser, args: argparse.Namespace, secret: str | None
 ) -> None:
@@ -898,6 +1187,8 @@ def _card_flags(
         parser.exit(2, f"card webhook unavailable: set {WEBHOOK_SECRET_ENV}\n")
     if args.card_webhook_port == args.port:
         parser.exit(2, "--card-webhook-port must differ from --port\n")
+    if args.card_webhook_port == args.local_port:
+        parser.exit(2, "--card-webhook-port must differ from --local-port\n")
 
 
 def _card_webhook(
@@ -972,7 +1263,7 @@ def _serve(
     )
     deploys = DeployRunner(gate_key, hub, _now, counted_nonces("dep"))
     allowed = (*_LOCAL_HOSTS, *args.public_host)
-    app = build_server(
+    served = build_server(
         desk,
         tokens,
         allowed,
@@ -985,7 +1276,13 @@ def _serve(
         intake=intake,
         agent=agent,
         anchors=anchors,
+        local_port=args.local_port,
+        webapp_dir=args.webapp_dir,
+        on_paired=_announce,
     ).streamable_http_app()
+    app = (
+        served if args.local_port is None else split_listeners(served, args.local_port)
+    )
     # A round that fails leaves its reason in the view; the console serves.
     reconcile_round(desk)
     if desk.bank.rail == SANDBOX:
@@ -1012,16 +1309,36 @@ def _serve(
     if args.journal is not None:
         # A daemon thread: the process ends with the server.
         JournalTail(args.journal, hub).start()
-    base = f"http://{args.host}:{args.port}"
+    # The public name is configuration, never read from a request.
+    base = (
+        f"https://{args.public_host[0]}"
+        if args.public_host
+        else f"http://{args.host}:{args.port}"
+    )
     for token in tokens:
         print(f"Pair the holder device: {base}/app/#pair={token}", flush=True)
     print(f"Console: {base}/console/", flush=True)
+    if args.local_port is not None:
+        mcp = f"http://127.0.0.1:{args.local_port}/mcp"
+        print(f"MCP for agents on this machine: {mcp}", flush=True)
     if card is not None:
         hook = f"http://127.0.0.1:{card.config.port}{WEBHOOK_PATH}"
         print(f"Card authorizations: {hook}", flush=True)
     for holder_id, key in desk.paired_holders():
         print(f"Holder {holder_id}: device {fingerprint(key)}", flush=True)
-    console_server(app, args.host, args.port, hub, held.close).run()
+    console_server(
+        app,
+        args.host,
+        args.port,
+        hub,
+        held.close,
+        trusted=tuple(args.trusted_proxy),
+        local_port=args.local_port,
+    ).run()
+
+
+def _announce(holder_id: str, key: bytes) -> None:
+    print(f"Holder {holder_id}: device {fingerprint(key)}", flush=True)
 
 
 def _end_loop(

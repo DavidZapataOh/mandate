@@ -31,7 +31,12 @@ from bank.conftest import (
     page,
     recorded,
 )
-from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV, WEBHOOK_SECRET_ENV
+from bank.credentials import (
+    BANK_KEY_ENV,
+    BANK_KEY_NAMES,
+    HOLDER_KEY_ENV,
+    WEBHOOK_SECRET_ENV,
+)
 from bank.events import BankEvents
 from bank.reconcile import AchState
 from bank.verifier import Verifier
@@ -226,7 +231,7 @@ def _run_cli(monkeypatch, capsys, *argv, serving=None):
     seen = {}
 
     def run(self, sockets=None):
-        seen.update(app=self.config.app, hub=self._hub)
+        seen.update(app=self.config.app, hub=self._hub, server=self)
         # Requests that write must arrive while the server runs: a stopped
         # console has closed its store.
         if serving is not None:
@@ -721,11 +726,16 @@ def _sandbox(monkeypatch):
     monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
 
 
-def test_cli_zktls_needs_the_sandbox_rail(monkeypatch, capsys, dist):
+def test_cli_zktls_needs_the_sandbox_rail(monkeypatch, capsys, dist, tmp_path):
+    state = tmp_path / "state"
     with pytest.raises(SystemExit) as stopped:
-        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--zktls")
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--zktls",
+            "--state-dir", str(state),
+        )  # fmt: skip
     assert stopped.value.code == 2
     assert capsys.readouterr().err == "zktls needs --rail sandbox\n"
+    assert not state.exists()
 
 
 def test_cli_zktls_needs_the_binary(monkeypatch, capsys, dist, tmp_path):
@@ -1558,3 +1568,506 @@ def test_cli_serves_the_card_webhook_beside_the_console(
     alive = [t for t in threading.enumerate() if t.name == "card-webhook"]
     assert not any(t.is_alive() for t in alive)
     assert WEBHOOK_SECRET_ENV not in os.environ
+
+
+@pytest.mark.parametrize(
+    "value", ["*", "proxy.internal", "300.1.1.1", "0.0.0.0/0", "::/0"]
+)
+def test_cli_refuses_a_proxy_that_is_not_an_address(monkeypatch, capsys, dist, value):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--trusted-proxy", value,
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        f"--trusted-proxy must be an IP address or network: {value}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "want"),
+    [((), (False, [])), (("--trusted-proxy", "127.0.0.1"), (True, ["127.0.0.1"]))],
+    ids=["none", "named"],
+)
+def test_cli_trusts_only_the_named_proxy(monkeypatch, capsys, dist, argv, want):
+    seen, _ = _run_cli(monkeypatch, capsys, "--console-dir", str(dist), *argv)
+    config = seen["server"].config
+    assert (config.proxy_headers, config.forwarded_allow_ips) == want
+
+
+PUBLISHED = (
+    "--public-host", "Desk.Example.com", "--local-port", "18781",
+    "--trusted-proxy", "127.0.0.1",
+)  # fmt: skip
+LISTENER = (
+    "a public listener needs --local-port: /mcp and holder copies stay on a "
+    "loopback port the public never reaches\n"
+)
+
+
+@pytest.mark.anyio
+async def test_cli_names_the_public_host_and_keeps_mcp_local(monkeypatch, capsys, dist):
+    seen, out = _run_cli(monkeypatch, capsys, "--console-dir", str(dist), *PUBLISHED)
+    pair = r"Pair the holder device: https://desk\.example\.com/app/#pair=\S{16,}"
+    assert re.fullmatch(pair, out[0])
+    assert out[1:3] == [
+        "Console: https://desk.example.com/console/",
+        "MCP for agents on this machine: http://127.0.0.1:18781/mcp",
+    ]
+    assert seen["server"].local_port == 18781
+    async with _asgi(seen["app"], "http://desk.example.com") as http:
+        mcp = await http.post("/mcp", json={})
+        reconcile = await http.post("/api/reconcile", json={})
+        anchor = await http.post("/api/anchor", json={})
+        pending = await http.get("/api/pending")
+    not_found = (404, {"error": "not found"})
+    assert (mcp.status_code, mcp.json()) == not_found
+    assert (reconcile.status_code, reconcile.json()) == not_found
+    assert (anchor.status_code, anchor.json()) == not_found
+    assert pending.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("argv", "reason"),
+    [
+        (("--public-host", "desk.example.com"), LISTENER),
+        (("--host", "192.0.2.10"), LISTENER),
+        (("--local-port", "18780"), "--local-port must differ from --port\n"),
+        (
+            ("--public-host", "desk.example.com", "--local-port", "18781"),
+            "--public-host needs --trusted-proxy: the address of the HTTPS "
+            "proxy in front of the console\n",
+        ),
+    ],
+    ids=["public-host", "other-interface", "same-port", "no-proxy"],
+)
+def test_cli_refuses_an_unsafe_public_listener(monkeypatch, capsys, dist, argv, reason):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), *argv)
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == reason
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["desk.example.com:443", "https://desk.example.com", "*.example.com", "desk", ""],
+)
+def test_cli_refuses_a_public_host_that_is_not_a_name(monkeypatch, capsys, dist, name):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--public-host", name)
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        f"--public-host must be a DNS name such as desk.example.com: {name}\n"
+    )
+
+
+def test_cli_card_webhook_needs_a_port_of_its_own_beside_the_local_one(
+    monkeypatch, capsys, dist
+):
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+            "--local-port", "18781", "--card-webhook-port", "18781",
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err.endswith(
+        "--card-webhook-port must differ from --local-port\n"
+    )
+
+
+def test_cli_refuses_a_missing_web_app(monkeypatch, capsys, dist, tmp_path):
+    missing = tmp_path / "none"
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist),
+            "--webapp-dir", str(missing),
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        f"holder web app missing: {missing / 'index.html'}\n"
+    )
+
+
+@pytest.mark.anyio
+async def test_cli_serves_the_named_web_app(monkeypatch, capsys, dist, tmp_path):
+    root = tmp_path / "webapp"
+    root.mkdir()
+    (root / "index.html").write_text("<!doctype html><title>named</title>")
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist), "--webapp-dir", str(root)
+    )
+    async with _asgi(seen["app"]) as http:
+        page = await http.get("/app/")
+    assert page.text == "<!doctype html><title>named</title>"
+
+
+def _never_serves(self, sockets=None):
+    raise AssertionError("the doctor started serving")
+
+
+def _doctor(monkeypatch, capsys, *argv):
+    monkeypatch.setattr(console._ConsoleServer, "run", _never_serves)
+    with pytest.raises(SystemExit) as stopped:
+        console.cli(["--port", "18780", "--doctor", *argv])
+    out, err = capsys.readouterr()
+    return stopped.value.code, out.splitlines(), err
+
+
+def _no_bank_keys(monkeypatch):
+    for name in BANK_KEY_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+
+_NO_SDK_NAMES = [
+    f"webhook secret ({WEBHOOK_SECRET_ENV}): absent",
+    "sdk key (INCREASE_API_KEY): absent",
+    "sdk webhook secret (INCREASE_WEBHOOK_SECRET): absent",
+]
+
+
+def test_doctor_reports_a_simulated_console_ready(monkeypatch, capsys, dist):
+    _no_bank_keys(monkeypatch)
+    code, out, err = _doctor(monkeypatch, capsys, "--console-dir", str(dist))
+    assert (code, err) == (0, "")
+    assert out == [
+        "console build: ok",
+        "holder web app: ok",
+        "bank key (INCREASE_SANDBOX_API_KEY): absent",
+        "holder key (INCREASE_HOLDER_API_KEY): absent",
+        *_NO_SDK_NAMES,
+        "state dir: not set (state lives in memory)",
+        "bank rail: simulated",
+        "doctor: ready",
+    ]
+
+
+def test_doctor_checks_the_sandbox_without_showing_or_spending(
+    monkeypatch, capsys, dist, tmp_path
+):
+    _no_bank_keys(monkeypatch)
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    monkeypatch.setenv(HOLDER_KEY_ENV, "holder_key_SENTINEL_51c2")
+    cassette = Cassette(named_accounts("checking-881", "acme-991"))
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    state = tmp_path / "state"
+    code, out, err = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--rail", "sandbox", "--state-dir", str(state),
+    )  # fmt: skip
+    assert (code, err) == (0, "")
+    assert out == [
+        "console build: ok",
+        "holder web app: ok",
+        "bank key (INCREASE_SANDBOX_API_KEY): present",
+        "holder key (INCREASE_HOLDER_API_KEY): present "
+        "(it belongs in the holder's own shell)",
+        *_NO_SDK_NAMES,
+        f"state dir: {state} (created private at first start)",
+        "bank rail: sandbox, accounts checking-881 and acme-991 open",
+        "doctor: ready",
+    ]
+    assert SENTINEL_KEY not in "\n".join(out) + err
+    assert "holder_key_SENTINEL_51c2" not in "\n".join(out) + err
+    requests = [(r.method, r.url.path) for r in cassette.requests]
+    assert requests == [("GET", "/accounts")]
+    assert not state.exists()
+    assert BANK_KEY_ENV not in os.environ
+    assert HOLDER_KEY_ENV not in os.environ
+
+
+def test_doctor_stops_at_a_missing_bank_key(monkeypatch, capsys, dist, tmp_path):
+    _no_bank_keys(monkeypatch)
+    code, out, err = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--rail", "sandbox", "--state-dir", str(tmp_path / "state"),
+    )  # fmt: skip
+    assert (code, err) == (2, "bank rail unavailable: set INCREASE_SANDBOX_API_KEY\n")
+    assert out[2] == "bank key (INCREASE_SANDBOX_API_KEY): absent"
+    assert "doctor: ready" not in out
+
+
+def test_doctor_names_every_bank_credential_by_presence_only(monkeypatch, capsys, dist):
+    values = {name: f"{name.lower()}_SENTINEL_9d1e" for name in BANK_KEY_NAMES}
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    code, out, err = _doctor(monkeypatch, capsys, "--console-dir", str(dist))
+    assert (code, err) == (0, "")
+    assert out[2:7] == [
+        "bank key (INCREASE_SANDBOX_API_KEY): present",
+        "holder key (INCREASE_HOLDER_API_KEY): present "
+        "(it belongs in the holder's own shell)",
+        f"webhook secret ({WEBHOOK_SECRET_ENV}): present",
+        "sdk key (INCREASE_API_KEY): present "
+        "(never read here; keep it out of agent shells)",
+        "sdk webhook secret (INCREASE_WEBHOOK_SECRET): present "
+        "(never read here; removed at start)",
+    ]
+    printed = "\n".join(out) + err
+    assert not [value for value in values.values() if value in printed]
+
+
+def test_doctor_checks_the_bank_flags_with_the_start_reads(
+    monkeypatch, capsys, dist, tmp_path
+):
+    _no_bank_keys(monkeypatch)
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    names = ("checking-881", "acme-991")
+    number = dict(recorded("account_number")["body"], account_id="account_acme-991")
+    cassette = Cassette(
+        named_accounts(*names), (200, {"data": [number], "next_cursor": None})
+    )
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    code, out, err = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+        "--state-dir", str(tmp_path / "state"), "--ach",
+        "--card-webhook-port", str(port),
+    )  # fmt: skip
+    assert (code, err) == (0, "")
+    assert out[-4:] == [
+        "bank rail: sandbox, accounts checking-881 and acme-991 open",
+        "ach: acme-991 has an active account number",
+        f"card webhook: 127.0.0.1:{port} free (the agent card is read at start)",
+        "doctor: ready",
+    ]
+    requests = [(r.method, r.url.path) for r in cassette.requests]
+    assert requests == [("GET", "/accounts"), ("GET", "/account_numbers")]
+
+
+@pytest.mark.parametrize(
+    ("argv", "reason"),
+    [
+        (
+            ("--rail", "sandbox", "--two-step", "--card-webhook-port", "18790"),
+            "--card-webhook-port cannot be combined with --two-step\n",
+        ),
+        (("--two-step",), "--two-step needs --rail sandbox\n"),
+        (
+            ("--rail", "sandbox", "--card-webhook-port", "18790"),
+            f"card webhook unavailable: set {WEBHOOK_SECRET_ENV}\n",
+        ),
+        (
+            ("--public-anchor",),
+            "public anchor needs --state-dir: proofs are upgraded hours later\n",
+        ),
+        (("--zktls",), "zktls needs --rail sandbox\n"),
+    ],
+)
+def test_doctor_stops_where_a_start_stops(monkeypatch, capsys, dist, argv, reason):
+    _no_bank_keys(monkeypatch)
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    code, out, err = _doctor(monkeypatch, capsys, "--console-dir", str(dist), *argv)
+    assert (code, err) == (2, reason)
+    assert "doctor: ready" not in out
+
+
+def test_doctor_names_a_two_step_desk(monkeypatch, capsys, dist, tmp_path):
+    _no_bank_keys(monkeypatch)
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    cassette = Cassette(named_accounts("checking-881", "acme-991"))
+    monkeypatch.setattr(console, "sandbox_client", lambda key: cassette.client())
+    code, out, err = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+        "--state-dir", str(tmp_path / "state"), "--two-step",
+    )  # fmt: skip
+    assert (code, err) == (0, "")
+    assert out[-2:] == [
+        "two-step: each quote held at the bank until the certified confirm",
+        "doctor: ready",
+    ]
+
+
+def test_doctor_names_an_existing_private_state_dir(
+    monkeypatch, capsys, dist, tmp_path
+):
+    _no_bank_keys(monkeypatch)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    code, out, _ = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+    )
+    assert code == 0
+    assert f"state dir: {state} (private)" in out
+    assert sorted(state.iterdir()) == []
+
+
+def test_doctor_refuses_an_open_state_dir(monkeypatch, capsys, dist, tmp_path):
+    _no_bank_keys(monkeypatch)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    state.chmod(0o755)
+    code, _, err = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+    )
+    assert (code, err) == (2, "state: directory must be private (chmod 700)\n")
+
+
+def _repo_state(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    reason = (
+        f"state: directory is inside a git work tree ({repo.resolve()}); "
+        "keep it outside any repository\n"
+    )
+    return repo / "demo" / "state", reason
+
+
+def test_doctor_refuses_a_state_dir_inside_a_repository(
+    monkeypatch, capsys, dist, tmp_path
+):
+    _no_bank_keys(monkeypatch)
+    state, reason = _repo_state(tmp_path)
+    code, _, err = _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+    )
+    assert (code, err) == (2, reason)
+
+
+def test_cli_refuses_a_state_dir_inside_a_repository(
+    monkeypatch, capsys, dist, tmp_path
+):
+    state, reason = _repo_state(tmp_path)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+        )
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == reason
+    assert not state.exists()
+
+
+def test_a_worktree_link_file_marks_a_repository_too(tmp_path):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/tree\n")
+    assert console._work_tree(tree / "a" / "b") == tree.resolve()
+    assert console._work_tree(tmp_path / "other") is None
+
+
+@pytest.mark.parametrize("port", ["0", "70000", "-1"])
+def test_cli_refuses_a_local_port_out_of_range(monkeypatch, capsys, dist, port):
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--local-port", port)
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == "--local-port must be 1 to 65535\n"
+
+
+@pytest.mark.parametrize("doctor", [(), ("--doctor",)], ids=["start", "doctor"])
+def test_cli_refuses_a_busy_local_port(monkeypatch, capsys, dist, doctor):
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        with pytest.raises(SystemExit) as stopped:
+            _run_cli(
+                monkeypatch, capsys, "--console-dir", str(dist),
+                "--local-port", str(port), *doctor,
+            )  # fmt: skip
+    assert stopped.value.code == 2
+    out, err = capsys.readouterr()
+    assert err == f"local port unavailable: 127.0.0.1:{port} is in use\n"
+    assert "Pair the holder device" not in out
+
+
+def test_cli_names_a_device_the_moment_it_pairs(monkeypatch, capsys, dist):
+    async def pairing(app, printed):
+        return await _pair(app, HOLDER, _tokens(printed)[0])
+
+    seen, out = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist), serving=pairing
+    )
+    assert seen["served"] == {"registered": True}
+    assert re.fullmatch(LISTED, out[-1])
+
+
+def _zktls_doctor(monkeypatch, capsys, dist, tmp_path, *argv):
+    _no_bank_keys(monkeypatch)
+    _sandbox(monkeypatch)
+    return _doctor(
+        monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+        "--state-dir", str(tmp_path / "state"), "--zktls", *argv,
+    )  # fmt: skip
+
+
+def test_doctor_stops_where_a_zktls_start_stops(monkeypatch, capsys, dist, tmp_path):
+    monkeypatch.delenv(ZKTLS_BIN_ENV, raising=False)
+    code, out, err = _zktls_doctor(monkeypatch, capsys, dist, tmp_path)
+    assert (code, err) == (
+        2,
+        "zktls unavailable: set MANDATE_ZKTLS_BIN to a built mandate-zktls\n",
+    )
+    assert "doctor: ready" not in out
+    monkeypatch.setenv(ZKTLS_BIN_ENV, fake_binary(tmp_path, FAKE_NOTARY))
+    with socket.socket() as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        busy = f"127.0.0.1:{held.getsockname()[1]}"
+        monkeypatch.setattr(console, "NOTARY_LISTEN", busy)
+        code, out, err = _zktls_doctor(monkeypatch, capsys, dist, tmp_path)
+    assert (code, err) == (2, f"zktls unavailable: notary: {busy} is already in use\n")
+    assert "doctor: ready" not in out
+
+
+def test_doctor_checks_zktls_without_starting_the_notary(
+    monkeypatch, capsys, dist, tmp_path
+):
+    started = tmp_path / "started"
+    binary = fake_binary(tmp_path, f"open({str(started)!r}, 'w').close()")
+    monkeypatch.setenv(ZKTLS_BIN_ENV, binary)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = f"127.0.0.1:{probe.getsockname()[1]}"
+    monkeypatch.setattr(console, "NOTARY_LISTEN", free)
+    code, out, err = _zktls_doctor(monkeypatch, capsys, dist, tmp_path)
+    assert (code, err) == (0, "")
+    assert out[-3:] == [
+        "bank rail: sandbox, accounts checking-881 and acme-991 open",
+        f"zktls: verifier found, notary {free} free (the notary starts at start)",
+        "doctor: ready",
+    ]
+    assert not started.exists()
+
+
+@pytest.mark.parametrize("doctor", [(), ("--doctor",)], ids=["start", "doctor"])
+@pytest.mark.parametrize("flag", ["--local-port", "--card-webhook-port"])
+def test_cli_keeps_the_notary_port_for_the_notary(
+    monkeypatch, capsys, dist, tmp_path, flag, doctor
+):
+    monkeypatch.setenv(BANK_KEY_ENV, SENTINEL_KEY)
+    monkeypatch.setenv(WEBHOOK_SECRET_ENV, WEBHOOK_SECRET)
+    state = tmp_path / "state"
+    notary_port = console.NOTARY_LISTEN.rpartition(":")[2]
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--rail", "sandbox",
+            "--state-dir", str(state), "--zktls", flag, notary_port, *doctor,
+        )  # fmt: skip
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == (
+        f"{flag} must differ from the notary's port ({notary_port})\n"
+    )
+    assert not state.exists()
+
+
+@pytest.mark.parametrize("doctor", [(), ("--doctor",)], ids=["start", "doctor"])
+def test_cli_refuses_a_busy_console_port(monkeypatch, capsys, dist, tmp_path, doctor):
+    state = tmp_path / "state"
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        port = busy.getsockname()[1]
+        with pytest.raises(SystemExit) as stopped:
+            _run_cli(
+                monkeypatch, capsys, "--console-dir", str(dist),
+                "--port", str(port), "--state-dir", str(state), *doctor,
+            )  # fmt: skip
+    assert stopped.value.code == 2
+    out, err = capsys.readouterr()
+    assert err == f"port unavailable: 127.0.0.1:{port} is in use\n"
+    assert "Pair the holder device" not in out
+    assert not state.exists()

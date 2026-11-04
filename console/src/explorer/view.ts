@@ -1,4 +1,4 @@
-import { fromBase64, type Bytes } from "./bytes";
+import { rawKey, type Bytes } from "./bytes";
 import { anonymityText, exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
 import { classify } from "./input";
 import { fetchLifecycle, lifecycleRows } from "./lifecycle";
@@ -46,16 +46,6 @@ function element(doc: Document, tag: string, text: string, className?: string): 
   if (className !== undefined) el.className = className;
   el.textContent = text;
   return el;
-}
-
-// Raw 32-byte key from standard base64, or null when the text is anything else.
-function keyOf(text: string): Bytes | null {
-  try {
-    const key = fromBase64(text.trim());
-    return key.length === 32 ? key : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Mounts the explorer on a page carrying explorer.html's ids; every receipt string is written as text. */
@@ -106,11 +96,11 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
   }
 
   function trust(): Trust | null {
-    const key = keyOf(gateKey.value);
+    const key = rawKey(gateKey.value);
     if (key === null) return null;
     // The published holder list counts only for the key this server published, never for a hand-pinned one.
     const list = !pinned && published !== null && gateKey.value.trim() === published.gateKey ? published.holderKeys : null;
-    const holderKeys = list?.map(keyOf).filter((k): k is Bytes => k !== null) ?? null;
+    const holderKeys = list?.map(rawKey).filter((k): k is Bytes => k !== null) ?? null;
     return { gateKey: key, holderKeys };
   }
 

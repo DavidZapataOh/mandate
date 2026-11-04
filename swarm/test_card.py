@@ -367,6 +367,8 @@ def test_the_card_webhook_server_binds_loopback(state_store, sign_quote):
     app = card_webhook_app(cassette.client(), authorizer, WEBHOOK_SECRET)
     server = card_webhook_server(app, 8471)
     assert (server.config.host, server.config.port) == ("127.0.0.1", 8471)
+    # The tunnel relays from loopback; no forwarded header it adds is believed.
+    assert server.config.proxy_headers is False
 
 
 def test_a_quote_closed_before_the_spend_seals_one_denial(state_store, sign_quote):
