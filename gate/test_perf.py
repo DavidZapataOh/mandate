@@ -15,9 +15,15 @@ from gate.certs import (
     BitstringRevocation,
     SingleUseStore,
     issue_certificate,
+    public_key_of,
     verify_certificate,
 )
-from gate.consent import ConsentLedger, check_consent, sign_consent
+from gate.consent import (
+    ConsentLedger,
+    certifying_key,
+    check_consent,
+    sign_consent,
+)
 from gate.policy import evaluate
 from gate.shim import Mode, RawCall, decide
 from gate.test_consent import NOW, UNSIGNED, _action
@@ -95,6 +101,16 @@ def test_perf_within_budgets(
 
     assert check_consent(consent, (public_key,), paid, NOW, ledger)[0]
 
+    # Sixteen paired holders, the certifying one last: the most an approval scans.
+    paired = tuple(public_key_of(bytes([n]) * 32) for n in range(3, 18))
+    paired += (public_key_of(b"\x02" * 32),)
+    approved = sign_consent(b"\x02" * 32, UNSIGNED, b"\x81" * 32)
+    assert certifying_key(approved, paired) == paired[-1]
+
+    def _find_holder():
+        certifying_key(approved, paired)
+        return {"ops": 1}
+
     results = [
         run_bench("gate.cava.hash", _cava, n=2000, warmup=200),
         run_bench("gate.cava.commit", _commit, n=2000, warmup=200),
@@ -103,6 +119,7 @@ def test_perf_within_budgets(
         run_bench("gate.shim.decide", _shim, n=2000, warmup=200),
         run_bench("gate.approval.verify", _approval, n=2000, warmup=200),
         run_bench("gate.consent.check", _consent, n=2000, warmup=200),
+        run_bench("gate.consent.find_holder", _find_holder, n=2000, warmup=200),
     ]
     breaches = check_budgets(results, BUDGETS)
     assert breaches == []

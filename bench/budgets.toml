@@ -35,3 +35,8 @@ min_decisions_per_s = 2300.0
 p50_us = 750.0
 p95_us = 825.0
 min_decisions_per_s = 1340.0
+
+[paths."gate.consent.find_holder"]
+p50_us = 5725.0
+p95_us = 5825.0
+min_decisions_per_s = 174.0
