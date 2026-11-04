@@ -116,10 +116,21 @@ class IncreaseRail:
         """
         return all(name in self._accounts for name in names)
 
-    def _id(self, acct: str) -> str:
-        if acct not in self._accounts:
-            raise ValueError(f"unknown account: {acct}")
-        return self._accounts[acct]
+    def account_id(self, name: str) -> str:
+        """Return the Increase id of an open demo account.
+
+        Args:
+            name: Mandate account name.
+
+        Returns:
+            The bank's account id.
+
+        Raises:
+            ValueError: If the account is unknown.
+        """
+        if name not in self._accounts:
+            raise ValueError(f"unknown account: {name}")
+        return self._accounts[name]
 
     def execute(
         self,
@@ -154,8 +165,8 @@ class IncreaseRail:
         """
         if idempotency_key is None:
             raise ValueError("sandbox transfers need an idempotency key")
-        source = self._id(request.from_acct)
-        destination = self._id(request.to_acct)
+        source = self.account_id(request.from_acct)
+        destination = self.account_id(request.to_acct)
         description = f"Mandate {request.ref} {idempotency_key}"[:_DESCRIPTION_MAX]
         # `from None` keeps SDK messages, which echo the request, out of
         # tracebacks shown to users.
@@ -233,8 +244,8 @@ class IncreaseRail:
         asked = (
             request.amount_cents,
             request.currency,
-            self._id(request.from_acct),
-            self._id(request.to_acct),
+            self.account_id(request.from_acct),
+            self.account_id(request.to_acct),
             idempotency_key,
         )
         if held != asked:
@@ -268,7 +279,7 @@ class IncreaseRail:
             ValueError: If the account is unknown.
             RailError: If the bank cannot be read (``bank: unavailable``).
         """
-        account_id = self._id(acct)
+        account_id = self.account_id(acct)
         try:
             return self._client.accounts.balance(account_id).available_balance
         except (APIConnectionError, APIStatusError):

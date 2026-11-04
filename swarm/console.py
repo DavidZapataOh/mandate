@@ -16,7 +16,7 @@ import uvicorn
 from increase import AuthenticationError, IncreaseError, PermissionDeniedError
 
 from bank.api import Bank
-from bank.credentials import BANK_KEY_ENV, take_bank_key
+from bank.credentials import BANK_KEY_ENV, take_bank_key, take_holder_key
 from bank.increase import IncreaseRail, sandbox_client
 from bank.rail import BankRail
 from bank.verifier import Verifier
@@ -343,6 +343,8 @@ def cli(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
     bank_key = take_bank_key(os.environ)
+    # The holder proves in its own process; the value is never read here.
+    take_holder_key(os.environ)
     index = args.console_dir / "index.html"
     if not index.is_file():
         parser.exit(2, f"console build missing: {index}\n")

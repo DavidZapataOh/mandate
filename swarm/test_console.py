@@ -14,7 +14,7 @@ import uvicorn
 
 from bank.api import Bank
 from bank.conftest import SENTINEL_KEY, Cassette, RecordingRail, named_accounts
-from bank.credentials import BANK_KEY_ENV
+from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from swarm import console
@@ -615,3 +615,9 @@ async def test_cli_sandbox_console_keeps_attacks_simulated(monkeypatch, capsys, 
     bank = read_console_line(attack.text).forensic["bank"]
     assert (bank["rail"], bank["transfer_id"]) == ("simulated", "pay:000001")
     assert [r.url.path for r in cassette.requests] == ["/accounts"]
+
+
+def test_cli_drops_the_holder_key(monkeypatch, capsys, dist):
+    monkeypatch.setenv(HOLDER_KEY_ENV, "holder_key_SENTINEL_51c2")
+    _run_cli(monkeypatch, capsys, "--console-dir", str(dist))
+    assert HOLDER_KEY_ENV not in os.environ

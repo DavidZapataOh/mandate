@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from bank.credentials import holds_bank_key
+from bank.credentials import credential_exposed
 from gate.broker import action_within_scope, verify_chain
 from gate.cava import CavaAction, Freshness, action_hash
 from gate.certs import BitstringRevocation
@@ -363,7 +363,7 @@ def cli() -> None:
             secrets.token_hex(16),
             state_dir,
             root,
-            exposed=holds_bank_key(os.environ),
+            exposed=credential_exposed(os.environ),
         )
     except BaseException:  # noqa: BLE001
         code, out = 0, deny_output("malformed: mandate error")

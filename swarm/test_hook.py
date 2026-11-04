@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bank.credentials import BANK_KEY_ENV
+from bank.credentials import BANK_KEY_ENV, HOLDER_KEY_ENV, without_bank_key
 from swarm.console_line import read_console_line
 from swarm.hook import main
 from swarm.hookio import ChildStarted
@@ -433,6 +433,20 @@ def test_cli_refuses_when_the_bank_key_is_in_its_environment(repo, state_dir, na
         text=True,
         check=False,
         env={**os.environ, name: "sandbox_key_SENTINEL_7f3a9c"},
+    )
+    assert run.returncode == 0
+    assert _reason(run.stdout) == "denied: bank credential in agent environment"
+
+
+def test_cli_refuses_an_agent_holding_the_holder_key(repo, state_dir):
+    env = {**without_bank_key(os.environ), HOLDER_KEY_ENV: "holder_key_SENTINEL"}
+    run = subprocess.run(  # noqa: S603
+        [str(HOOK), "--state-dir", str(state_dir), "--root", str(repo)],
+        input=json.dumps(dict(EDIT, cwd=str(repo))),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
     )
     assert run.returncode == 0
     assert _reason(run.stdout) == "denied: bank credential in agent environment"

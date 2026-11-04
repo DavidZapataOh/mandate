@@ -421,3 +421,10 @@ def test_setup_cli_removes_the_key_from_its_environment(monkeypatch):
     monkeypatch.setattr(increase, "sandbox_client", client)
     setup_cli(["--fund-cents", "1"])
     assert seen == [(SENTINEL_KEY, False)]
+
+
+def test_account_id_names_the_bank_id_of_a_demo_account():
+    rail = IncreaseRail(Cassette().client(), {"checking-881": "account_payer"})
+    assert rail.account_id("checking-881") == "account_payer"
+    with pytest.raises(ValueError, match="^unknown account: acme-991$"):
+        rail.account_id("acme-991")
