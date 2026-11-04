@@ -61,6 +61,7 @@ function metricSeqs(key: Tile, p: Posture): readonly number[] {
     case "rails": return p.rails.flatMap((r) => r.seqs).sort((a, b) => a - b);
     // The bank's list is not a set of console lines.
     case "unbacked": return [];
+    case "holders": return [];
   }
 }
 

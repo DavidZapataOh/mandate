@@ -44,6 +44,8 @@ export interface ServerProvenance {
   readonly registry: { readonly root: string; readonly leaves: number };
   readonly policies: readonly PolicyView[];
   readonly bank: BankCheck | null;
+  /** Holder devices paired at the gate now; a count, never an identity. */
+  readonly holders: number;
 }
 
 export interface Provenance {
@@ -56,6 +58,8 @@ export interface Provenance {
   readonly policies: readonly PolicyView[] | null;
   /** The server's last reconciliation; null for a replay, without the server, or before the first one. */
   readonly bank: BankCheck | null;
+  /** Paired holder devices the server counts; null for a replay or without the server. */
+  readonly holders: number | null;
 }
 
 type Obj = Record<string, unknown>;
@@ -110,7 +114,7 @@ function validBank(v: unknown): boolean {
 }
 
 function valid(v: unknown): v is ServerProvenance {
-  if (!exact(v, ["epoch", "window", "registry", "policies", "bank"])) return false;
+  if (!exact(v, ["epoch", "window", "registry", "policies", "bank", "holders"])) return false;
   const { window, registry, policies } = v;
   return (
     text(v["epoch"]) &&
@@ -119,7 +123,8 @@ function valid(v: unknown): v is ServerProvenance {
     exact(registry, ["root", "leaves"]) &&
     text(registry["root"]) && /^[0-9a-f]{64}$/.test(registry["root"]) && count(registry["leaves"]) &&
     Array.isArray(policies) && policies.every(validPolicy) &&
-    validBank(v["bank"])
+    validBank(v["bank"]) &&
+    count(v["holders"])
   );
 }
 
@@ -148,6 +153,13 @@ export function bankText(prov: Provenance): string {
   const twice = b.paid_twice.length > 0 ? ` · ${b.paid_twice.length} paid twice` : "";
   const unread = b.unreadable.length > 0 ? ` · ${b.unreadable.length} unreadable` : "";
   return `${b.unbacked.length} of ${b.transfers} · ${rail} · checked ${at}${twice}${unread}`;
+}
+
+/** How many holder devices are paired: the server's count, or why there is none to show. */
+export function holdersText(prov: Provenance): string {
+  if (prov.source === "replay") return "not known in a replay";
+  if (prov.holders === null) return "server provenance unavailable";
+  return String(prov.holders);
 }
 
 /** Whether the bank check names money nothing explains: an unbacked transfer or an intent paid twice. */
@@ -188,5 +200,6 @@ export function provenanceOf(
     registry,
     policies: server?.policies ?? null,
     bank: server?.bank ?? null,
+    holders: server?.holders ?? null,
   };
 }

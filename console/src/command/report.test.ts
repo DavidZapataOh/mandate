@@ -3,7 +3,7 @@ import { SERVER_BODY, SERVER_BODY_BANK } from "./__fixtures__/provenance";
 import { attackLine, BREACH, DEPLOY_BREACH, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
 import { computePosture } from "./posture";
 import { parseProvenance, provenanceOf } from "./provenance";
-import { bankText, buildReport, cell, lineCount, metricValue, reportFileName, reportJson, reportMarkdown, TILES } from "./report";
+import { bankText, buildReport, cell, holdersText, lineCount, metricValue, reportFileName, reportJson, reportMarkdown, TILES } from "./report";
 
 const ROOT = "70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87";
 const AT = Date.UTC(2026, 10, 3, 17, 0, 0);
@@ -37,6 +37,7 @@ describe("reportMarkdown", () => {
       "| Moved by attacks | 0.00 |",
       "| Payments by rail | SIMULATED 2 |",
       "| Transfers at the bank without a certificate | not reconciled yet |",
+      "| Paired holders | 1 |",
       "| Holder consent on certified payments | 1 of 2 · 50.0% |",
       "| Gate decision time | p50 61µs · p95 90µs (5 samples) |",
       "| Decisions naming their model call | 4 of 7 · 57.1% |",
@@ -186,7 +187,7 @@ describe("metricValue", () => {
   it("renders each tile", () => {
     const p = computePosture(window);
     expect(TILES.map((k) => metricValue(k, p, provenanceOf(window, parseProvenance(SERVER_BODY), null)))).toEqual([
-      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2", "not reconciled yet",
+      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%", "SIMULATED 2", "not reconciled yet", "1",
     ]);
   });
 
@@ -219,5 +220,15 @@ describe("bankText", () => {
     const r = buildReport(computePosture(window), provenanceOf(window, parseProvenance(SERVER_BODY_BANK), null), AT);
     expect(JSON.parse(reportJson(r)).provenance.bank).toEqual(bank);
     expect(Object.keys(JSON.parse(reportJson(r)).provenance.bank)).toEqual(Object.keys(bank));
+  });
+});
+
+describe("holdersText", () => {
+  it.each([
+    ["the server's count", provenanceOf(window, parseProvenance(JSON.stringify({ ...JSON.parse(SERVER_BODY), holders: 3 })), null), "3"],
+    ["a replay", provenanceOf(window, null, "demo-1"), "not known in a replay"],
+    ["no server", provenanceOf(window, null, null), "server provenance unavailable"],
+  ])("%s", (_name, prov, want) => {
+    expect(holdersText(prov)).toBe(want);
   });
 });

@@ -96,11 +96,16 @@ function reasonText(phase: Phase, reason: string | null, fields: ConsentFields |
   }
 }
 
-function deviceText(replay: boolean, device: DeviceState | null): string {
+/** How many holder devices are paired; a count, never a device. */
+export function deviceText(state: DeviceState): string {
+  if (state.holders === 0) return "No holder device paired yet";
+  return state.holders === 1 ? "1 holder device paired" : `${state.holders} holder devices paired`;
+}
+
+function deviceLine(replay: boolean, device: DeviceState | null): string {
   if (replay) return "Holder device not shown in replay";
   if (device === null) return "Holder device state unavailable";
-  if (device.holders === 0) return "No holder device paired yet";
-  return device.holders === 1 ? "1 holder device paired" : `${device.holders} holder devices paired`;
+  return deviceText(device);
 }
 
 function maxDeskSeq(lines: readonly ConsoleLine[]): number {
@@ -322,7 +327,7 @@ export function mountApproval(
     }
     hash.textContent = shownHash;
     expires.textContent = fields === null ? "" : `Expires ${utcTime(fields.expires_at)}`;
-    device.textContent = deviceText(replay, deviceState);
+    device.textContent = deviceLine(replay, deviceState);
     checkLabel.textContent = gateLine;
     checkDigest.textContent = gateDigest;
     check.hidden = gateState === null;

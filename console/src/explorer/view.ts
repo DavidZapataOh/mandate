@@ -1,5 +1,5 @@
 import { fromBase64, type Bytes } from "./bytes";
-import { exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
+import { anonymityText, exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
 import { classify } from "./input";
 import { presentation } from "./present";
 import { fetchKeys, fetchReceipt, type Fetch, type PublishedKeys } from "./publish";
@@ -59,6 +59,7 @@ function keyOf(text: string): Bytes | null {
 export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
   const gateKey = byId<HTMLInputElement>(doc, "gate-key");
   const keySource = byId(doc, "key-source");
+  const anonymity = byId(doc, "anonymity");
   const paste = byId<HTMLTextAreaElement>(doc, "paste");
   const verdict = byId(doc, "verdict");
   const steps = byId(doc, "steps");
@@ -223,6 +224,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
   gateKey.addEventListener("input", () => {
     pinned = true;
     keySource.textContent = "Pinned by you";
+    anonymity.textContent = anonymityText(null);
   });
   byId(doc, "verify").addEventListener("click", () => void verify());
   byId(doc, "holder-copy").addEventListener("click", () => void holderCopy());
@@ -232,6 +234,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     published = keys;
     // A key typed while the published one was loading stays the reader's own.
     if (pinned) return;
+    anonymity.textContent = anonymityText(keys === null ? null : keys.holderKeys);
     if (keys === null) {
       keySource.textContent = "No key published here: paste the gate public key";
       return;

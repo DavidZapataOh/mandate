@@ -3,9 +3,9 @@ import {
   type AttackRow, counted, DEFINITIONS, formatCents, formatShare, LABELS,
   type MetricKey, type Posture, railsText,
 } from "./posture";
-import { bankText, type BankCheck, type Provenance } from "./provenance";
+import { bankText, holdersText, type BankCheck, type Provenance } from "./provenance";
 
-export { bankText };
+export { bankText, holdersText };
 import { APPLICABILITY, CONTROLS, DISCLAIMER, evidenceText, type Control } from "./standards";
 
 export interface ReportControl extends Omit<Control, "evidence"> {
@@ -23,7 +23,7 @@ export interface Report {
   readonly controls: readonly ReportControl[];
 }
 
-export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "unbacked"] as const;
+export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "unbacked", "holders"] as const;
 
 /** Builds the report for a window; every field is derived from the posture and provenance given. */
 export function buildReport(posture: Posture, provenance: Provenance, generatedAtMs: number): Report {
@@ -63,6 +63,7 @@ function orderedProvenance(p: Provenance): Provenance {
         })),
       })),
     bank: p.bank && orderedBank(p.bank),
+    holders: p.holders,
   };
 }
 
@@ -87,6 +88,7 @@ export function metricValue(key: (typeof TILES)[number], p: Posture, prov: Prove
     case "consent": return formatShare(p.consent.withConsent.count, p.consent.certified.count);
     case "rails": return railsText(p);
     case "unbacked": return bankText(prov);
+    case "holders": return holdersText(prov);
     case "attribution": return formatShare(p.attribution.attributed.count, p.decided.count);
     case "latency": {
       const parts = latencyParts(p);

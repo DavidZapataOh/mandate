@@ -83,9 +83,25 @@ describe("explorer page", () => {
     ]);
     expect(revealed().slice(0, 2)).toEqual([WITHHELD, WITHHELD]);
     expect(document.querySelectorAll("#never li")).toHaveLength(6);
+    expect(document.getElementById("anonymity")!.textContent).toBe("Anonymity set: 1 holder key. Every receipt this server issued was approved by that one holder.");
     expect(document.getElementById("limits")!.textContent).toBe(
       "Receipts share no holder key: each payment is signed by a key used once, and the holder's own key appears only when the holder discloses it. The gate that issued a receipt can still link it to its holder. A withheld field cannot be confirmed by guessing: the certificate's action hash is salted.",
     );
+  });
+
+  it("states the anonymity set the server publishes, and drops it for a pinned key", async () => {
+    const { fetchFn } = server({ "/api/keys": json(200, { gate_key: GATE_KEY, holder_keys: [HOLDER_KEY, "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E="] }) });
+    await mount(fetchFn);
+    expect(document.getElementById("anonymity")!.textContent).toMatch(/^Anonymity set: 2 holder keys\./);
+    const key = document.getElementById("gate-key") as HTMLInputElement;
+    key.value = GATE_KEY;
+    key.dispatchEvent(new Event("input"));
+    expect(document.getElementById("anonymity")!.textContent).toBe("Anonymity set unknown: this page has no holder list from the server.");
+  });
+
+  it("says the anonymity set is unknown when no keys are published", async () => {
+    await mount(offline);
+    expect(document.getElementById("anonymity")!.textContent).toBe("Anonymity set unknown: this page has no holder list from the server.");
   });
 
   it("marks every withheld field of the reveals list, term and value", async () => {

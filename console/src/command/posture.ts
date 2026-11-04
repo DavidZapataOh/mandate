@@ -68,7 +68,7 @@ export interface Posture {
 }
 
 export type MetricKey =
-  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails" | "unbacked";
+  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers" | "rails" | "unbacked" | "holders";
 
 export const LABELS: Readonly<Record<MetricKey, string>> = {
   decided: "Actions decided",
@@ -84,6 +84,7 @@ export const LABELS: Readonly<Record<MetricKey, string>> = {
   layers: "Denials by layer",
   rails: "Payments by rail",
   unbacked: "Transfers at the bank without a certificate",
+  holders: "Paired holders",
 };
 
 export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
@@ -113,6 +114,8 @@ export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
     "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED).",
   unbacked:
     "Account transfers the bank itself lists from the desk's debit account since this registry began that carry no idempotency key naming a certificate this desk issued, or have no sealed execution entry in the registry. A read-only reconciler asks the bank's own API; 0 means every payment that left the account at the bank has a certificate and a receipt. A confirmed payment whose proof receipt could not be built counts as without. Sealed payments the bank does not list, or lists as canceled, are named in the evidence. An intent that more than one transfer paid is named as paid twice and flags the tile.",
+  holders:
+    "Holder devices whose paired keys can approve payments at this gate now. Each receipt carries a key used once, so a reader of receipts cannot tell which of these holders approved it; the gate itself can. Read from the server; no line names a holder.",
 };
 
 const ATTACK_LAYERS: Readonly<Record<string, string>> = {

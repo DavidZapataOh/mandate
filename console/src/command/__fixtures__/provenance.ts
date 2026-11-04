@@ -21,6 +21,7 @@ export const SERVER_BODY = JSON.stringify({
     },
   ],
   bank: null,
+  holders: 1,
 });
 
 /** Test data only: the same body once the server has reconciled with the bank. */

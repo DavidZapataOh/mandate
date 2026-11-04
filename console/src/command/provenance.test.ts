@@ -10,9 +10,14 @@ const bank = JSON.parse(SERVER_BODY_BANK).bank;
 describe("parseProvenance", () => {
   it("reads what the server serves", () => {
     const p = parseProvenance(SERVER_BODY);
-    expect([p.epoch, p.registry, p.policies.map((x) => x.policy_id), p.bank]).toEqual([
-      "MANDATE_FIXTURE-a1b2c3d4", { root: ROOT, leaves: 1 }, ["desk", "payments", "nimbus"], null,
+    expect([p.epoch, p.registry, p.policies.map((x) => x.policy_id), p.bank, p.holders]).toEqual([
+      "MANDATE_FIXTURE-a1b2c3d4", { root: ROOT, leaves: 1 }, ["desk", "payments", "nimbus"], null, 1,
     ]);
+  });
+
+  it("reads the paired holder count", () => {
+    expect(provenanceOf(lines(WINDOW), parseProvenance(SERVER_BODY), null).holders).toBe(1);
+    expect(provenanceOf(lines(WINDOW), null, "demo-1").holders).toBeNull();
   });
 
   it("reads the reconciliation the server ran", () => {
@@ -23,6 +28,8 @@ describe("parseProvenance", () => {
   it.each([
     ["not JSON", "{"],
     ["an extra key", JSON.stringify({ ...body, extra: 1 })],
+    ["holders as text", JSON.stringify({ ...body, holders: "2" })],
+    ["a negative holder count", JSON.stringify({ ...body, holders: -1 })],
     ["leaves as text", JSON.stringify({ ...body, registry: { root: ROOT, leaves: "1" } })],
     ["a short root", JSON.stringify({ ...body, registry: { root: "7056", leaves: 1 } })],
     ["a negative seq", JSON.stringify({ ...body, window: { first_seq: -1, last_seq: 9, retained: 9 } })],
@@ -51,7 +58,7 @@ describe("provenanceOf", () => {
       source: "live", replay: null, epoch: "MANDATE_FIXTURE-a1b2c3d4",
       window: { first: 1, last: 9, lines: 9 }, evicted: false,
       registry: { root: ROOT, leaves: 1, from: "server" },
-      policies: body.policies, bank: null,
+      policies: body.policies, bank: null, holders: 1,
     });
   });
 
@@ -94,7 +101,7 @@ describe("provenanceOf", () => {
   it("an empty window has no bounds and no registry", () => {
     expect(provenanceOf([], null, null)).toEqual({
       source: "live", replay: null, epoch: null, window: { first: null, last: null, lines: 0 },
-      evicted: false, registry: null, policies: null, bank: null,
+      evicted: false, registry: null, policies: null, bank: null, holders: null,
     });
   });
 });

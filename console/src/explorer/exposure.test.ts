@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64 } from "./bytes";
 import { AUDITOR, CONSENT_KEY, GATE_KEY, HOLDER_KEY, RECEIPT, RECEIPT_ZKTLS } from "./__fixtures__/receipts";
-import { exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
+import { anonymityText, exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
 import { parseReceipt, type Receipt } from "./receipt";
 import { disclosedOf } from "./verify";
 
@@ -65,5 +65,17 @@ describe("exposure", () => {
     const r = parseReceipt(JSON.parse(RECEIPT));
     const d = (await disclosedOf(r, fromBase64(GATE_KEY)))!;
     expect(exposure(r, { ...d, consent: { ...d.consent, amount_cents: 7 } })[0]).toEqual(["Amount", "0.07 USD"]);
+  });
+});
+
+describe("anonymityText", () => {
+  it.each([
+    [null, "Anonymity set unknown: this page has no holder list from the server."],
+    [[], "Anonymity set: no holder has paired with this server yet."],
+    [["K1"], "Anonymity set: 1 holder key. Every receipt this server issued was approved by that one holder."],
+    [["K1", "K2"], "Anonymity set: 2 holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can."],
+    [["K1", "K2", "K3"], "Anonymity set: 3 holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can."],
+  ])("%j", (keys, want) => {
+    expect(anonymityText(keys)).toBe(want);
   });
 });

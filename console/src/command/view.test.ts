@@ -61,8 +61,9 @@ describe("mountCommand", () => {
     expect(text('[data-metric="consent"] .value')).toBe("1 of 2 · 50.0%");
     expect(text('[data-metric="rails"] .value')).toBe("SIMULATED 2");
     expect(text('[data-metric="unbacked"] .value')).toBe("not reconciled yet");
+    expect(text('[data-metric="holders"] .value')).toBe("1");
     expect(text('[data-metric="latency"] .value')).toBe("p50 61µs · p95 90µs (5 samples)");
-    for (const key of ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "unbacked"] as const) {
+    for (const key of ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution", "rails", "unbacked", "holders"] as const) {
       expect(text(`[data-metric="${key}"] .definition`)).toBe(DEFINITIONS[key]);
     }
   });
@@ -385,12 +386,12 @@ describe("a window with attacks blocked and one Nimbus step that ran", () => {
 
 describe("provenanceSummary", () => {
   it("an empty registry reads as empty, not as a root over 0 entries", () => {
-    expect(provenanceSummary({ source: "live", replay: null, epoch: "e", window: { first: 4, last: 6, lines: 3 }, evicted: true, registry: { root: "2f".repeat(32), leaves: 0, from: "server" }, policies: null, bank: null })).toBe(
+    expect(provenanceSummary({ source: "live", replay: null, epoch: "e", window: { first: 4, last: 6, lines: 3 }, evicted: true, registry: { root: "2f".repeat(32), leaves: 0, from: "server" }, policies: null, bank: null, holders: null })).toBe(
       "Lines #4 to #6 (3 lines) · lines before #4 are outside this window · registry empty (server)",
     );
   });
 
   it("names an empty window", () => {
-    expect(provenanceSummary({ source: "live", replay: null, epoch: null, window: { first: null, last: null, lines: 0 }, evicted: false, registry: null, policies: null, bank: null })).toBe("No lines yet");
+    expect(provenanceSummary({ source: "live", replay: null, epoch: null, window: { first: null, last: null, lines: 0 }, evicted: false, registry: null, policies: null, bank: null, holders: null })).toBe("No lines yet");
   });
 });

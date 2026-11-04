@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { LineStore } from "../store/store";
 import type { DeskApi, DeviceState, PendingQuote } from "./api";
 import { checked, desk, FIELDS, FIELDS_HASH, SUMMARY } from "./__fixtures__/desk";
-import { DEVICE_POLL_MS, KNOWN_MAX, mountApproval } from "./panel";
+import { DEVICE_POLL_MS, deviceText, KNOWN_MAX, mountApproval } from "./panel";
 
 const PAIRED: DeviceState = { holders: 1 };
 const BEFORE_EXPIRY = 1800001000 * 1000;
@@ -311,5 +311,16 @@ describe("mountApproval", () => {
     store.reset();
     await mounted.refresh();
     expect(root.hidden).toBe(true);
+  });
+});
+
+describe("deviceText", () => {
+  it.each([
+    [0, "No holder device paired yet"],
+    [1, "1 holder device paired"],
+    [2, "2 holder devices paired"],
+    [16, "16 holder devices paired"],
+  ])("%i", (holders, want) => {
+    expect(deviceText({ holders })).toBe(want);
   });
 });

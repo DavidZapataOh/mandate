@@ -10,6 +10,15 @@ export const NEVER_IN_A_RECEIPT = [
   "Your bank balance",
 ] as const;
 
+/** How many holder keys the server publishes, as the set a receipt's reader cannot tell apart; the issuing gate can. */
+export function anonymityText(holderKeys: readonly string[] | null): string {
+  if (holderKeys === null) return "Anonymity set unknown: this page has no holder list from the server.";
+  const n = holderKeys.length;
+  if (n === 0) return "Anonymity set: no holder has paired with this server yet.";
+  if (n === 1) return "Anonymity set: 1 holder key. Every receipt this server issued was approved by that one holder.";
+  return `Anonymity set: ${n} holder keys. A receipt's consent key is used once and names none of them, so a reader cannot tell which holder approved it; the issuing gate can.`;
+}
+
 /** How a field the holder did not disclose reads. */
 export const WITHHELD = "Withheld (a salted digest in the gate-signed receipt)";
 
