@@ -65,3 +65,12 @@ export async function fetchReceipt(
   if (got.status === 403 && full) return "local only";
   return "offline";
 }
+
+/** The auditor copy of the receipt carrying `hash` as its receipt hash or action hash; anything else but 200 or 404 counts as unreachable. */
+export async function fetchByHash(hash: string, fetchFn: Fetch): Promise<{ value: unknown } | "not found" | "offline"> {
+  const got = await body(fetchFn, `/api/receipt/by-hash/${hash}`);
+  if (got === null) return "offline";
+  if (got.status === 200) return { value: got.value };
+  if (got.status === 404) return "not found";
+  return "offline";
+}

@@ -147,4 +147,4 @@ def test_a_fresh_payment_verifies_in_the_explorer(console: tuple[str, str]) -> N
         check=False,
     )
     assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-2000:]
-    assert "3 passed" in run.stdout
+    assert "4 passed" in run.stdout

@@ -120,6 +120,7 @@ _ANCHOR_FAILED = {"error": "anchor failed"}
 _STATE_UNAVAILABLE = {"error": "state: unavailable"}
 _log = logging.getLogger(__name__)
 _VOICE_SIG = re.compile(r"[A-Za-z0-9_-]{86}")
+_HASH = re.compile(r"[0-9a-f]{64}")
 _PAGE_HEADERS = {
     "permissions-policy": "microphone=(self), camera=(), geolocation=()",
     # A meta CSP cannot carry frame-ancestors; without it a foreign page could
@@ -658,6 +659,17 @@ state is returned."""
         # the personal fields unless the holder adds them.
         return JSONResponse(found if everything else present(found, frozenset()))
 
+    async def receipt_by_hash(request: Request) -> Response:
+        digest = request.path_params["digest"]
+        # Whole hashes only: a prefix or a pattern would let a stranger list
+        # receipts nobody gave them.
+        if request.url.query or _HASH.fullmatch(digest) is None:
+            return _bad_request()
+        found = await anyio.to_thread.run_sync(desk.receipt_by_hash, digest)
+        if found is None:
+            return JSONResponse(dict(_NOT_FOUND), status_code=404)
+        return JSONResponse(present(found, frozenset()))
+
     async def device(request: Request) -> Response:
         # A count only: naming a device would link payments to a holder.
         return JSONResponse(
@@ -882,6 +894,7 @@ state is returned."""
         ("/api/device", "GET", device),
         ("/api/keys", "GET", keys),
         ("/api/registry", "GET", registry),
+        ("/api/receipt/by-hash/{digest}", "GET", receipt_by_hash),
         ("/api/receipt/{payment_id}", "GET", receipt),
         ("/api/reconcile", "POST", reconcile),
         ("/api/anchor", "POST", anchor),

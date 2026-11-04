@@ -6,6 +6,7 @@ against the gate key while its personal fields stay salted digests.
 """
 
 import base64
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import asdict
@@ -14,6 +15,7 @@ from typing import Any
 from bank.api import Payment
 from bank.rail import bank_view
 from gate.cava import CavaAction, canonical_bytes
+from gate.certs import EVENT_TYPE
 from gate.consent import Consent
 from gate.policy import Policy, matched_rule
 from gate.registry import Anchor, InclusionProof, LogEntry
@@ -194,3 +196,30 @@ def present(receipt: dict[str, Any], reveal: frozenset[str]) -> dict[str, Any]:
     token, *texts, _ = receipt["sd"].split("~")
     kept = [text for text in texts if _b64u_json(text)[1] in names]
     return {**receipt, "sd": serialize(token, kept)}
+
+
+def receipt_hashes(receipt: dict[str, Any]) -> tuple[str, str]:
+    """The two hashes a receipt is found by.
+
+    Args:
+        receipt: A holder copy or any presentation of one.
+
+    Returns:
+        ``(receipt_hash, action_hash)``: lowercase hex SHA-256 of the
+        gate-signed JWT that opens ``sd`` (the same in every copy, and blind
+        to the unsigned ``public_anchor``), and the action hash the
+        certificate certifies.
+
+    Raises:
+        ValueError: If either hash cannot be read from the receipt.
+    """
+    try:
+        token = receipt["sd"].split("~")[0]
+        receipt_hash = hashlib.sha256(token.encode("ascii")).hexdigest()
+        claims = _b64u_json(receipt["certificate"].split(".")[1])
+        action_hash = claims["events"][EVENT_TYPE]["action_hash"]
+        if not isinstance(action_hash, str):
+            raise TypeError(action_hash)
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError) as exc:
+        raise ValueError("receipt: unreadable") from exc
+    return receipt_hash, action_hash

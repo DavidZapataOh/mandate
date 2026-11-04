@@ -5,7 +5,7 @@ primary_target: "console/explorer.html"
 related_targets: []
 ---
 
-Scope: console/explorer.html, the public proof explorer. Mode: Operate with Read typography. Audience: Andres the verifier (auditor, insurer or counterparty) first, then judges. Job: paste a receipt, certificate, payment id or console line, verify it in this browser, read the verdict and what the receipt discloses. Constraints: Ink/Bone/Muted, Verify only on passed checks and VERIFIED, Alert only on the failed check and NOT VERIFIED; a failure is never colour alone; Inter + JetBrains Mono; nothing decorative moves; exact copy as pinned by the build plan; the chain takes two more steps (Bank transfer, Funds proof) without redesign.
+Scope: console/explorer.html, the public proof explorer. Mode: Operate with Read typography. Audience: Andres the verifier (auditor, insurer or counterparty) first, then judges. Job: paste a receipt, certificate, payment id, hash or console line, verify it in this browser, read the verdict and what the receipt discloses. Constraints: Ink/Bone/Muted, Verify only on passed checks and VERIFIED, Alert only on the failed check and NOT VERIFIED; a failure is never colour alone; Inter + JetBrains Mono; nothing decorative moves; exact copy as pinned by the build plan; the chain takes two more steps (Bank transfer, Funds proof) without redesign.
 Approved comp: .impeccable/mocks/decision/explorer-html/teller-window.png
 
 ## Direction contract

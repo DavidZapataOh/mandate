@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 
 const PAYMENT = process.env.MANDATE_PAYMENT ?? "";
@@ -39,4 +40,19 @@ test("a copy with a bigger amount fails at the disclosures", async ({ page, requ
   await expect(page.locator("#verdict .label")).toHaveText("NOT VERIFIED");
   await expect(page.locator('#steps li[data-status="fail"]')).toHaveAttribute("data-step", "Receipt disclosures");
   await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(2);
+});
+
+test("the same payment is found by its receipt hash and its action hash", async ({ page, request }) => {
+  const receipt = await (await request.get(`/api/receipt/${PAYMENT}`)).json();
+  const receiptHash = createHash("sha256").update(receipt.sd.split("~")[0], "ascii").digest("hex");
+  const payload = JSON.parse(Buffer.from(receipt.certificate.split(".")[1], "base64url").toString("utf8"));
+  const actionHash: string = payload.events["urn:mandate:secevent:cert:v1"].action_hash;
+  for (const hash of [receiptHash, actionHash]) {
+    await verify(page, hash);
+    await expect(page.locator("#verdict .label")).toHaveText("VERIFIED, FIELDS WITHHELD");
+    await expect(page.locator('#steps li[data-status="fail"]')).toHaveCount(0);
+  }
+  await expect(page.locator("#reveals dd").last()).toHaveText(receiptHash);
+  await page.getByRole("button", { name: "Load the holder copy" }).click();
+  await expect(page.locator("#verdict .label")).toHaveText("VERIFIED");
 });

@@ -15,6 +15,13 @@ describe("classify", () => {
       kind: "payment", id: "sandbox_account_transfer_astdbpezq3uovbhia1nb",
     });
   });
+  it.each([
+    ["73fb45625595a413f1f2ee4ec0a19acb4bdf4709a1927856a9ee2f31a4c0391f", "73fb45625595a413f1f2ee4ec0a19acb4bdf4709a1927856a9ee2f31a4c0391f"],
+    [" 52E9B189B7DB1F410229E8BB9A3A4A99D34E30523C3507480821839A3845069B\n", "52e9b189b7db1f410229e8bb9a3a4a99d34e30523c3507480821839a3845069b"],
+    ["1".repeat(64), "1".repeat(64)],
+  ])("reads %j as a hash, in lowercase", (text, hash) => {
+    expect(classify(text)).toEqual({ kind: "hash", hash });
+  });
   it("reads a certificate", () => {
     const token = JSON.parse(RECEIPT).certificate;
     expect(classify(token)).toEqual({ kind: "certificate", token });
@@ -28,8 +35,8 @@ describe("classify", () => {
   it("finds no payment behind an attack line", () => {
     expect(classify(ATTACK)).toEqual({ kind: "line", seq: 4, paymentId: null });
   });
-  it.each(["", "pay:1", "hello", "[1]", '{"v":1}', "account_transfer_", "sandbox_account_", "account_transfer_a-b", `account_transfer_${"a".repeat(65)}`])("refuses %j", (text) => {
-    expect(classify(text)).toEqual({ kind: "unknown", reason: "Paste a receipt, a certificate, a payment id or a console line" });
+  it.each(["", "pay:1", "hello", "[1]", '{"v":1}', "account_transfer_", "sandbox_account_", "account_transfer_a-b", `account_transfer_${"a".repeat(65)}`, "a".repeat(63), "a".repeat(65), `0x${"a".repeat(64)}`, "g".repeat(64)])("refuses %j", (text) => {
+    expect(classify(text)).toEqual({ kind: "unknown", reason: "Paste a receipt, a certificate, a payment id, a receipt or action hash, or a console line" });
   });
   it("finds no payment behind a forged approval that carries a consent", () => {
     const forensic = {

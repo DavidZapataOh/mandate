@@ -1,10 +1,14 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ATTACK } from "../wire/__fixtures__/lines";
-import { AUDITOR, forge, GATE_KEY, HOLDER_KEY, RECEIPT, tamper } from "./__fixtures__/receipts";
+import { AUDITOR, forge, GATE_KEY, HOLDER_KEY, RECEIPT, SANDBOX_RECEIPT, tamper } from "./__fixtures__/receipts";
 import OTS from "./__fixtures__/ots.json" with { type: "json" };
 import { WITHHELD } from "./exposure";
 import { mountExplorer, type Explorer } from "./view";
+
+const RECEIPT_HASH = "73fb45625595a413f1f2ee4ec0a19acb4bdf4709a1927856a9ee2f31a4c0391f";
+const ACTION_HASH = "52e9b189b7db1f410229e8bb9a3a4a99d34e30523c3507480821839a3845069b";
+const LEAF = "70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87";
 
 const PAGE = readFileSync("explorer.html", "utf8");
 const json = (status: number, body: unknown) =>
@@ -19,6 +23,8 @@ function server(routes: Record<string, Response> = {}) {
       "/api/keys": json(200, { gate_key: GATE_KEY, holder_keys: [HOLDER_KEY] }),
       "/api/receipt/pay%3A000001": json(200, JSON.parse(AUDITOR)),
       "/api/receipt/pay%3A000001?disclose=all": json(200, JSON.parse(RECEIPT)),
+      [`/api/receipt/by-hash/${RECEIPT_HASH}`]: json(200, JSON.parse(AUDITOR)),
+      [`/api/receipt/by-hash/${ACTION_HASH}`]: json(200, JSON.parse(AUDITOR)),
       ...routes,
     }[url];
     return hit ?? json(404, { error: "not found" });
@@ -80,7 +86,7 @@ describe("explorer page", () => {
     expect(seen).toEqual(["/api/keys", "/api/receipt/pay%3A000001"]);
     expect([...document.querySelectorAll("#reveals dt")].map((d) => d.textContent)).toEqual([
       "Amount", "Payee account", "Debit account", "Reference", "Payment and quote ids", "Consent key (this payment only)",
-      "Holder public key", "Sealed at (unix seconds)", "Bank transfer",
+      "Holder public key", "Sealed at (unix seconds)", "Bank transfer", "Receipt hash",
     ]);
     expect(revealed().slice(0, 2)).toEqual([WITHHELD, WITHHELD]);
     expect(document.querySelectorAll("#never li")).toHaveLength(6);
@@ -123,6 +129,7 @@ describe("explorer page", () => {
       ["Holder public key", true, true],
       ["Sealed at (unix seconds)", false, false],
       ["Bank transfer", false, false],
+      ["Receipt hash", false, false],
     ]);
     await verify(RECEIPT);
     expect(document.querySelectorAll("#reveals [data-withheld]")).toHaveLength(0);
@@ -196,7 +203,9 @@ describe("explorer page", () => {
     ["pay:000001", offline, "The server is unreachable; paste the receipt itself to verify offline"],
     ["pay:000009", server().fetchFn, "No receipt for pay:000009 on this server"],
     [ATTACK, server().fetchFn, "Line #4 carries no payment receipt"],
-    ["hello", server().fetchFn, "Paste a receipt, a certificate, a payment id or a console line"],
+    [RECEIPT_HASH, offline, "The server is unreachable; paste the receipt itself to verify offline"],
+    [LEAF, server().fetchFn, `No receipt for ${LEAF} on this server (receipts are found by receipt hash, action hash or payment id)`],
+    ["hello", server().fetchFn, "Paste a receipt, a certificate, a payment id, a receipt or action hash, or a console line"],
   ])("refuses %j with a reason and no steps", async (text, fetchFn, reason) => {
     const verify = await mount(fetchFn);
     const key = document.getElementById("gate-key") as HTMLInputElement;
@@ -283,7 +292,7 @@ describe("explorer page", () => {
     expect(verdict()).toBe("VERIFIED");
     expect(marks()).toEqual([...Array(8).fill("PASS"), "NOT CHECKED", ...Array(3).fill("PASS")]);
     expect(revealed().slice(0, 2)).toEqual(["200.00 USD", "acme-991"]);
-    expect(document.querySelectorAll("#reveals dt")).toHaveLength(9);
+    expect(document.querySelectorAll("#reveals dt")).toHaveLength(10);
     // The superseded lookup leaves no payment id behind for the holder copy.
     await explorer.holderCopy();
     expect(verdictText()).toBe("Look a payment up by its id first; the holder copy comes from this desk");
@@ -303,5 +312,69 @@ describe("explorer page", () => {
     expect(verdict()).toBe("CANNOT VERIFY");
     expect(verdictText()).toBe("The server is unreachable; paste the receipt itself to verify offline");
     void verify;
+  });
+  it("finds a receipt by a pasted receipt hash, then verifies it here", async () => {
+    const { fetchFn, seen } = server();
+    const verify = await mount(fetchFn);
+    await verify(RECEIPT_HASH.toUpperCase());
+    expect(verdict()).toBe("VERIFIED, FIELDS WITHHELD");
+    expect(seen).toEqual(["/api/keys", `/api/receipt/by-hash/${RECEIPT_HASH}`]);
+    expect(document.querySelector("#reveals dt:last-of-type")?.textContent).toBe("Receipt hash");
+    expect(revealed().at(-1)).toBe(RECEIPT_HASH);
+  });
+
+  it("loads the holder copy of a receipt found by its action hash", async () => {
+    const { fetchFn, seen } = server();
+    const verify = await mount(fetchFn);
+    await verify(ACTION_HASH);
+    expect(verdict()).toBe("VERIFIED, FIELDS WITHHELD");
+    await explorer.holderCopy();
+    expect(seen.at(-1)).toBe("/api/receipt/pay%3A000001?disclose=all");
+    expect(verdict()).toBe("VERIFIED");
+  });
+
+  it("refuses an answer to a hash lookup that does not carry the hash", async () => {
+    const { fetchFn } = server({ [`/api/receipt/by-hash/${LEAF}`]: json(200, JSON.parse(AUDITOR)) });
+    const verify = await mount(fetchFn);
+    await verify(LEAF);
+    expect(verdict()).toBe("CANNOT VERIFY");
+    expect(verdictText()).toBe(`The server answered with a receipt that does not carry ${LEAF}`);
+    expect(marks()).toEqual([]);
+    expect(document.querySelectorAll("#reveals dt")).toHaveLength(0);
+  });
+
+  it("fails a forged answer to a hash lookup at the step it breaks", async () => {
+    const forged = JSON.parse(tamper("registry.seal.ts", 1800009999, AUDITOR));
+    const { fetchFn } = server({ [`/api/receipt/by-hash/${RECEIPT_HASH}`]: json(200, forged) });
+    const verify = await mount(fetchFn);
+    await verify(RECEIPT_HASH);
+    expect(verdict()).toBe("NOT VERIFIED");
+    expect(document.querySelector('#steps li[data-status="fail"]')?.getAttribute("data-step")).toBe("Registry seal");
+  });
+  it("loads no holder copy for a payment id a hash lookup answered without proving it", async () => {
+    const lying = JSON.parse(tamper("payment_id", "pay:000002", AUDITOR));
+    const { fetchFn, seen } = server({
+      [`/api/receipt/by-hash/${RECEIPT_HASH}`]: json(200, lying),
+      "/api/receipt/pay%3A000002?disclose=all": json(200, JSON.parse(tamper("payment_id", "pay:000002", SANDBOX_RECEIPT))),
+    });
+    const verify = await mount(fetchFn);
+    await verify(RECEIPT_HASH);
+    expect(verdict()).toBe("NOT VERIFIED");
+    await explorer.holderCopy();
+    expect(verdict()).toBe("CANNOT VERIFY");
+    expect(verdictText()).toBe("Look a payment up by its id first; the holder copy comes from this desk");
+    expect(seen).not.toContain("/api/receipt/pay%3A000002?disclose=all");
+  });
+
+  it("refuses a holder copy that does not carry the hash it was found by", async () => {
+    const other = JSON.parse(tamper("payment_id", "pay:000001", SANDBOX_RECEIPT));
+    const { fetchFn } = server({ "/api/receipt/pay%3A000001?disclose=all": json(200, other) });
+    const verify = await mount(fetchFn);
+    await verify(ACTION_HASH);
+    expect(verdict()).toBe("VERIFIED, FIELDS WITHHELD");
+    await explorer.holderCopy();
+    expect(verdict()).toBe("CANNOT VERIFY");
+    expect(verdictText()).toBe(`The server answered with a receipt that does not carry ${ACTION_HASH}`);
+    expect(marks()).toEqual([]);
   });
 });

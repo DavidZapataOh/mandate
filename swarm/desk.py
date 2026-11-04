@@ -52,7 +52,7 @@ from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
 from swarm.holders import HolderRegistry, verify_unpair
 from swarm.intent import IntentError, confirmed_intent, intent_hash
 from swarm.meta_client import reasoning_commitment
-from swarm.receipt import proof_receipt, seal_view
+from swarm.receipt import proof_receipt, receipt_hashes, seal_view
 
 DESK_POLICY = Policy(
     "desk",
@@ -223,6 +223,8 @@ class PaymentDesk:
         # Holder copies: every Disclosure, the action salt included, so they
         # leave the desk only through `proof_receipt`.
         self._proofs: dict[str, dict[str, Any]] = {}
+        # Payment ids by receipt hash and by certified action hash.
+        self._by_hash: dict[str, str] = {}
         self._seq = 0
         self._intents: dict[str, _Intent] = {}
         self._intent_hashes: set[str] = set()
@@ -266,7 +268,8 @@ class PaymentDesk:
             self._intents[intent_id] = stored
             self._intent_hashes.add(stored.hash)
         self._receipts = {k: json.loads(v) for k, v in state.records("result")}
-        self._proofs = {k: json.loads(v) for k, v in state.records("receipt")}
+        for payment_id, value in state.records("receipt"):
+            self._keep_receipt(payment_id, json.loads(value))
         self._closed = {k: json.loads(v) for k, v in state.records("quote")}
         self._paid_twice = {
             k: _texts(json.loads(v)) for k, v in state.records("paid_twice")
@@ -916,7 +919,7 @@ class PaymentDesk:
         proof, receipt = self._durably(work)
         if twice is not None:
             self._note_twice(iid, twice)
-        self._proofs[payment.payment_id] = receipt
+        self._keep_receipt(payment.payment_id, receipt)
         self._receipts[payment.payment_id] = result
         if bound is not None:
             for name, value in changes.items():
@@ -1307,6 +1310,31 @@ class PaymentDesk:
                 return {"status": "unknown", "payment_id": payment_id}
             return dict(found)
 
+    def _keep_receipt(self, payment_id: str, receipt: dict[str, Any]) -> None:
+        self._proofs[payment_id] = receipt
+        try:
+            hashes = receipt_hashes(receipt)
+        except ValueError:
+            # Still served by its payment id; reconciliation names it.
+            return
+        for digest in hashes:
+            self._by_hash[digest] = payment_id
+
+    def receipt_by_hash(self, digest: str) -> dict[str, Any] | None:
+        """Holder copy of the receipt whose receipt or action hash is ``digest``.
+
+        Args:
+            digest: Lowercase hex receipt hash or certified action hash.
+
+        Returns:
+            What ``proof_receipt`` returns for that receipt's payment, or None
+            when no receipt has that hash. This is the holder copy: a public
+            route must present it as the auditor copy before serving it.
+        """
+        with self._lock:
+            payment_id = self._by_hash.get(digest)
+        return None if payment_id is None else self.proof_receipt(payment_id)
+
     def proof_receipt(self, payment_id: str) -> dict[str, Any] | None:
         """Holder copy of a confirmed payment's proof receipt.
 
@@ -1601,7 +1629,7 @@ class PaymentDesk:
         if payment_id is not None:
             self._receipts[payment_id] = result
             if receipt is not None:
-                self._proofs[payment_id] = receipt
+                self._keep_receipt(payment_id, receipt)
         if bound is not None:
             for name, value in changes.items():
                 setattr(bound, name, value)

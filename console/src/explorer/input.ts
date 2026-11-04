@@ -5,13 +5,16 @@ export type Pasted =
   | { kind: "receipt"; value: unknown }
   | { kind: "certificate"; token: string }
   | { kind: "payment"; id: string }
+  | { kind: "hash"; hash: string }
   | { kind: "line"; seq: number; paymentId: string | null }
   | { kind: "unknown"; reason: string };
 
 // A desk payment id, or the bank's transfer id when a sandbox rail paid it.
 const PAYMENT = /^(?:pay:[0-9]{6,}|(?:sandbox_)?account_transfer_[A-Za-z0-9]{1,64})$/;
+// A receipt hash or a certified action hash; the server looks up nothing shorter.
+const HASH = /^[0-9a-fA-F]{64}$/;
 const COMPACT_JWS = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
-const REFUSED = "Paste a receipt, a certificate, a payment id or a console line";
+const REFUSED = "Paste a receipt, a certificate, a payment id, a receipt or action hash, or a console line";
 
 function json(text: string): unknown {
   try {
@@ -25,6 +28,7 @@ function json(text: string): unknown {
 export function classify(text: string): Pasted {
   const trimmed = text.trim();
   if (PAYMENT.test(trimmed)) return { kind: "payment", id: trimmed };
+  if (HASH.test(trimmed)) return { kind: "hash", hash: trimmed.toLowerCase() };
   if (COMPACT_JWS.test(trimmed)) return { kind: "certificate", token: trimmed };
   const value = json(trimmed);
   if (typeof value !== "object" || value === null || Array.isArray(value)) return { kind: "unknown", reason: REFUSED };

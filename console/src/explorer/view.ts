@@ -1,8 +1,9 @@
 import { fromBase64, type Bytes } from "./bytes";
 import { anonymityText, exposure, NEVER_IN_A_RECEIPT, WITHHELD } from "./exposure";
 import { classify } from "./input";
+import { carries, receiptHash } from "./lookup";
 import { presentation } from "./present";
-import { fetchKeys, fetchReceipt, type Fetch, type PublishedKeys } from "./publish";
+import { fetchByHash, fetchKeys, fetchReceipt, type Fetch, type PublishedKeys } from "./publish";
 import { parseReceipt, ReceiptError, type Receipt } from "./receipt";
 import { disclosedOf, GROUPS, verdictOf, verifyCertificate, verifyReceipt, type Group, type Status, type StepResult, type Trust } from "./verify";
 
@@ -72,6 +73,8 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
   // The last receipt verified and the payment id it was looked up by (null when pasted).
   let shown: Receipt | null = null;
   let lookedUp: string | null = null;
+  // The hash that payment was found by; its holder copy must carry it too.
+  let lookedHash: string | null = null;
   // Each button press starts a run; a run that a later one superseded writes nothing.
   let runs = 0;
 
@@ -126,7 +129,8 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     if (receipt === null || disclosures?.status !== "pass") return [];
     const d = await disclosedOf(receipt, t.gateKey);
     if (d === null) return [];
-    return exposure(receipt, d).flatMap(([term, value]) => {
+    const rows: [string, string][] = [...exposure(receipt, d), ["Receipt hash", await receiptHash(receipt.sd)]];
+    return rows.flatMap(([term, value]) => {
       const row = [element(doc, "dt", term), element(doc, "dd", value)];
       // A withheld field reads as such in colour too, term and value alike.
       if (value === WITHHELD) for (const el of row) el.dataset.withheld = "";
@@ -134,8 +138,13 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     });
   }
 
-  // Verifies and shows `value`: the receipt it parsed to, or "superseded" when a later run took over and nothing was shown.
-  async function check(value: unknown, t: Trust, current: () => boolean): Promise<Receipt | null | "superseded"> {
+  // Verifies and shows `value`: the receipt it parsed to and whether its payment id is gate-signed, or "superseded"
+  // when a later run took over and nothing was shown.
+  async function check(
+    value: unknown,
+    t: Trust,
+    current: () => boolean,
+  ): Promise<{ receipt: Receipt | null; bound: boolean } | "superseded"> {
     let receipt: Receipt | null = null;
     try {
       receipt = parseReceipt(value);
@@ -147,43 +156,78 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     if (!current()) return "superseded";
     showSteps(results);
     reveals.replaceChildren(...rows);
-    return receipt;
+    return { receipt, bound: results.some((r) => r.step === "Receipt disclosures" && r.status === "pass") };
   }
 
-  async function lookUp(id: string, t: Trust, full: boolean, current: () => boolean): Promise<void> {
+  async function lookUp(id: string, t: Trust, full: boolean, current: () => boolean, hash: string | null = null): Promise<void> {
     const found = await fetchReceipt(id, fetchFn, full);
     if (!current()) return;
     if (found === "offline") return refuse(UNREACHABLE);
     if (found === "not found") return refuse(`No receipt for ${id} on this server`);
     if (found === "local only") return refuse(LOCAL_ONLY);
-    let answered: string | null = null;
+    let answer: Receipt | null = null;
     try {
-      answered = parseReceipt(found.value).payment_id;
+      answer = parseReceipt(found.value);
     } catch (error) {
       // A receipt that does not parse fails at Receipt format below.
       if (!(error instanceof ReceiptError)) throw error;
     }
-    if (answered !== null && answered !== id) {
-      return refuse(`The server answered with the receipt for ${answered}, not ${id}`);
+    if (answer !== null && answer.payment_id !== id) {
+      return refuse(`The server answered with the receipt for ${answer.payment_id}, not ${id}`);
     }
-    const receipt = await check(found.value, t, current);
-    if (receipt === "superseded") return;
-    shown = receipt;
+    if (answer !== null && hash !== null && !(await carries(answer, hash))) {
+      if (current()) refuse(`The server answered with a receipt that does not carry ${hash}`);
+      return;
+    }
+    const checked = await check(found.value, t, current);
+    if (checked === "superseded") return;
+    shown = checked.receipt;
     lookedUp = id;
+    lookedHash = hash;
+  }
+
+  async function findByHash(hash: string, t: Trust, current: () => boolean): Promise<void> {
+    const found = await fetchByHash(hash, fetchFn);
+    if (!current()) return;
+    if (found === "offline") return refuse(UNREACHABLE);
+    if (found === "not found") {
+      return refuse(`No receipt for ${hash} on this server (receipts are found by receipt hash, action hash or payment id)`);
+    }
+    let answer: Receipt | null = null;
+    try {
+      answer = parseReceipt(found.value);
+    } catch (error) {
+      // A receipt that does not parse fails at Receipt format below.
+      if (!(error instanceof ReceiptError)) throw error;
+    }
+    // The server only locates: an answer that does not carry the hash is not the receipt asked for.
+    if (answer !== null && !(await carries(answer, hash))) {
+      if (current()) refuse(`The server answered with a receipt that does not carry ${hash}`);
+      return;
+    }
+    const checked = await check(found.value, t, current);
+    if (checked === "superseded") return;
+    shown = checked.receipt;
+    // Only a payment id the gate signed may lead to a holder copy.
+    if (checked.bound && checked.receipt !== null) {
+      lookedUp = checked.receipt.payment_id;
+      lookedHash = hash;
+    }
   }
 
   async function verify(): Promise<void> {
     const current = start();
     shown = null;
     lookedUp = null;
+    lookedHash = null;
     const pasted = classify(paste.value);
     if (pasted.kind === "unknown") return refuse(pasted.reason);
     const t = trust();
     if (t === null) return refuse("The gate key must be 32 bytes of base64");
     switch (pasted.kind) {
       case "receipt": {
-        const receipt = await check(pasted.value, t, current);
-        if (receipt !== "superseded") shown = receipt;
+        const checked = await check(pasted.value, t, current);
+        if (checked !== "superseded") shown = checked.receipt;
         return;
       }
       case "certificate": {
@@ -193,6 +237,8 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
       }
       case "payment":
         return lookUp(pasted.id, t, false, current);
+      case "hash":
+        return findByHash(pasted.hash, t, current);
       case "line":
         if (pasted.paymentId === null) return refuse(`Line #${pasted.seq} carries no payment receipt`);
         return lookUp(pasted.paymentId, t, false, current);
@@ -205,7 +251,7 @@ export function mountExplorer(doc: Document, fetchFn: Fetch): Explorer {
     if (id === null) return refuse("Look a payment up by its id first; the holder copy comes from this desk");
     const t = trust();
     if (t === null) return refuse("The gate key must be 32 bytes of base64");
-    return lookUp(id, t, true, current);
+    return lookUp(id, t, true, current, lookedHash);
   }
 
   async function present(): Promise<void> {
