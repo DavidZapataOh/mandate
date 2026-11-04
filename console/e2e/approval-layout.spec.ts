@@ -78,12 +78,12 @@ test("at 1440x900 the panel ends under its last line, with no trailing empty box
   expect(gap).toBeLessThanOrEqual(16);
 });
 
-test("phase changes ease in 120 ms and not at all under reduced motion", async ({ page }) => {
+test("phase changes do not animate, with or without reduced motion", async ({ page }) => {
   await page.goto(`${desk.base}/console/`);
   agent(desk, "quote", "acme-991", "20000", "USD", "A-991");
   const status = page.locator("#approval .status");
   await expect(status).toHaveText("Waiting for the holder");
-  expect(await status.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe("0.12s");
+  expect(await status.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe("0s");
   await page.emulateMedia({ reducedMotion: "reduce" });
   expect(await status.evaluate((el) => getComputedStyle(el).transitionDuration)).toBe("0s");
 });

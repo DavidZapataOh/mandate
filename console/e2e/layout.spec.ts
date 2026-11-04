@@ -65,15 +65,15 @@ test("only the verdict moment moves: the alert and bubbles fade in fast, the led
   const motion = await page.evaluate(() => {
     const css = (sel: string) => {
       const s = getComputedStyle(document.querySelector(sel) as Element);
-      return [s.animationName, s.animationDuration, s.animationTimingFunction, s.transitionDuration].join(" | ");
+      return [s.animationName, s.transitionProperty, s.transitionDuration, s.transitionTimingFunction].join(" | ");
     };
     return { alert: css("#alert"), bubble: css("#overlay .bubble"), row: css("#ledger button"), counter: css("#c-denied") };
   });
   expect(motion).toEqual({
-    alert: "snap-in | 0.12s | cubic-bezier(0.16, 1, 0.3, 1) | 0s",
-    bubble: "snap-in | 0.12s | cubic-bezier(0.16, 1, 0.3, 1) | 0s",
-    row: "none | 0s | ease | 0s",
-    counter: "none | 0s | ease | 0s",
+    alert: "none | opacity | 0.12s | cubic-bezier(0.16, 1, 0.3, 1)",
+    bubble: "none | opacity | 0.12s | cubic-bezier(0.16, 1, 0.3, 1)",
+    row: "none | all | 0s | ease",
+    counter: "none | all | 0s | ease",
   });
 });
 

@@ -15,6 +15,8 @@ export interface DesignTokens {
 
 export const BRAND_COLORS = ["ink", "bone", "verify", "alert", "muted"] as const;
 
+export const BRAND_MOTION = ["seam-snap", "mismatch-open", "mismatch-shake", "alert-enter", "bubble-enter"] as const;
+
 const CSS_ID = "virtual:brand.css";
 const JS_ID = "virtual:brand";
 
@@ -40,11 +42,14 @@ export function readColors(markdown: string): Record<string, string> {
 /** The design sidecar's `extensions.motion` entries with their leading duration in milliseconds. */
 export function readMotion(sidecar: string): Motion[] {
   const parsed = JSON.parse(sidecar) as { extensions?: { motion?: readonly { name: string; value: string }[] } };
-  return (parsed.extensions?.motion ?? []).map(({ name, value }) => {
+  const motion = (parsed.extensions?.motion ?? []).map(({ name, value }) => {
     const m = /^(\d+)ms\b/.exec(value);
     if (!m) throw new Error(`tokens: motion ${name} has no duration`);
     return { name, value, ms: Number(m[1]) };
   });
+  const missing = BRAND_MOTION.find((name) => !motion.some((m) => m.name === name));
+  if (missing !== undefined) throw new Error(`tokens: design sidecar lacks motion ${missing}`);
+  return motion;
 }
 
 /** The tokens as custom properties on `:root`: colours first, then `--motion-<name>`. */

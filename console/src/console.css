@@ -9,9 +9,6 @@
   --stage-w: 1332px;
   /* In-world type follows the integer stage scale so it stays pinned to the pixels it labels. */
   --world-type: max(14px, calc(var(--scale) * 19px / 3));
-  /* The seam snaps: fast in, dead stop, no overshoot. */
-  --snap: cubic-bezier(0.16, 1, 0.3, 1);
-  --snap-ms: 120ms;
 }
 
 *,
@@ -246,7 +243,11 @@ main {
   background: none;
   text-align: left;
   pointer-events: auto;
-  animation: snap-in var(--snap-ms) var(--snap) both;
+  transition: opacity var(--motion-bubble-enter);
+
+  @starting-style {
+    opacity: 0;
+  }
 }
 
 .bubble .tag {
@@ -293,13 +294,13 @@ main {
   letter-spacing: -0.04em;
   white-space: nowrap;
   /* The box is already placed; only its ink arrives. */
-  animation: snap-in var(--snap-ms) var(--snap) both;
+  transition: opacity var(--motion-alert-enter);
 }
 
-@keyframes snap-in {
-  from {
-    opacity: 0;
-  }
+#alert[hidden] {
+  display: flex !important;
+  visibility: hidden;
+  opacity: 0;
 }
 
 .ledger-strip {
@@ -501,7 +502,6 @@ main {
   font-size: 16px;
   line-height: 20px;
   text-align: right;
-  transition: color var(--snap-ms) var(--snap);
 }
 
 #approval[data-phase="paid"] .status {
@@ -546,12 +546,11 @@ main {
   line-height: 20px;
 }
 
-/* Only colour eases between phases; the marks are drawn in currentColor so they follow it. */
+/* The marks are drawn in currentColor so they follow the phase colour. */
 #approval .step {
   display: flex;
   align-items: center;
   color: var(--muted);
-  transition: color var(--snap-ms) var(--snap);
 }
 
 #approval .step + .step::before {
@@ -666,7 +665,6 @@ main {
   grid-area: gate;
   min-width: 0;
   color: var(--muted);
-  transition: color var(--snap-ms) var(--snap);
   font-size: 14px;
   line-height: 20px;
   overflow-wrap: anywhere;
@@ -1311,13 +1309,5 @@ button.scenario .badge {
 
   #approval dd:nth-of-type(n) {
     grid-column: 2;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    transition: none !important;
   }
 }

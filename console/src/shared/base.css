@@ -34,3 +34,11 @@ input,
 textarea {
   font-family: "JetBrains Mono", monospace;
 }
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

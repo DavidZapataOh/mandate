@@ -102,3 +102,7 @@ test("every page head carries the icon set, manifest, theme colour and font prel
     ["link", { rel: "preload", as: "font", type: "font/woff2", crossorigin: "", href: "/console/assets/inter-latin-400-normal-a1.woff2" }],
   ]);
 });
+
+test("refuses a sidecar that drops one of the seal's motions", () => {
+  expect(() => readMotion(motion(SEAL.slice(1)))).toThrow("tokens: design sidecar lacks motion seam-snap");
+});

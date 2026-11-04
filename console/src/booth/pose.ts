@@ -1,7 +1,9 @@
+import { MOTION_MS } from "virtual:brand";
 import type { SealInput } from "../scene/cues";
 
-export const SNAP_MS = 133;
-export const SHAKE_MS = 80;
+export const SNAP_MS = MOTION_MS["seam-snap"];
+export const SHAKE_MS = MOTION_MS["mismatch-shake"];
+export const OPEN_MS = MOTION_MS["mismatch-open"];
 
 export interface SealPose {
   gap: number;
@@ -20,7 +22,7 @@ export function sealPose(state: SealInput, ms: number): SealPose {
     return { gap: Math.max(0, OPEN * (1 - ms / SNAP_MS)), shakeX: 0, seam: "verify" };
   }
   return {
-    gap: Math.min(REFUSED, OPEN + (OPEN * ms) / 100),
+    gap: Math.min(REFUSED, OPEN + (OPEN * ms) / OPEN_MS),
     shakeX: SHAKE[Math.floor(ms / SHAKE_MS)] ?? 0,
     seam: "alert",
   };

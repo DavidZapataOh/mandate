@@ -447,6 +447,31 @@
         "name": "command-drawer",
         "value": "200ms, 16px",
         "purpose": "Forensic drawer fading and sliding in from the right on Command."
+      },
+      {
+        "name": "seam-snap",
+        "value": "133ms linear",
+        "purpose": "Seal halves close from 8 to 0 units of the mark's 256 grid in 8 frames at 60 fps and stop dead: no overshoot, no settle; the green seam is lit from the first frame."
+      },
+      {
+        "name": "mismatch-open",
+        "value": "100ms linear",
+        "purpose": "On a denial the halves part from 8 to 16 units in 6 frames and stay apart; the Alert bar replaces the seam from the first frame."
+      },
+      {
+        "name": "mismatch-shake",
+        "value": "80ms steps(1, end)",
+        "purpose": "Four lateral beats of 6 units, left first (-6, +6, -6, +6), then still from 320 ms."
+      },
+      {
+        "name": "alert-enter",
+        "value": "120ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The alert bar fades from opacity 0 to 1 in its final box, together with the seal's verdict; nothing slides."
+      },
+      {
+        "name": "bubble-enter",
+        "value": "120ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Sentence bubbles fade from opacity 0 to 1 in their final box."
       }
     ],
     "breakpoints": [
