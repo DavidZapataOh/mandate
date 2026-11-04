@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from bank.api import Bank
+from bank.conftest import RecordingRail
 from bank.verifier import Verifier
 from gate.cava import Freshness, action_commitment
 from gate.policy import Intent, Policy, Rule, Verdict
@@ -274,3 +275,29 @@ def test_the_bank_settles_the_salted_hash_the_gate_certified(keypair):
     assert result.salt == b"\x0c" * 32
     assert result.payment is not None
     assert result.payment.action_hash == result.event.action_hash == SDK_COMMITMENT
+
+
+def test_issued_sees_the_certificate_before_the_bank(keypair):
+    priv, pub = keypair
+    rail = RecordingRail()
+    seen = []
+
+    def issued(certificate, action, salt):
+        seen.append((certificate.count("."), action.operation, salt, len(rail.calls)))
+
+    result = run_governed(_request(priv), rail, Verifier(pub), issued=issued)
+    assert result.certificate is not None
+    assert seen == [(2, "transfer", result.salt, 0)]
+
+
+def test_issued_is_skipped_without_a_certificate(keypair):
+    priv, pub = keypair
+    seen = []
+    bank = Bank({"checking-881": 50000, "acme-991": 0})
+    run_governed(
+        _request(priv, Mode.SHADOW),
+        bank,
+        Verifier(pub),
+        issued=lambda certificate, action, salt: seen.append(certificate),
+    )
+    assert seen == []

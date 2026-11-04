@@ -47,8 +47,8 @@ def zk_desk(make_desk, tmp_path):
             {"checking-881": ACCT},
         )
         return make_desk(
-            clock=lambda: NOW,
-            bank=RecordingRail(balance=50000),
+            clock=extra.pop("clock", lambda: NOW),
+            bank=extra.pop("bank", RecordingRail(balance=50000)),
             intents=(DEMO_INTENT,),
             zktls=setup,
             **extra,
@@ -320,3 +320,24 @@ def test_a_proof_for_an_intent_paid_meanwhile_is_refused(
     certified = _signed(desk, paid)["cava"]["evidence_refs"][2]
     assert certified.startswith("ev:cooperative-signed:")
     assert desk.intent_receipt("i:000001")["evidence_ref"] == certified
+
+
+@pytest.mark.parametrize(("later", "paid"), [(295, True), (296, False)])
+def test_a_kept_proof_expires_before_the_bank_is_called(
+    zk_desk, sign_quote, later, paid
+):
+    clock = [NOW]
+    rail = RecordingRail(balance=50000)
+    desk, holder = zk_desk(holder_key=HOLDER, clock=lambda: clock[0], bank=rail)
+    assert desk.record_funds_proof("i:000001", PROOF)["status"] == "proven"
+    clock[0] = NOW + later
+    q = desk.quote("acme-991", 20000, "USD", "A-991", intent_id="i:000001")
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    done = desk.confirm(q["quote_id"])
+    if paid:
+        assert done["status"] == "confirmed"
+        return
+    assert (done["status"], done["reason"]) == ("denied", "zktls: proof expired")
+    assert rail.calls == []
+    assert desk.intent_receipt("i:000001")["status"] == "signed"
+    assert json.loads(desk.registry.entry(1).body)["reason"] == "zktls: proof expired"

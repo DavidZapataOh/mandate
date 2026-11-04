@@ -1,6 +1,15 @@
-"""In-memory bank ledger with integer-cents payments."""
+"""Simulated bank ledger with integer-cents payments, in memory or durable."""
 
+import dataclasses
+import json
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from gate.state import StateStore
+
+# gate.state.NEVER_EXPIRES: the bank never imports gate at run time.
+_NEVER_EXPIRES = 2**62
 
 
 class ReplayError(Exception):
@@ -76,19 +85,41 @@ class Bank:
 
     Args:
         initial: Mapping of account name to opening balance in integer cents.
+        state: Durable store the ledger loads from and writes through to;
+            ``initial`` is used only while it holds no balances. None keeps
+            the ledger in memory.
 
     Raises:
         ValueError: If any opening balance is negative.
     """
 
-    def __init__(self, initial: dict[str, int]) -> None:
+    def __init__(
+        self, initial: dict[str, int], state: "StateStore | None" = None
+    ) -> None:
         for balance in initial.values():
             if balance < 0:
                 raise ValueError("initial balance must be >= 0")
+        self._state = state
         self._balances = dict(initial)
         self._payments: dict[str, Payment] = {}
         self._keys: dict[str, Payment] = {}
-        self._seq = 0
+        if state is not None:
+            self._load(state)
+        self._seq = len(self._payments)
+
+    def _load(self, state: "StateStore") -> None:
+        stored = state.records("balance")
+        if stored:
+            self._balances = {acct: int(cents) for acct, cents in stored}
+        else:
+            with state.transaction():
+                for acct, cents in self._balances.items():
+                    state.put_record("balance", acct, str(cents))
+        for payment_id, value in state.records("payment"):
+            payment = Payment(**json.loads(value))
+            self._payments[payment_id] = payment
+            if payment.idempotency_key is not None:
+                self._keys[payment.idempotency_key] = payment
 
     @property
     def rail(self) -> str:
@@ -124,9 +155,8 @@ class Bank:
             raise ValueError(f"unknown account: {request.to_acct}")
         if self._balances[request.from_acct] < request.amount_cents:
             raise ValueError(f"insufficient funds: {request.from_acct}")
-        self._seq += 1
         payment = Payment(
-            payment_id=f"pay:{self._seq:06d}",
+            payment_id=f"pay:{self._seq + 1:06d}",
             from_acct=request.from_acct,
             to_acct=request.to_acct,
             amount_cents=request.amount_cents,
@@ -135,12 +165,36 @@ class Bank:
             action_hash=action_hash,
             idempotency_key=idempotency_key,
         )
+        if self._state is not None:
+            self._write(self._state, request, payment)
+        self._seq += 1
         if idempotency_key is not None:
             self._keys[idempotency_key] = payment
         self._balances[request.from_acct] -= request.amount_cents
         self._balances[request.to_acct] += request.amount_cents
         self._payments[payment.payment_id] = payment
         return payment
+
+    def _write(
+        self, state: "StateStore", request: PaymentRequest, payment: Payment
+    ) -> None:
+        """Commit the key, both balances and the payment together, or none."""
+        cents = request.amount_cents
+        with state.transaction():
+            key = payment.idempotency_key
+            if key is not None and not state.consume("idem", key, _NEVER_EXPIRES):
+                raise ReplayError(key)
+            # One dict, so paying an account to itself nets out as in memory.
+            moved = {a: self._balances[a] for a in (request.from_acct, request.to_acct)}
+            moved[request.from_acct] -= cents
+            moved[request.to_acct] += cents
+            for acct, balance in moved.items():
+                state.put_record("balance", acct, str(balance))
+            state.put_record(
+                "payment",
+                payment.payment_id,
+                json.dumps(dataclasses.asdict(payment), sort_keys=True),
+            )
 
     def reconcile(
         self, request: PaymentRequest, action_hash: str, idempotency_key: str

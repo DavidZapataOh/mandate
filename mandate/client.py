@@ -1,6 +1,7 @@
 """Governed run: decide on a raw call, then execute against the bank."""
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -79,13 +80,22 @@ class RunResult:
     salt: bytes | None = field(default=None, repr=False)
 
 
-def run_governed(request: RunRequest, bank: BankRail, verifier: Verifier) -> RunResult:
+def run_governed(
+    request: RunRequest,
+    bank: BankRail,
+    verifier: Verifier,
+    issued: Callable[[str, CavaAction, bytes], None] | None = None,
+) -> RunResult:
     """Decide on the call, then verify and execute the payment when allowed.
 
     Args:
         request: All inputs for the governed run.
         bank: Rail that moves the money.
         verifier: Certificate verifier bound to the issuer's public key.
+        issued: Called once with the certificate, the canonical action and
+            the action salt after the gate issued the certificate and before
+            the bank verifier runs; never when the gate denied. An exception
+            it raises stops the run before the bank is called.
 
     Returns:
         The run result; denied or shadowed runs carry no payment.
@@ -119,6 +129,8 @@ def run_governed(request: RunRequest, bank: BankRail, verifier: Verifier) -> Run
             action,
             decision.salt,
         )
+    if issued is not None:
+        issued(decision.certificate, action, decision.salt)
     bank_result = verifier.verify_and_execute(
         bank, decision.certificate, to_proposed(action), request.now, decision.salt
     )

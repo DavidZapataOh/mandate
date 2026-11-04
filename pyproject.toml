@@ -90,6 +90,7 @@ module = [
     "swarm.test_console_attacks",
     "swarm.test_console_line",
     "swarm.test_desk",
+    "swarm.test_desk_state",
     "swarm.test_desk_zktls",
     "swarm.test_holder_proof",
     "swarm.test_server_zktls",
