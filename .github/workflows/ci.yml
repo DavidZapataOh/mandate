@@ -42,7 +42,8 @@ jobs:
           node-version: "24"
       - run: pip install -r requirements-dev.txt
       - run: pip install -e .
-      - run: pytest
+      - run: coverage run -m pytest
+      - run: coverage report
   console:
     runs-on: ubuntu-latest
     defaults:
@@ -64,7 +65,7 @@ jobs:
         working-directory: .
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run test
+      - run: npm run coverage
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e

@@ -139,6 +139,17 @@ ignore_missing_imports = true
 module = ["opentimestamps.*"]
 ignore_missing_imports = true
 
+[tool.coverage.run]
+branch = true
+source = ["bank", "bench", "demo", "evidence", "gate", "mandate", "swarm", "zk"]
+omit = ["*/test_*.py", "*/conftest.py", "demo/swarm_repo/*"]
+
+[tool.coverage.report]
+fail_under = 93
+precision = 2
+skip_covered = true
+show_missing = true
+
 [tool.pytest.ini_options]
 testpaths = ["."]
 addopts = "-m 'not live'"

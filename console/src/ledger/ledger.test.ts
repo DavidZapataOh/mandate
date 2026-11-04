@@ -91,4 +91,22 @@ describe("mountLedger", () => {
     // The badge follows the sentence, so the time and actor columns start alike on every row.
     expect([...buttons[2]!.children].map((c) => c.getAttribute("class"))).toEqual(["t", "who", "text", "rail", "hash", "verdict", "icon"]);
   });
+
+  it("keeps the rows it already drew when a line arrives", () => {
+    mountLedger(list, store, () => {});
+    for (const seq of [1, 2, 3]) store.add(parseLine(patch(ATTACK, { seq })));
+    const before = [...list.querySelectorAll("button")];
+    store.add(parseLine(patch(ATTACK, { seq: 4 })));
+    const after = [...list.querySelectorAll("button")];
+    expect(after.map((b) => b.dataset.seq)).toEqual(["4", "3", "2", "1"]);
+    after.slice(1).forEach((button, i) => expect(button).toBe(before[i]));
+  });
+
+  it("redraws every row when the mode changes", () => {
+    const ledger = mountLedger(list, store, () => {});
+    store.add(parseLine(patch(ATTACK, { seq: 1 })));
+    const before = list.querySelector("button");
+    ledger.setMode("forensic");
+    expect(list.querySelector("button")).not.toBe(before);
+  });
 });

@@ -76,17 +76,25 @@ export function mountLedger(
   onOpen: (seq: number) => void,
 ): { setMode(mode: Mode): void } {
   let mode: Mode = "game";
+  // A row is a pure function of its line and the mode, and the store hands out one frozen line per seq.
+  const drawn = new Map<ConsoleLine, HTMLLIElement>();
   const render = (lines: readonly ConsoleLine[]): void => {
     const active = document.activeElement;
     // Every line redraws the list; a keyboard user stays on the row they were on.
     const kept = active instanceof HTMLElement && list.contains(active) ? active.closest<HTMLElement>("[data-seq]")?.dataset.seq : undefined;
     list.dataset.mode = mode;
-    list.replaceChildren(
-      ...lines
-        .slice(-LEDGER_ROWS)
-        .reverse()
-        .map((line) => row(line, mode, onOpen)),
-    );
+    const visible = lines.slice(-LEDGER_ROWS);
+    const rows = visible.map((line) => {
+      let item = drawn.get(line);
+      if (item === undefined) {
+        item = row(line, mode, onOpen);
+        drawn.set(line, item);
+      }
+      return item;
+    });
+    const shown = new Set(visible);
+    for (const line of drawn.keys()) if (!shown.has(line)) drawn.delete(line);
+    list.replaceChildren(...rows.reverse());
     if (kept !== undefined) list.querySelector<HTMLElement>(`button[data-seq="${kept}"]`)?.focus({ preventScroll: true });
   };
   store.subscribe(render);
@@ -94,6 +102,7 @@ export function mountLedger(
   return {
     setMode(next) {
       mode = next;
+      drawn.clear();
       render(store.lines());
     },
   };

@@ -15,5 +15,15 @@ export default defineConfig({
       },
     },
   },
-  test: { environment: "jsdom", include: ["src/**/*.test.ts", "tools/**/*.test.ts"] },
+  test: {
+    environment: "jsdom",
+    include: ["src/**/*.test.ts", "tools/**/*.test.ts"],
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts", "tools/**/*.ts"],
+      exclude: ["**/*.test.ts", "**/__fixtures__/**"],
+      reportsDirectory: "coverage",
+      thresholds: { lines: 83, statements: 81, branches: 81, functions: 80 },
+    },
+  },
 });
