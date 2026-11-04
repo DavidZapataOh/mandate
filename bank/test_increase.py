@@ -10,6 +10,7 @@ from bank.api import PaymentRequest, RailError, ReplayError
 from bank.conftest import SENTINEL_KEY, Cassette, named_accounts, recorded
 from bank.credentials import BANK_KEY_ENV
 from bank.increase import IncreaseRail, ensure_accounts, sandbox_client, setup_cli
+from bank.reconcile import BankTransfer
 
 
 def test_client_ignores_a_base_url_from_the_environment(monkeypatch):
@@ -520,3 +521,63 @@ def test_the_client_never_follows_a_redirect():
         ("POST", "sandbox.increase.com", "/account_transfers"),
         ("GET", "sandbox.increase.com", "/account_transfers"),
     ]
+
+
+SINCE = "2027-01-15T08:16:40Z"
+
+
+def _page(ids, cursor):
+    body = recorded("account_transfers_list")["body"]
+    row = body["data"][0]
+    data = [dict(row, id=i, idempotency_key=f"mandate-cert-{i}") for i in ids]
+    return (200, {"data": data, "next_cursor": cursor})
+
+
+def test_listing_is_read_only_and_pages_to_the_end():
+    rail, cassette = _rail(_page(["t1"], "c2"), _page(["t2"], None))
+    listed = rail.transfers("checking-881", SINCE)
+    assert [t.transfer_id for t in listed] == ["t1", "t2"]
+    assert [(r.method, str(r.url)) for r in cassette.requests] == [
+        (
+            "GET",
+            "https://sandbox.increase.com/account_transfers?account_id=account_payer"
+            "&created_at.on_or_after=2027-01-15T08%3A16%3A40Z&limit=100",
+        ),
+        (
+            "GET",
+            "https://sandbox.increase.com/account_transfers?account_id=account_payer"
+            "&created_at.on_or_after=2027-01-15T08%3A16%3A40Z&limit=100&cursor=c2",
+        ),
+    ]
+
+
+def test_a_listed_transfer_keeps_the_banks_fields():
+    rail, _ = _rail("account_transfers_list")
+    row = recorded("account_transfers_list")["body"]["data"][0]
+    fields = ("id", "amount", "status", "idempotency_key", "created_at")
+    want = BankTransfer(*(row[f] for f in fields))
+    assert rail.transfers("checking-881", SINCE)[0] == want
+
+
+def test_lookup_asks_for_exactly_that_key():
+    rail, cassette = _rail("account_transfers_by_key", "account_transfers_none")
+    key = recorded("account_transfers_by_key")["body"]["data"][0]["idempotency_key"]
+    assert rail.transfer_by_key(key).idempotency_key == key
+    assert rail.transfer_by_key("mandate-cert-none") is None
+    assert [r.url.params["idempotency_key"] for r in cassette.requests] == [
+        key,
+        "mandate-cert-none",
+    ]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.ConnectError("down"),
+        (500, {"type": "internal_server_error", "status": 500}),
+    ],
+)
+def test_listing_failures_are_unavailable(answer):
+    rail, _ = _rail(answer)
+    with pytest.raises(RailError, match="^bank: unavailable$"):
+        rail.transfers("checking-881", SINCE)

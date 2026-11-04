@@ -11,6 +11,7 @@ from increase import Increase
 from bank.api import Payment, PaymentRequest
 from bank.increase import sandbox_client
 from bank.rail import SANDBOX
+from bank.reconcile import BankTransfer
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "increase"
 SENTINEL_KEY = "sandbox_key_SENTINEL_7f3a9c"
@@ -43,6 +44,9 @@ class RecordingRail:
         self.found = found
         self.calls: list[tuple[PaymentRequest, str, str | None]] = []
         self.lookups: list[tuple[PaymentRequest, str, str | None]] = []
+        self.provider = "increase"
+        self.listed: list[BankTransfer] = []
+        self.listed_error: Exception | None = None
 
     @property
     def rail(self) -> str:
@@ -71,6 +75,18 @@ class RecordingRail:
         if self.found is None:
             return None
         return self._payment(request, action_hash, idempotency_key)
+
+    def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
+        """Raise the configured listing error or return ``listed``."""
+        if self.listed_error is not None:
+            raise self.listed_error
+        return self.listed
+
+    def transfer_by_key(self, key: str) -> BankTransfer | None:
+        """Raise the configured listing error or find ``listed`` by key."""
+        if self.listed_error is not None:
+            raise self.listed_error
+        return next((t for t in self.listed if t.idempotency_key == key), None)
 
     def _payment(
         self, request: PaymentRequest, action_hash: str, idempotency_key: str | None

@@ -1,0 +1,116 @@
+{
+  "body": {
+    "data": [
+      {
+        "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+        "amount": 100,
+        "approval": null,
+        "cancellation": null,
+        "created_at": "2026-11-04T09:52:15Z",
+        "created_by": {
+          "api_key": {
+            "description": "Mandate bank verifier"
+          },
+          "category": "api_key"
+        },
+        "currency": "USD",
+        "description": "Mandate capture mandate-capture-ca89bf635ce41e99",
+        "destination_account_id": "sandbox_account_l3oh3bxybri8accqq06i",
+        "destination_transaction_id": "sandbox_transaction_f2wt1a5536dqy7frqr5g",
+        "id": "sandbox_account_transfer_r60spi9of1y1sd2p3xai",
+        "idempotency_key": "mandate-capture-ca89bf635ce41e99",
+        "network": "account",
+        "path": "/transfers/sandbox_account_transfer_r60spi9of1y1sd2p3xai",
+        "pending_transaction_id": null,
+        "status": "complete",
+        "transaction_id": "sandbox_transaction_t6uqfw9jtcjr1f2spyug",
+        "type": "account_transfer",
+        "unique_identifier": "mandate-capture-ca89bf635ce41e99"
+      },
+      {
+        "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+        "amount": 100,
+        "approval": null,
+        "cancellation": null,
+        "created_at": "2026-11-04T09:05:25Z",
+        "created_by": {
+          "api_key": {
+            "description": "Mandate bank verifier"
+          },
+          "category": "api_key"
+        },
+        "currency": "USD",
+        "description": "Mandate capture mandate-capture-564e03dad9403191",
+        "destination_account_id": "sandbox_account_l3oh3bxybri8accqq06i",
+        "destination_transaction_id": "sandbox_transaction_brmcmsxjplynuf6g65em",
+        "id": "sandbox_account_transfer_pwg2ico7g8uz3xli6rdl",
+        "idempotency_key": "mandate-capture-564e03dad9403191",
+        "network": "account",
+        "path": "/transfers/sandbox_account_transfer_pwg2ico7g8uz3xli6rdl",
+        "pending_transaction_id": null,
+        "status": "complete",
+        "transaction_id": "sandbox_transaction_5r1cntiwd5ihfw0khlsg",
+        "type": "account_transfer",
+        "unique_identifier": "mandate-capture-564e03dad9403191"
+      },
+      {
+        "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+        "amount": 100,
+        "approval": null,
+        "cancellation": null,
+        "created_at": "2026-11-04T08:59:09Z",
+        "created_by": {
+          "api_key": {
+            "description": "Mandate bank verifier"
+          },
+          "category": "api_key"
+        },
+        "currency": "USD",
+        "description": "Mandate capture mandate-capture-49b1a973948738af",
+        "destination_account_id": "sandbox_account_l3oh3bxybri8accqq06i",
+        "destination_transaction_id": "sandbox_transaction_mtuclo61cs0c89c7o5fg",
+        "id": "sandbox_account_transfer_cmx424oze2uy56nm6q6h",
+        "idempotency_key": "mandate-capture-49b1a973948738af",
+        "network": "account",
+        "path": "/transfers/sandbox_account_transfer_cmx424oze2uy56nm6q6h",
+        "pending_transaction_id": null,
+        "status": "complete",
+        "transaction_id": "sandbox_transaction_sca1vn5wcndhpkqzsro5",
+        "type": "account_transfer",
+        "unique_identifier": "mandate-capture-49b1a973948738af"
+      },
+      {
+        "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+        "amount": 100,
+        "approval": null,
+        "cancellation": null,
+        "created_at": "2026-11-04T08:58:56Z",
+        "created_by": {
+          "api_key": {
+            "description": "Mandate bank verifier"
+          },
+          "category": "api_key"
+        },
+        "currency": "USD",
+        "description": "Mandate capture mandate-capture-7538025f98373f57",
+        "destination_account_id": "sandbox_account_l3oh3bxybri8accqq06i",
+        "destination_transaction_id": "sandbox_transaction_r8e8nv5hlswsw4pb0uxe",
+        "id": "sandbox_account_transfer_4nicrwgr1kludye5vcc1",
+        "idempotency_key": "mandate-capture-7538025f98373f57",
+        "network": "account",
+        "path": "/transfers/sandbox_account_transfer_4nicrwgr1kludye5vcc1",
+        "pending_transaction_id": null,
+        "status": "complete",
+        "transaction_id": "sandbox_transaction_aqz7fhxoprn68whlfbap",
+        "type": "account_transfer",
+        "unique_identifier": "mandate-capture-7538025f98373f57"
+      }
+    ],
+    "next_cursor": null,
+    "response_metadata": {
+      "next_cursor": null
+    }
+  },
+  "replayed": null,
+  "status": 200
+}

@@ -1,0 +1,11 @@
+{
+  "body": {
+    "data": [],
+    "next_cursor": null,
+    "response_metadata": {
+      "next_cursor": null
+    }
+  },
+  "replayed": null,
+  "status": 200
+}

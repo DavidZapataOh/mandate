@@ -5,6 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bank.reconcile import BankTransfer
+
 if TYPE_CHECKING:
     from gate.state import StateStore
 
@@ -80,6 +82,16 @@ class Payment:
     idempotency_key: str | None = None
 
 
+def _transfer(payment: Payment) -> BankTransfer:
+    return BankTransfer(
+        payment.payment_id,
+        payment.amount_cents,
+        "complete",
+        payment.idempotency_key,
+        "",
+    )
+
+
 class Bank:
     """Ledger holding account balances and recorded payments.
 
@@ -125,6 +137,37 @@ class Bank:
     def rail(self) -> str:
         """Label of this rail: the in-memory ledger is always simulated."""
         return "simulated"
+
+    @property
+    def provider(self) -> None:
+        """No bank holds the simulated ledger."""
+        return None
+
+    def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
+        """List the payments that left an account.
+
+        Args:
+            from_acct: Source account name.
+            since: Ignored: the ledger is no older than the store.
+
+        Returns:
+            The payments from that account, with no creation time.
+        """
+        return [
+            _transfer(p) for p in self._payments.values() if p.from_acct == from_acct
+        ]
+
+    def transfer_by_key(self, key: str) -> BankTransfer | None:
+        """Return the payment recorded under an idempotency key.
+
+        Args:
+            key: Idempotency key.
+
+        Returns:
+            The payment as a transfer, or None when none was made under it.
+        """
+        payment = self._keys.get(key)
+        return None if payment is None else _transfer(payment)
 
     def execute(
         self,

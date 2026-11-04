@@ -22,6 +22,7 @@ from increase.types import AccountTransfer
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
 from bank.credentials import BANK_KEY_ENV, take_bank_key
 from bank.rail import SANDBOX
+from bank.reconcile import BankTransfer
 
 SANDBOX_URL = "https://sandbox.increase.com"
 PROVIDER = "increase"
@@ -100,6 +101,11 @@ class IncreaseRail:
     def rail(self) -> str:
         """Label of this rail: always the sandbox."""
         return SANDBOX
+
+    @property
+    def provider(self) -> str:
+        """Bank that holds the transfers: always Increase."""
+        return PROVIDER
 
     @classmethod
     def connect(cls, client: Increase) -> "IncreaseRail":
@@ -292,6 +298,54 @@ class IncreaseRail:
             idempotency_key=idempotency_key,
         )
 
+    def transfers(self, from_acct: str, since: str) -> list[BankTransfer]:
+        """List the transfers that left an account since a time.
+
+        Reads only: the listing follows every page and writes nothing.
+
+        Args:
+            from_acct: Mandate account name.
+            since: ISO 8601 UTC time; transfers created at or after it count.
+
+        Returns:
+            The transfers, as the bank reports them.
+
+        Raises:
+            ValueError: If the account is unknown.
+            RailError: If the bank cannot be read (``bank: unavailable``).
+        """
+        account_id = self.account_id(from_acct)
+        try:
+            listed = list(
+                self._client.account_transfers.list(
+                    account_id=account_id,
+                    created_at={"on_or_after": since},
+                    limit=100,
+                )
+            )
+        except (APIConnectionError, APIStatusError):
+            raise RailError("bank: unavailable") from None
+        return [_held(transfer) for transfer in listed]
+
+    def transfer_by_key(self, key: str) -> BankTransfer | None:
+        """Return the transfer the bank holds under an idempotency key.
+
+        Args:
+            key: Idempotency key.
+
+        Returns:
+            The transfer, or None when the bank holds none under the key.
+
+        Raises:
+            RailError: If the bank cannot be read (``bank: unavailable``).
+        """
+        try:
+            page = self._client.account_transfers.list(idempotency_key=key)
+            found = next(iter(page), None)
+        except (APIConnectionError, APIStatusError):
+            raise RailError("bank: unavailable") from None
+        return None if found is None else _held(found)
+
     def get_balance(self, acct: str) -> int:
         """Return the available balance of an account in integer cents.
 
@@ -310,6 +364,16 @@ class IncreaseRail:
             return self._client.accounts.balance(account_id).available_balance
         except (APIConnectionError, APIStatusError):
             raise RailError("bank: unavailable") from None
+
+
+def _held(transfer: AccountTransfer) -> BankTransfer:
+    return BankTransfer(
+        transfer.id,
+        transfer.amount,
+        transfer.status,
+        transfer.idempotency_key,
+        transfer.created_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    )
 
 
 def _refusal(exc: APIStatusError) -> bool:

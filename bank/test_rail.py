@@ -2,6 +2,7 @@ import pytest
 
 from bank.api import Bank, Payment, PaymentRequest, ReplayError
 from bank.rail import bank_view, idempotency_key
+from bank.reconcile import BankTransfer
 
 REQUEST = PaymentRequest("checking-881", "acme-991", 20000, "USD", "A-991")
 
@@ -62,3 +63,19 @@ def test_bank_view_names_rail_and_transfer():
         "idempotency_key": "mandate-cert-j1",
     }
     assert bank_view(None) is None
+
+
+def test_simulated_ledger_lists_its_payments():
+    bank = Bank({"checking-881": 50000, "acme-991": 0})
+    bank.execute(REQUEST, "h1", "mandate-cert-k1")
+    assert bank.transfers("checking-881", "ignored") == [
+        BankTransfer("pay:000001", 20000, "complete", "mandate-cert-k1", "")
+    ]
+    assert bank.transfers("acme-991", "ignored") == []
+
+
+def test_simulated_ledger_finds_a_payment_by_key():
+    bank = Bank({"checking-881": 50000, "acme-991": 0})
+    bank.execute(REQUEST, "h1", "mandate-cert-k1")
+    assert bank.transfer_by_key("mandate-cert-k1").transfer_id == "pay:000001"
+    assert bank.transfer_by_key("mandate-cert-k2") is None

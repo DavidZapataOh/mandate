@@ -112,6 +112,34 @@ def test_capture_sandbox_responses():
             assert set(record["body"]) == set(body), name
 
 
+@pytest.mark.live
+def test_capture_reconcile_responses():
+    key = _key()
+    recorder = _Recorder()
+    client = sandbox_client(
+        key, httpx.Client(event_hooks={"response": [recorder]}), max_retries=0
+    )
+    payer = next(a for a in client.accounts.list() if a.name == CAPTURE[0])
+    saved = {}
+    listed = list(client.account_transfers.list(account_id=payer.id, limit=100))
+    saved["account_transfers_list"] = recorder.last
+    assert listed, "run test_capture_sandbox_responses first"
+    known = listed[0].idempotency_key
+    list(client.account_transfers.list(idempotency_key=known))
+    saved["account_transfers_by_key"] = recorder.last
+    list(client.account_transfers.list(idempotency_key="mandate-capture-none"))
+    saved["account_transfers_none"] = recorder.last
+    assert saved["account_transfers_none"]["body"]["data"] == []
+    for name, record in saved.items():
+        text = json.dumps(record, indent=2, sort_keys=True) + "\n"
+        assert key not in text
+        if os.environ.get("MANDATE_CAPTURE") == "1":
+            (FIXTURES / f"{name}.json").write_text(text)
+        else:
+            body = json.loads((FIXTURES / f"{name}.json").read_text())["body"]
+            assert set(record["body"]) == set(body), name
+
+
 DEMO = ("checking-881", "acme-991")
 SANDBOX_TRANSFER = re.compile(r"(sandbox_)?account_transfer_[A-Za-z0-9]{1,64}")
 
