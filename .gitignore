@@ -19,3 +19,4 @@ coverage.xml
 node_modules/
 test-results/
 playwright-report/
+zktls/target/
