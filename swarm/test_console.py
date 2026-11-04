@@ -13,10 +13,12 @@ from bank.api import Bank
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from swarm import console
-from swarm.console import AttackRunner
+from swarm.console import AttackRunner, DeployRunner
 from swarm.console_line import ConsoleLine, console_line_json, read_console_line
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
+from swarm.nimbus import PINNED as NIMBUS_PINNED
+from swarm.nimbus import NimbusStep
 from swarm.redteam import PINNED, AttackKind
 from swarm.server import build_server
 from swarm.test_console_line import RECORD
@@ -280,3 +282,86 @@ def test_shutdown_is_bounded_with_a_client_that_never_reads(make_desk):
     finally:
         server.should_exit = True
         stalled.close()
+
+
+def _nimbus(make_desk):
+    desk, _ = make_desk()
+    gate_priv, _ = generate_keypair()
+    counter = itertools.count(1)
+    hub = EventHub()
+    runner = DeployRunner(
+        gate_priv, hub, lambda: NOW, lambda: f"dep{next(counter):029d}"
+    )
+    app = build_server(desk, PAIR, hub=hub, deploys=runner).streamable_http_app()
+    return hub, app
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("step", list(NimbusStep))
+async def test_deploy_route_publishes_each_step(make_desk, step):
+    hub, app = _nimbus(make_desk)
+    async with _asgi(app) as http:
+        resp = await http.post("/api/deploy", json={"step": str(step)})
+    line = read_console_line(resp.text)
+    assert line == hub.get(1)
+    assert (line.source, line.subject["step"]) == ("deploy", str(step))
+    assert (line.subject["layer"], line.subject["reason"]) == NIMBUS_PINNED[step]
+    assert line.subject["blocked"] is (step is not NimbusStep.RELEASE)
+
+
+@pytest.mark.anyio
+async def test_every_release_click_is_certified_anew(make_desk):
+    hub, app = _nimbus(make_desk)
+    async with _asgi(app) as http:
+        for _ in range(2):
+            await http.post("/api/deploy", json={"step": "release"})
+    first, second = hub.get(1), hub.get(2)
+    assert [first.subject["reason"], second.subject["reason"]] == [
+        "ok: released",
+        "ok: released",
+    ]
+    assert first.event["cert"] != second.event["cert"]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("content", "headers"),
+    [
+        (json.dumps({"step": "drop_db"}), {"content-type": "application/json"}),
+        (json.dumps({"step": 1}), {"content-type": "application/json"}),
+        (json.dumps({}), {"content-type": "application/json"}),
+        (json.dumps({"step": "release"}), {"content-type": "text/plain"}),
+        (
+            json.dumps({"step": "release"}),
+            {"content-type": "application/json", "origin": "https://evil.example"},
+        ),
+        (
+            json.dumps({"step": "release"}),
+            {"content-type": "application/json", **FOREIGN},
+        ),
+    ],
+)
+async def test_deploy_route_rejects_bad_requests(make_desk, content, headers):
+    hub, app = _nimbus(make_desk)
+    async with _asgi(app) as http:
+        resp = await http.post("/api/deploy", content=content, headers=headers)
+    assert (resp.status_code, resp.json()) == (400, {"error": "bad request"})
+    assert hub.last_seq == 0
+
+
+@pytest.mark.anyio
+async def test_deploy_route_absent_without_runner(make_desk):
+    desk, _ = make_desk()
+    app = build_server(desk, PAIR, hub=EventHub()).streamable_http_app()
+    async with _asgi(app) as http:
+        resp = await http.post("/api/deploy", json={"step": "release"})
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_cli_serves_the_nimbus_steps(monkeypatch, capsys, dist):
+    seen, _ = _run_cli(monkeypatch, capsys, "--console-dir", str(dist))
+    async with _asgi(seen["app"]) as http:
+        resp = await http.post("/api/deploy", json={"step": "stale_migration"})
+    line = read_console_line(resp.text)
+    assert (line.seq, line.subject["reason"]) == (1, "no rule matches")

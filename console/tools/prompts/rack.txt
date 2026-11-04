@@ -1,0 +1,4 @@
+A tall production server rack cabinet for prod-eu, front view, rows of dark drive bays with tiny status lights all off, a narrow top vent, same dark duotone green pixel art style as the reference image.
+
+Render as true pixel art on a 53x63 grid of square pixels: every pixel a hard-edged square block, one colour per block. Use only this 16-colour palette: #070e10 #081514 #0e1d1b #142d26 #062317 #1e4b38 #2a6c4a #3c7959 #55a673 #7fd493 #cce3c7 #eff2e7 #62775a #31372f #5f5e2b #989c4e. No anti-aliasing, no blur, no gradients, no soft shadows, no glow, no bloom, no light beams, no text, no people.
+Only the rack cabinet, isolated on a flat pure magenta #FF00FF background; no magenta anywhere in the rack cabinet; no wall, no floor, no ground shadow.

@@ -3,7 +3,7 @@
 import time
 from dataclasses import dataclass
 
-from gate.cava import action_hash
+from gate.cava import CavaAction, action_hash
 from gate.events import DecisionEvent
 from gate.policy import Verdict
 from gate.shim import Mode, RawCall, canonize
@@ -42,6 +42,7 @@ class ProxyResult:
     allowed: bool
     reason: str
     event: DecisionEvent
+    action: CavaAction
 
 
 def check(manifest: Manifest, tool: str, scope: str) -> tuple[bool, str]:
@@ -93,4 +94,4 @@ def proxy_call(
         reason=reason,
         latency_us=latency_us,
     )
-    return ProxyResult(allowed=allowed, reason=reason, event=event)
+    return ProxyResult(allowed=allowed, reason=reason, event=event, action=action)

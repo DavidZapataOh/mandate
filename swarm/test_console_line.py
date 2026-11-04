@@ -15,11 +15,13 @@ from swarm.console_line import (
     bill_line,
     campaign_lines,
     console_line_json,
+    deploy_line,
     desk_line,
     pay_summary,
     read_console_line,
 )
 from swarm.flow import PAYMENTS_POLICY, run_bill
+from swarm.nimbus import NimbusStep, ProdTarget, run_step
 from swarm.redteam import TEMPLATES, AttackKind, apply_attack, run_campaign
 from swarm.test_redteam import LEGIT
 
@@ -396,3 +398,81 @@ def test_campaign_lines_pair_each_plan_with_its_call():
     }
     with pytest.raises(ValueError):
         campaign_lines(steps, outcomes[:1], pub)
+
+
+GOLDEN_DEPLOY = (
+    '{"v":3,"seq":9,"source":"deploy","event":{"v":1,"id":"evt:de'
+    'p00000000000000000000000000009","ts":1800001000,"mode":"ENFO'
+    'RCE","verdict":"MET","action":"21f9b6b240cdb1f064acb22110e4e'
+    '5ed10bdf2df78749bac240da57fcfd092a7","policy":"nimbus","cert'
+    '":"dep00000000000000000000000000009","reason":"rule release-'
+    'api-v2 satisfied","lat_us":18.0},"meta":null,"subject":{"ste'
+    'p":"release","agent":"nimbus-deploy","summary":"MANDATE_FIXT'
+    'URE Deploy api-v2 to prod-eu","layer":"gate","reason":"ok: r'
+    'eleased","blocked":false},"forensic":{"cava":{"category":"de'
+    'ploy","evidence_refs":[],"executable":"nimbus","freshness":{'
+    '"nonce":"dep00000000000000000000000000009","timestamp":18000'
+    '01000},"operation":"deploy","reversible":false,"runtime":"mu'
+    'se-code","targets":["artifact:api-v2","env:prod-eu"],"versio'
+    'n":"cava/1"},"action_hash":"21f9b6b240cdb1f064acb22110e4e5ed'
+    '10bdf2df78749bac240da57fcfd092a7","policy":{"policy_id":"nim'
+    'bus","rule_id":"release-api-v2"},"cert_claims":{"action_hash'
+    '":"21f9b6b240cdb1f064acb22110e4e5ed10bdf2df78749bac240da57fc'
+    'fd092a7","policy_id":"nimbus","policy_version":1,"verdict":"'
+    'MET","freshness_nonce":"dep00000000000000000000000000009","s'
+    'cope":"nimbus:prod-eu","reasoning_commitment":"0000000000000'
+    '000000000000000000000000000000000000000000000000000","eviden'
+    'ce_refs":[],"revocation_index":0},"consent":null,"registry":'
+    'null,"anchor":null}}'
+)
+
+
+def _deploy(step):
+    priv, pub = generate_keypair()
+    outcome = run_step(step, priv, ProdTarget(pub), NOW, "d" * 32)
+    return deploy_line(outcome, pub)
+
+
+def test_deploy_line_carries_the_certified_release():
+    line = _deploy(NimbusStep.RELEASE)
+    assert (line.source, line.meta, line.event["verdict"]) == ("deploy", None, "MET")
+    assert line.subject == {
+        "step": "release",
+        "agent": "nimbus-deploy",
+        "summary": "Deploy api-v2 to prod-eu",
+        "layer": "gate",
+        "reason": "ok: released",
+        "blocked": False,
+    }
+    forensic = line.forensic
+    assert forensic["cava"]["targets"] == ["artifact:api-v2", "env:prod-eu"]
+    assert forensic["policy"] == {"policy_id": "nimbus", "rule_id": "release-api-v2"}
+    assert forensic["cert_claims"]["action_hash"] == forensic["action_hash"]
+    assert forensic["cert_claims"]["scope"] == "nimbus:prod-eu"
+    published = dataclasses.replace(line, seq=1)
+    assert read_console_line(console_line_json(published)) == published
+
+
+def test_deploy_line_poisoned_tool_names_the_manifest():
+    line = _deploy(NimbusStep.POISONED_TOOL)
+    assert (line.subject["layer"], line.subject["blocked"]) == ("mcp", True)
+    assert (line.event["policy"], line.event["reason"]) == (
+        "manifest:nimbus-mcp",
+        "denied: tool undeclared",
+    )
+    assert line.forensic["policy"] == {
+        "policy_id": "manifest:nimbus-mcp",
+        "rule_id": None,
+    }
+    assert line.forensic["cava"]["targets"] == ["scope=net:collector.evil.com"]
+    assert line.forensic["cert_claims"] is None
+
+
+def test_golden_deploy_round_trips():
+    assert console_line_json(read_console_line(GOLDEN_DEPLOY)) == GOLDEN_DEPLOY
+
+
+def test_reader_rejects_a_deploy_line_with_other_subject_keys():
+    line = json.loads(GOLDEN_DEPLOY)
+    with pytest.raises(ValueError, match="console line: malformed"):
+        read_console_line(json.dumps({**line, "subject": HOOK_SUBJECT}))

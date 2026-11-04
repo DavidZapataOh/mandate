@@ -11,7 +11,7 @@ test.each([
   ["post_cert_mutation", "gate->bank", "switcher", "denied · changed after approval · at the bank verifier"],
 ])("blocked %s without a gate event sends a %s to the booth and names the layer", (kind, layer, actor, alert) => {
   expect(cueFor(attack(kind, layer))).toEqual({
-    seq: 4, actor, route: "door", seal: "deny", outcome: "deny", tag: "template attack", bubble: NARRATIVE, alert, bank: false,
+    seq: 4, actor, route: "door", seal: "deny", outcome: "deny", tag: "template attack", bubble: NARRATIVE, alert, bank: false, venue: "bank",
   });
 });
 
@@ -40,7 +40,7 @@ test("an attack that was not blocked is a breach, never a verified seal", () => 
 test("a quoted payment walks from the desks and holds the seal open", () => {
   expect(cueFor(desk("quote", "quoted", { meta: SPARK_META }))).toEqual({
     seq: 3, actor: "spark", route: "desk", seal: "wait", outcome: "hold", tag: "Muse Spark",
-    bubble: `${SUMMARY} · waiting for the holder`, alert: null, bank: false,
+    bubble: `${SUMMARY} · waiting for the holder`, alert: null, bank: false, venue: "bank",
   });
 });
 

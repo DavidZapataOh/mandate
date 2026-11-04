@@ -41,6 +41,8 @@ The reasoning anchor (`swarm/anchor.py`, checked by `e2e/test_anchor_live.py`) b
 
 The console shows what the gate decides as it happens. Build it with `cd console && npm ci && npm run build`, then run `mandate-console` (after `pip install -e .`); it prints the pairing URL and `Console: http://127.0.0.1:8766/console/`. `POST /api/attack {"kind": ...}` runs one of six pinned template attacks (no model call), and the ledger labels it `TEMPLATE`. `--journal <state-dir>/journal.jsonl` streams Muse Code hook decisions into the same ledger. `--record run.jsonl` captures the stream of one process; use a fresh file per run, because a capture whose line numbers start over is refused. A capture copied to `console/public/replay/<name>.jsonl` plays at `/console/?replay=<name>` under a permanent `REPLAY` label after `npm run build` and a restart of `mandate-console`, which serves the build it found at startup. Verify with `cd console && npm run e2e`.
 
+`POST /api/deploy {"step": "release" | "poisoned_tool" | "stale_migration"}` runs one pinned Nimbus step through the gate, the MCP proxy and a simulated prod-eu target (no model call). The console's right-hand world shows Nimbus HQ for deploy and Muse Code hook lines and the bank for payment lines, and the BRANCH / NIMBUS HQ toggle shows either while the booth is idle.
+
 ## Architecture
 See [ARCHITECTURE.md](ARCHITECTURE.md).
 

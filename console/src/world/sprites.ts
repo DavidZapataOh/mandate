@@ -1,6 +1,9 @@
 export type SpriteId =
   | "office"
   | "bank"
+  | "hq"
+  | "rack"
+  | "ops"
   | "booth"
   | "vault"
   | "spark"
@@ -31,6 +34,9 @@ function sprite(plate: string, w: number, h: number, count: number): SpriteSpec 
 export const SPRITES: Record<SpriteId, SpriteSpec> = {
   office: sprite("world/office.png", 222, 164, 1),
   bank: sprite("world/bank.png", 222, 164, 1),
+  hq: sprite("world/hq.png", 222, 164, 1),
+  rack: sprite("world/rack.png", 53, 63, 4),
+  ops: sprite("world/ops.png", 90, 23, 4),
   booth: sprite("world/booth.png", 82, 107, 1),
   vault: sprite("world/vault.png", 53, 63, 4),
   spark: sprite("world/spark.png", 30, 28, 4),

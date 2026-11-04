@@ -1,4 +1,4 @@
-import { cueFor, type Outcome } from "../scene/cues";
+import { cueFor, deployLabel, type Outcome } from "../scene/cues";
 import { formatLatency } from "../shared/format";
 import type { ConsoleLine } from "../wire/types";
 
@@ -6,7 +6,7 @@ export type Mode = "game" | "forensic";
 
 /** The reason a line carries, preferring the subject's own. */
 export function reasonOf(line: ConsoleLine): string {
-  if (line.source === "attack") return line.subject.reason;
+  if (line.source === "attack" || line.source === "deploy") return line.subject.reason;
   if (line.source === "desk" && line.subject.reason) return line.subject.reason;
   return line.event?.reason ?? "";
 }
@@ -41,6 +41,13 @@ export function gameText(line: ConsoleLine): string {
       return line.subject.blocked
         ? `Blocked ${what}: ${line.subject.reason}`
         : `NOT BLOCKED: ${what}: ${line.subject.reason}`;
+    }
+    case "deploy": {
+      const s = line.subject;
+      if (s.step === "release" && !s.blocked) {
+        return `Released ✓ ${s.summary}${line.event ? ` in ${formatLatency(line.event.lat_us)}` : ""}`;
+      }
+      return `${s.blocked ? "Blocked" : "NOT BLOCKED:"} ${deployLabel(s.step)} at ${s.layer}: ${s.reason}`;
     }
     case "hook": {
       const who = line.subject.agent;

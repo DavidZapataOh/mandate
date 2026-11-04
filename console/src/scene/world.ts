@@ -1,5 +1,5 @@
 import { SPRITES, type DrawOp, type SpriteId } from "../world/sprites";
-import type { ActorKind, Cue, SealInput } from "./cues";
+import type { ActorKind, Cue, SealInput, Venue } from "./cues";
 
 export const DESK_X = 164;
 export const DOOR_X = -20;
@@ -50,9 +50,13 @@ export interface World {
   alert: string | null;
   alertUntil: number;
   vaultUntil: number;
+  /** The venue whose delivery opened the vault or rack; the other venue's frame stays closed. */
+  vaultVenue: Venue;
   /** An in-place verdict keeps the booth this long before the next visitor is let in. */
   holdUntil: number;
   bubbles: Bubble[];
+  /** Which world fills the right-hand half. */
+  venue: Venue;
 }
 
 export function createWorld(reducedMotion: boolean): World {
@@ -68,8 +72,10 @@ export function createWorld(reducedMotion: boolean): World {
     alert: null,
     alertUntil: 0,
     vaultUntil: 0,
+    vaultVenue: "bank",
     holdUntil: 0,
     bubbles: [],
+    venue: "bank",
   };
 }
 
@@ -104,28 +110,43 @@ function inPlaceAnchor(actor: ActorKind): Anchor {
 }
 
 function actInPlace(w: World, cue: Cue): void {
+  w.venue = cue.venue;
   takeBooth(w, cue);
   setBubble(w, cue, inPlaceAnchor(cue.actor));
   w.holdUntil = w.t + BOOTH_MS;
 }
 
+/** Shows the other world; refused (false) while a walker is out. */
+export function setVenue(w: World, venue: Venue): boolean {
+  if (w.walker !== null) return false;
+  w.venue = venue;
+  return true;
+}
+
 /**
  * Routes a cue. In-place cues with no verdict act now; one with a verdict acts now only if the
- * booth is free, else it waits its turn like a walker (the oldest beyond eight is dropped).
+ * booth is free, else it waits its turn like a walker (the oldest beyond eight is dropped). A cue
+ * of the other venue never changes the world under a walker: it waits too.
  */
 export function pushCue(w: World, cue: Cue): void {
   if (cue.route === "none") {
-    if (cue.seal === null) {
+    const idle = w.walker === null && w.queue.length === 0 && w.t >= w.holdUntil;
+    if (cue.seal === null && (cue.venue === w.venue || idle)) {
+      w.venue = cue.venue;
       setBubble(w, cue, inPlaceAnchor(cue.actor));
       return;
     }
-    if (w.walker === null && w.queue.length === 0 && w.t >= w.holdUntil) {
+    if (idle) {
       actInPlace(w, cue);
       return;
     }
   }
   w.queue.push(cue);
-  while (w.queue.length > QUEUE_MAX) w.queue.shift();
+  // Chatter is only a bubble; it must never evict a cue that carries a verdict or a walker.
+  while (w.queue.length > QUEUE_MAX) {
+    const chatter = w.queue.findIndex((c) => c.route === "none" && c.seal === null);
+    w.queue.splice(chatter === -1 ? 0 : chatter, 1);
+  }
 }
 
 function openVault(w: World): void {
@@ -139,12 +160,14 @@ function arrive(w: World, walker: Walker): void {
   takeBooth(w, walker.cue);
   setBubble(w, walker.cue, "walker");
   if (walker.cue.bank) {
+    w.vaultVenue = walker.cue.venue;
     if (w.reducedMotion) openVault(w);
     else w.envelopeX = BOOTH_X + ENVELOPE_OFFSET;
   }
 }
 
 function startWalker(w: World, cue: Cue): Walker {
+  w.venue = cue.venue;
   const walker: Walker = { cue, x: cue.route === "desk" ? DESK_X : DOOR_X, phase: "approach", since: w.t };
   // The last visitor's bubble follows `w.walker`; it must not ride in on the next one.
   dropBubbles(w, ["walker"]);
@@ -215,8 +238,13 @@ export function stepWorld(w: World, dtMs: number): void {
   while (w.walker === null && w.t >= w.holdUntil) {
     const next = w.queue.shift();
     if (!next) break;
-    if (next.route === "none") actInPlace(w, next);
-    else w.walker = startWalker(w, next);
+    if (next.route !== "none") w.walker = startWalker(w, next);
+    else if (next.seal !== null) actInPlace(w, next);
+    else {
+      // A verdict-free cue that waited out a walker of the other world only speaks.
+      w.venue = next.venue;
+      setBubble(w, next, inPlaceAnchor(next.actor));
+    }
   }
   if (w.walker) moveWalker(w, w.walker, dtMs);
 
@@ -235,7 +263,7 @@ export function ambientFrame(w: World, frameMs: number): number {
 }
 
 function vaultFrame(w: World): number {
-  if (w.t >= w.vaultUntil) return 0;
+  if (w.t >= w.vaultUntil || w.venue !== w.vaultVenue) return 0;
   if (w.reducedMotion) return 3;
   return Math.min(3, Math.floor((w.t - (w.vaultUntil - VAULT_OPEN_MS)) / 100) + 1);
 }
@@ -275,13 +303,14 @@ function walkerOp(w: World, walker: Walker): DrawOp {
 /** Everything to paint this frame, back to front. */
 export function drawList(w: World): DrawOp[] {
   const op = (sprite: SpriteId, x: number, y: number, frame = 0): DrawOp => ({ sprite, frame, x, y, alpha: 1 });
+  const hq = w.venue === "hq";
   const ops: DrawOp[] = [
     op("office", 0, 0),
-    op("bank", 222, 0),
-    op("vault", 391, 44, vaultFrame(w)),
+    op(hq ? "hq" : "bank", 222, 0),
+    op(hq ? "rack" : "vault", 391, 44, vaultFrame(w)),
     op("spark", 13, 94, ambientFrame(w, AMBIENT_MS.spark)),
     op("code-team", 56, 85, ambientFrame(w, AMBIENT_MS["code-team"])),
-    op("clerks", 286, 89, ambientFrame(w, AMBIENT_MS.clerks)),
+    op(hq ? "ops" : "clerks", 286, 89, ambientFrame(w, AMBIENT_MS.clerks)),
     op("booth", 181, 38),
   ];
   const deskWalk = w.walker?.cue.route === "desk";

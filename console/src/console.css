@@ -131,7 +131,15 @@ button {
   border-color: var(--bone);
 }
 
-.bar [role="group"] button:hover {
+.bar [role="group"] button:disabled {
+  cursor: default;
+}
+
+.bar [role="group"] button:disabled:not([aria-pressed="true"]) {
+  color: var(--muted);
+}
+
+.bar [role="group"] button:hover:not(:disabled) {
   color: var(--bone);
 }
 

@@ -1,11 +1,12 @@
 import { formatLatency } from "../shared/format";
-import type { Attribution, ConsoleLine, DecisionEvent } from "../wire/types";
+import type { Attribution, ConsoleLine, DecisionEvent, DeploySubject } from "../wire/types";
 
 export type IntruderKind = "thief" | "ghost" | "brute" | "forger" | "switcher";
 export type ActorKind = "spark" | "code" | "agent" | "holder" | IntruderKind;
 export type SealInput = "verify" | "deny" | "wait";
 export type Outcome = "pass" | "deny" | "hold" | "breach" | "note";
 export type Route = "desk" | "door" | "none";
+export type Venue = "bank" | "hq";
 
 export interface Cue {
   seq: number;
@@ -17,6 +18,7 @@ export interface Cue {
   bubble: string;
   alert: string | null;
   bank: boolean;
+  venue: Venue;
 }
 
 export const BUBBLE_MAX = 120;
@@ -52,6 +54,11 @@ const LAYERS: Record<string, string> = {
 
 const TAGS: Record<string, string> = { spark: "Muse Spark", code: "Muse Code", agent: "agent", holder: "holder" };
 
+/** The plain name of a Nimbus step. */
+export function deployLabel(step: DeploySubject["step"]): string {
+  return { release: "release", poisoned_tool: "poisoned MCP tool", stale_migration: "stale migration" }[step];
+}
+
 export function attackLabel(kind: string): string {
   return LABELS[kind] ?? kind.replaceAll("_", " ");
 }
@@ -67,7 +74,17 @@ function agentOf(meta: Attribution | null): ActorKind {
 
 const lat = (event: DecisionEvent | null): string => (event ? ` · ${formatLatency(event.lat_us)}` : "");
 
+/** The right-hand world a line plays in: software work at HQ, money at the bank. */
+export function venueOf(line: ConsoleLine): Venue {
+  return line.source === "hook" || line.source === "deploy" ? "hq" : "bank";
+}
+
+/** The scene cue for a console line. */
 export function cueFor(line: ConsoleLine): Cue {
+  return { ...buildCue(line), venue: venueOf(line) };
+}
+
+function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
   const base = { seq: line.seq, alert: null, bank: false };
   switch (line.source) {
     case "desk": {
@@ -123,6 +140,23 @@ export function cueFor(line: ConsoleLine): Cue {
         bubble: clip(`${what} · denied`),
         alert: `denied · ${s.tool} · ${line.event?.reason ?? "no decision"}`,
       };
+    }
+    case "deploy": {
+      const s = line.subject;
+      const label = deployLabel(s.step);
+      const tag = "nimbus scenario";
+      const where = line.event ? formatLatency(line.event.lat_us) : `at the ${LAYERS[s.layer] ?? s.layer}`;
+      if (s.step === "release") {
+        const common = { ...base, actor: "agent" as const, tag, route: "desk" as const };
+        if (s.blocked) {
+          return { ...common, seal: "deny", outcome: "deny", bubble: clip(`${s.summary} · refused`), alert: `denied · ${label} · ${where}` };
+        }
+        return { ...common, seal: "verify", outcome: "pass", bubble: clip(`${s.summary} · released${lat(line.event)}`), bank: true };
+      }
+      const thief = s.step === "poisoned_tool";
+      const common = { ...base, actor: thief ? ("thief" as const) : ("ghost" as const), tag, route: thief ? ("door" as const) : ("desk" as const), bubble: clip(s.summary) };
+      if (!s.blocked) return { ...common, seal: null, outcome: "breach", alert: `NOT BLOCKED · ${label} · ran` };
+      return { ...common, seal: "deny", outcome: "deny", alert: `denied · ${label} · ${where}` };
     }
     case "bill": {
       const s = line.subject;

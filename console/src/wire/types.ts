@@ -1,4 +1,4 @@
-export type Source = "desk" | "attack" | "hook" | "bill";
+export type Source = "desk" | "attack" | "hook" | "bill" | "deploy";
 
 export interface DecisionEvent {
   v: 1;
@@ -57,6 +57,15 @@ export interface BillSubject {
   report_error: string | null;
 }
 
+export interface DeploySubject {
+  step: "release" | "poisoned_tool" | "stale_migration";
+  agent: string;
+  summary: string;
+  layer: string;
+  reason: string;
+  blocked: boolean;
+}
+
 export interface RegistryProof {
   seq: number;
   root: string;
@@ -94,4 +103,5 @@ export type ConsoleLine =
   | LineOf<"desk", DeskSubject>
   | LineOf<"attack", AttackSubject>
   | LineOf<"hook", HookSubject>
-  | LineOf<"bill", BillSubject>;
+  | LineOf<"bill", BillSubject>
+  | LineOf<"deploy", DeploySubject>;

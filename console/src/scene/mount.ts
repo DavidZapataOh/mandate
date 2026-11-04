@@ -15,7 +15,7 @@ import { FixedLoop, performanceClock } from "./loop";
 import { ANCHOR, Overlay, stageX } from "./overlay";
 import { blit } from "./render";
 import { fitStage, type StageFit } from "./stage";
-import { createWorld, drawList, pushCue, setReducedMotion, stepWorld } from "./world";
+import { createWorld, drawList, pushCue, setReducedMotion, setVenue, stepWorld } from "./world";
 
 /** Native top-left of the idle courier's tag, over the figure standing by the office door. */
 const COURIER_TAG: readonly [number, number] = [145, 79];
@@ -24,6 +24,11 @@ function tagPoint(anchor: string | undefined): readonly [number, number] | undef
   if (anchor === "courier") return COURIER_TAG;
   return anchor === "spark" || anchor === "code" ? ANCHOR[anchor] : undefined;
 }
+
+const STAGE_LABEL = {
+  bank: "Live branch: Meta's agents, the Mandate booth and the bank",
+  hq: "Nimbus HQ: Meta's agents, the Mandate booth and production",
+} as const;
 
 function byId<T extends HTMLElement>(doc: Document, id: string): T {
   const el = doc.getElementById(id);
@@ -119,6 +124,16 @@ export function mountScene(
   const overlay = new Overlay(overlayEl, onOpen);
   const courierTag = tags.find((t) => t.dataset.anchor === "courier");
   const alertEl = byId(doc, "alert");
+  const stageEl = byId(doc, "stage");
+  const venueButtons = { bank: byId<HTMLButtonElement>(doc, "venue-bank"), hq: byId<HTMLButtonElement>(doc, "venue-hq") };
+  for (const venue of ["bank", "hq"] as const) {
+    venueButtons[venue].addEventListener("click", () => {
+      setVenue(world, venue);
+    });
+  }
+  const setAttr = (el: HTMLElement, name: string, value: string): void => {
+    if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+  };
   let shownAlert: string | null = null;
   const drawSeal = (): void => {
     const [k, dx, dy] = sealFit(sealCanvas.width, sealCanvas.height);
@@ -138,6 +153,14 @@ export function mountScene(
       // The idle courier leaves its spot while it walks a desk request, and its tag goes with it.
       const away = world.walker?.cue.route === "desk";
       if (courierTag && courierTag.hidden !== away) courierTag.hidden = away;
+      setAttr(stageEl, "data-venue", world.venue);
+      setAttr(stageEl, "aria-label", STAGE_LABEL[world.venue]);
+      const busy = world.walker !== null;
+      for (const venue of ["bank", "hq"] as const) {
+        const button = venueButtons[venue];
+        setAttr(button, "aria-pressed", String(world.venue === venue));
+        if (button.disabled !== busy) button.disabled = busy;
+      }
       if (world.alert !== shownAlert) {
         shownAlert = world.alert;
         alertEl.textContent = shownAlert ?? "";

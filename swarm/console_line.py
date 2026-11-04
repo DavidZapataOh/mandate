@@ -17,6 +17,7 @@ from gate.certs import read_claims
 from gate.policy import matched_rule
 from swarm.attribution import from_attacker
 from swarm.flow import PAYMENTS_POLICY
+from swarm.nimbus import AGENT, SUMMARIES, StepOutcome
 
 if TYPE_CHECKING:
     from gate.consent import Consent
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from swarm.flow import BillRun
     from swarm.redteam import AttackOutcome, AttackPlan
 
-SOURCES = ("desk", "attack", "hook", "bill")
+SOURCES = ("desk", "attack", "hook", "bill", "deploy")
 
 _LINE_KEYS = ("v", "seq", "source", "event", "meta", "subject", "forensic")
 _EVENT_KEYS = frozenset(
@@ -53,6 +54,7 @@ _SUBJECT_KEYS = {
     ),
     "hook": frozenset(("agent", "tool", "targets", "tool_use_id")),
     "bill": frozenset(("proposal_call_id", "summary", "confirmation", "report_error")),
+    "deploy": frozenset(("step", "agent", "summary", "layer", "reason", "blocked")),
 }
 _DESK_STEPS = ("quote", "approve", "confirm")
 _RECORD_KEYS = frozenset(("agent", "tool", "targets", "event", "tool_use_id"))
@@ -67,7 +69,7 @@ class ConsoleLine:
 
     Args:
         seq: Publication number, at least 1; 0 until published.
-        source: One of ``SOURCES``.
+        source: One of ``SOURCES``: desk, attack, hook, bill or deploy.
         event: Gate decision event object, or None when the gate did not decide.
         meta: Attribution object of the model call, or None.
         subject: Source-specific facts.
@@ -516,3 +518,28 @@ def campaign_lines(
         )
         for (plan, trace), outcome in zip(steps, outcomes, strict=True)
     ]
+
+
+def deploy_line(outcome: StepOutcome, gate_pub: bytes) -> ConsoleLine:
+    """Build the line for one Nimbus deploy step.
+
+    Args:
+        outcome: What the step did and which layer decided it.
+        gate_pub: Gate public key for reading the certificate claims.
+
+    Returns:
+        An unpublished deploy line.
+    """
+    subject = {
+        "step": str(outcome.step),
+        "agent": AGENT,
+        "summary": SUMMARIES[outcome.step],
+        "layer": outcome.layer,
+        "reason": outcome.reason,
+        "blocked": outcome.blocked,
+    }
+    forensic = forensic_of(
+        outcome.action, outcome.policy, outcome.certificate, gate_pub
+    )
+    event = json.loads(outcome.event.to_json())
+    return ConsoleLine(0, "deploy", event, None, subject, forensic)

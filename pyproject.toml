@@ -75,6 +75,7 @@ module = [
     "swarm.test_desk",
     "swarm.test_flow",
     "swarm.test_hook",
+    "swarm.test_nimbus",
     "swarm.test_hub",
     "swarm.test_hookio",
     "swarm.test_intent",

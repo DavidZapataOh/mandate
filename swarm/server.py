@@ -31,6 +31,7 @@ from gate.certs import generate_keypair
 from swarm.console_line import ConsoleLine, console_line_json
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
+from swarm.nimbus import NimbusStep
 from swarm.redteam import AttackKind
 
 _MAX_BODY = 4096
@@ -68,6 +69,12 @@ class AttackSource(Protocol):
     """Anything that can run one template attack and publish its line."""
 
     def run(self, kind: AttackKind) -> ConsoleLine: ...
+
+
+class DeploySource(Protocol):
+    """Anything that can run one Nimbus step and publish its line."""
+
+    def run(self, step: NimbusStep) -> ConsoleLine: ...
 
 
 class _BoundedStream(StreamingResponse):
@@ -191,6 +198,7 @@ def build_server(
     hub: EventHub | None = None,
     attacks: AttackSource | None = None,
     console_dir: Path | None = None,
+    deploys: DeploySource | None = None,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
@@ -207,6 +215,7 @@ def build_server(
         attacks: When given, also serves `POST /api/attack`.
         console_dir: When given, serves the files found in it at startup under
             `/console/`.
+        deploys: When given, POST /api/deploy runs one pinned Nimbus step.
 
     Returns:
         An MCP server named `mandate`.
@@ -310,6 +319,18 @@ state is returned."""
             console_line_json(attacks.run(kind)), media_type="application/json"
         )
 
+    async def deploy(request: Request) -> Response:
+        body = await _fields(request, "step")
+        try:
+            step = NimbusStep(body["step"]) if body and deploys else None
+        except ValueError:
+            step = None
+        if step is None or deploys is None:
+            return _bad_request()
+        return Response(
+            console_line_json(deploys.run(step)), media_type="application/json"
+        )
+
     if hub is not None:
         for path, handler in (
             ("/api/events", events),
@@ -319,6 +340,8 @@ state is returned."""
             _route(srv, path, "GET", _host_guard(handler, allowed_hosts))
     if attacks is not None:
         _route(srv, "/api/attack", "POST", _host_guard(attack, allowed_hosts))
+    if deploys is not None:
+        _route(srv, "/api/deploy", "POST", _host_guard(deploy, allowed_hosts))
     if console_dir is not None:
         served = _snapshot(console_dir)
 

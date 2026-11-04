@@ -91,6 +91,14 @@ const SUBJECTS: Record<Source, Check> = {
     confirmation: nullable(str),
     report_error: nullable(str),
   }),
+  deploy: shape({
+    step: oneOf("release", "poisoned_tool", "stale_migration"),
+    agent: str,
+    summary: str,
+    layer: str,
+    reason: str,
+    blocked: bool,
+  }),
 };
 
 const LINE_KEYS = ["v", "seq", "source", "event", "meta", "subject", "forensic"];
@@ -115,7 +123,7 @@ export function parseLine(text: string): ConsoleLine {
     typeof value.seq === "number" &&
     Number.isSafeInteger(value.seq) &&
     value.seq >= 1 &&
-    oneOf("desk", "attack", "hook", "bill")(source) &&
+    oneOf("desk", "attack", "hook", "bill", "deploy")(source) &&
     nullable(EVENT)(value.event) &&
     nullable(META)(value.meta) &&
     SUBJECTS[source as Source](value.subject) &&

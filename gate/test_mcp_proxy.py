@@ -1,5 +1,6 @@
 import json
 
+from gate.cava import action_hash
 from gate.events import DecisionEvent
 from gate.manifests import ServerDescriptor, ToolDescriptor, generate
 from gate.mcp_proxy import Manifest, ProxyCall, ToolGrant, check, proxy_call
@@ -102,4 +103,14 @@ def test_generator_minimal():
     assert check(bank, "bill.pay", "write:treasury") == (
         False,
         "denied: scope exceeds grant",
+    )
+
+
+def test_result_carries_the_action_it_hashed():
+    r = _result("bank-mcp", "evil.exfil", "net:evil.com")
+    assert action_hash(r.action) == r.event.action_hash
+    assert (r.action.executable, r.action.operation, r.action.targets) == (
+        "mcp:bank-mcp",
+        "evil.exfil",
+        ("scope=net:evil.com",),
     )

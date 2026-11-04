@@ -14,10 +14,14 @@
         <button type="button" id="mode-game" aria-pressed="true">GAME</button>
         <button type="button" id="mode-forensic" aria-pressed="false">FORENSIC</button>
       </div>
+      <div role="group" aria-label="Venue">
+        <button type="button" id="venue-bank" aria-pressed="true">BRANCH</button>
+        <button type="button" id="venue-hq" aria-pressed="false">NIMBUS HQ</button>
+      </div>
       <p class="counters">verified <b id="c-verified">0</b> · denied <b id="c-denied">0</b> · p50 <b id="c-p50">—</b></p>
     </header>
     <main>
-      <section id="stage" aria-label="Live branch: Meta's agents, the Mandate booth and the bank">
+      <section id="stage" data-venue="bank" aria-label="Live branch: Meta's agents, the Mandate booth and the bank">
         <canvas id="world" width="444" height="164"></canvas>
         <div id="overlay">
           <span class="tag" data-anchor="spark">Muse Spark</span>

@@ -1,7 +1,8 @@
-"""Live console: template attacks against the desk bank and `mandate-console`."""
+"""Mandate console: desk, event hub, template attacks, Nimbus steps, console."""
 
 import argparse
 import secrets
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -15,10 +16,11 @@ from bank.verifier import Verifier
 from gate.certs import generate_keypair, public_key_of
 from gate.policy import Intent
 from gate.shim import RawCall
-from swarm.console_line import ConsoleLine, attack_line
+from swarm.console_line import ConsoleLine, attack_line, deploy_line
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
 from swarm.journal_tail import JournalTail
+from swarm.nimbus import NimbusStep, ProdTarget, run_step
 from swarm.redteam import TEMPLATES, AttackKind, apply_attack
 from swarm.server import build_server
 
@@ -112,6 +114,47 @@ class AttackRunner:
         return self._hub.publish(line)
 
 
+class DeployRunner:
+    """Runs the pinned Nimbus steps against one simulated prod-eu.
+
+    Args:
+        gate_key: Raw Ed25519 private key the gate signs with.
+        hub: Hub that receives the deploy lines.
+        clock: Current unix time in seconds.
+        nonces: Source of unique freshness nonces.
+    """
+
+    def __init__(
+        self,
+        gate_key: bytes,
+        hub: EventHub,
+        clock: Callable[[], int],
+        nonces: Callable[[], str],
+    ) -> None:
+        self._gate_key = gate_key
+        self._gate_pub = public_key_of(gate_key)
+        self._hub = hub
+        self._clock = clock
+        self._nonces = nonces
+        self._target = ProdTarget(self._gate_pub)
+        self._lock = threading.Lock()
+
+    def run(self, step: NimbusStep) -> ConsoleLine:
+        """Run one Nimbus step and publish its line.
+
+        Args:
+            step: Which pinned step to run.
+
+        Returns:
+            The published (numbered) deploy line.
+        """
+        with self._lock:
+            outcome = run_step(
+                step, self._gate_key, self._target, self._clock(), self._nonces()
+            )
+        return self._hub.publish(deploy_line(outcome, self._gate_pub))
+
+
 class _ConsoleServer(uvicorn.Server):
     """Closes the event hub on exit, since open streams would block shutdown."""
 
@@ -172,6 +215,7 @@ def cli(argv: list[str] | None = None) -> None:
         publish=hub.publish,
     )
     runner = AttackRunner(desk, gate_key, hub, _now, _nonce)
+    deploys = DeployRunner(gate_key, hub, _now, _nonce)
     allowed = (*_LOCAL_HOSTS, *args.public_host)
     app = build_server(
         desk,
@@ -179,6 +223,7 @@ def cli(argv: list[str] | None = None) -> None:
         allowed,
         hub=hub,
         attacks=runner,
+        deploys=deploys,
         console_dir=args.console_dir,
     ).streamable_http_app()
     if args.journal is not None:

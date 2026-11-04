@@ -34,9 +34,9 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
   button.dataset.outcome = cells.outcome;
   const sentence = mode === "game" ? gameText(line) : forensicText(line);
   const name: string[] = [];
-  if (line.source === "attack") {
+  if (line.source === "attack" || line.source === "deploy") {
     button.dataset.blocked = String(line.subject.blocked);
-    const origin = line.subject.origin.toUpperCase();
+    const origin = line.source === "deploy" ? "SCENARIO" : line.subject.origin.toUpperCase();
     button.append(cell("span", "origin", origin));
     name.push(origin);
   }
