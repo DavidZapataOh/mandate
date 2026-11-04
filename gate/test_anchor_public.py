@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import threading
 
 import httpx2
 import pytest
@@ -14,9 +15,13 @@ from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
 from gate.anchor_public import (
     BLOCK_SOURCE,
+    STAMP_BATCH,
+    UPGRADE_BATCH,
     AnchorError,
+    AnchorRound,
     Calendar,
     EsploraHeaders,
+    PublicAnchors,
     anchor_digest_of,
     attested_heights,
     block_hash,
@@ -27,10 +32,13 @@ from gate.anchor_public import (
 from gate.conftest import (
     OTS,
     OTS_FILE,
+    BlockingCalendar,
     RecordedCalendars,
+    RecordedHeaders,
     recorded_aggregators,
     unb64,
 )
+from gate.state import StateStore
 
 ROOT = "70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87"
 DIGEST = "fe28838c6cdcfc365aef8d643ea05cd90abb7e58ffe7f60dfb57ea077fcf071a"
@@ -289,3 +297,200 @@ def test_a_block_source_failure_is_unavailable(hash_answer, header_answer, reaso
     source, _ = _source(routes)
     with pytest.raises(AnchorError, match=f"^anchor: {reason}$"):
         source.header(892418)
+
+
+def _seal(seq, root):
+    return {
+        "v": 1, "anchor_id": f"anch:{seq:06d}", "seq_from": seq, "seq_to": seq,
+        "root": root, "ts": 1800001000,
+        "signature": base64.b64encode(bytes(64)).decode(),
+    }  # fmt: skip
+
+
+def _anchors(store, calendars=None, answers=None, headers=None, calendar_for=None):
+    return PublicAnchors(
+        store,
+        GATE_PUBLIC,
+        recorded_aggregators() if calendars is None else calendars,
+        RecordedHeaders({}) if headers is None else headers,
+        clock=lambda: 1800002000,
+        calendar_for=calendar_for or RecordedCalendars(answers or {}).for_uri,
+        nonces=lambda: b"\x01" * 16,
+    )
+
+
+def test_a_round_stamps_each_new_seal_once(state_store):
+    state_store.add_seal(_golden_seal())
+    state_store.add_seal(_seal(2, D2.hex()))
+    calendars = recorded_aggregators()
+    anchors = _anchors(state_store, calendars)
+    assert anchors.round() == AnchorRound(2, 0, 2, None)
+    assert anchors.round() == AnchorRound(0, 0, 2, None)
+    assert [len(c.submitted) for c in calendars] == [1, 1, 1, 1]
+    view = anchors.view(1)
+    assert (view["v"], view["bitcoin"]) == (1, None)
+    proof = base64.b64decode(view["ots"]).hex()
+    assert proof.startswith(MAGIC + DIGEST + "f010")
+    assert not proof.startswith(MAGIC + ROOT)
+    assert anchors.view(3) is None
+
+
+def test_proofs_outlive_the_process(tmp_path):
+    path = tmp_path / "state" / "state.db"
+    store = StateStore(path)
+    store.add_seal(_golden_seal())
+    first = _anchors(store)
+    first.round()
+    kept = first.view(1)
+    store.close()
+    again = StateStore(path)
+    calendars = recorded_aggregators()
+    later = _anchors(again, calendars)
+    assert later.view(1) == kept
+    assert later.round().stamped == 0
+    assert calendars[0].submitted == []
+    again.close()
+
+
+def test_a_round_without_two_calendars_stores_nothing(state_store):
+    state_store.add_seal(_golden_seal())
+    down = _anchors(state_store, recorded_aggregators(1))
+    assert down.round() == AnchorRound(0, 0, 0, "anchor: 1 of 4 calendars answered")
+    assert down.view(1) is None
+    assert _anchors(state_store).round().stamped == 1
+
+
+def test_a_round_stamps_at_most_a_batch(state_store):
+    for seq in range(1, STAMP_BATCH + 2):
+        state_store.add_seal(_seal(seq, f"{seq:064x}"))
+    anchors = _anchors(state_store)
+    assert anchors.round().stamped == 512
+    assert anchors.round().stamped == 1
+
+
+def test_a_round_never_confirms_a_proof_of_another_digest(state_store):
+    # A real, Bitcoin-attested proof stored beside a seal it does not cover.
+    state_store.add_seal(_golden_seal())
+    state_store.put("anchored_to", "1")
+    record = {"bitcoin": None, "ots": OTS["core29"]["pending"], "stamped_at": 1}
+    state_store.put_record("ots-pending", "1", json.dumps(record))
+    headers = RecordedHeaders({892418: H18})
+    anchors = _anchors(state_store, answers=OTS["core29"]["answers"], headers=headers)
+    assert anchors.round() == AnchorRound(
+        0, 0, 1, "anchor: proof is not over this seal's anchor digest"
+    )
+    assert anchors.view(1)["bitcoin"] is None
+    # Refused before any header is fetched.
+    assert headers.asked == []
+
+
+class _WrongAnswerCalendar:
+    """A calendar that answers a timestamp of some other message."""
+
+    def submit(self, digest: bytes, timeout: float | None = None) -> Timestamp:
+        return Timestamp(b"\x00" * 32)
+
+    def get_timestamp(
+        self, commitment: bytes, timeout: float | None = None
+    ) -> Timestamp:
+        return Timestamp(b"\x00" * 32)
+
+
+class _RaisingHeaders:
+    """A header source failing with something other than an `AnchorError`."""
+
+    def header(self, height: int) -> bytes:
+        raise RuntimeError("socket closed")
+
+
+def test_a_round_survives_any_calendar_failure(state_store):
+    state_store.add_seal(_golden_seal())
+    calendars = [_BrokenCalendar(), _WrongAnswerCalendar(), *recorded_aggregators(2)]
+    anchors = _anchors(state_store, calendars)
+    assert anchors.round() == AnchorRound(1, 0, 1, None)
+    kept = anchors.view(1)
+
+    def calendar_for(uri: str) -> Calendar:
+        return _BrokenCalendar() if "alice" in uri else _WrongAnswerCalendar()
+
+    again = _anchors(state_store, calendar_for=calendar_for)
+    assert again.round() == AnchorRound(0, 0, 1, None)
+    assert again.view(1) == kept
+
+
+def test_a_round_survives_a_header_source_failure(state_store, caplog, monkeypatch):
+    _attested_beside_seals(state_store, monkeypatch, 1, PENDING)
+    anchors = _anchors(
+        state_store, answers=OTS["core29"]["answers"], headers=_RaisingHeaders()
+    )
+    assert anchors.round() == AnchorRound(0, 0, 1, "anchor: header source unavailable")
+    assert "anchor header source failed (RuntimeError)" in caplog.text
+    # The upgrade is kept, so the next round does not ask the calendars again.
+    assert unb64(anchors.view(1)["ots"]) == UPGRADED
+
+
+def test_a_round_records_nothing_another_round_recorded_first(state_store):
+    state_store.add_seal(_golden_seal())
+    held = BlockingCalendar(recorded_aggregators()[0])
+    slow = _anchors(state_store, [held, *recorded_aggregators()[1:]])
+    outcome = []
+    racer = threading.Thread(target=lambda: outcome.append(slow.round()))
+    racer.start()
+    assert held.entered.wait(5)
+    fast = _anchors(state_store)
+    assert fast.round() == AnchorRound(1, 0, 1, None)
+    kept = fast.view(1)
+    held.release.set()
+    racer.join(5)
+    assert outcome == [AnchorRound(0, 0, 1, None)]
+    assert slow.view(1) == kept
+
+
+def _attested_beside_seals(store, monkeypatch, count, proof=UPGRADED):
+    # Only the golden stamp after its upgrade is a real Bitcoin-attested proof
+    # over a seal's anchor digest; until then, each seal's digest is CORE.
+    monkeypatch.setattr("gate.anchor_public.anchor_digest_of", lambda *_: CORE)
+    for seq in range(1, count + 1):
+        store.add_seal(_seal(seq, f"{seq:064x}"))
+        record = {"ots": base64.b64encode(proof).decode(), "bitcoin": None}
+        store.put_record(
+            "ots-pending", str(seq), json.dumps(record | {"stamped_at": 1})
+        )
+    store.put("anchored_to", str(count))
+
+
+def test_a_bad_lowest_attestation_does_not_block_a_higher_one(state_store, monkeypatch):
+    _attested_beside_seals(state_store, monkeypatch, 1)
+    headers = RecordedHeaders({892418: FLIPPED, 892421: H21})
+    anchors = _anchors(state_store, headers=headers)
+    assert anchors.round() == AnchorRound(0, 1, 0, None)
+    assert anchors.view(1)["bitcoin"] == {"height": 892421, "header": H21.hex()}
+    assert unb64(anchors.view(1)["ots"]) == UPGRADED
+
+
+def test_a_round_fetches_each_header_once(state_store, monkeypatch):
+    _attested_beside_seals(state_store, monkeypatch, 3)
+    headers = RecordedHeaders({892421: H21})
+    anchors = _anchors(state_store, headers=headers)
+    assert anchors.round() == AnchorRound(0, 3, 0, None)
+    # 892418 failed once and was not asked again this round.
+    assert headers.asked == [892418, 892421]
+
+
+def test_stuck_proofs_do_not_hold_the_upgrade_window(state_store, monkeypatch):
+    stuck = UPGRADE_BATCH + 1
+    _attested_beside_seals(state_store, monkeypatch, stuck)
+    record = {"ots": OTS["core29"]["pending"], "bitcoin": None, "stamped_at": 1}
+    state_store.put_record("ots-pending", str(stuck + 1), json.dumps(record))
+    anchors = _anchors(state_store, answers=OTS["core29"]["answers"])
+    error = "anchor: header source unavailable"
+    assert anchors.round() == AnchorRound(0, 0, stuck + 1, error)
+    assert anchors.view(stuck + 1)["ots"] == OTS["core29"]["pending"]
+    assert anchors.round() == AnchorRound(0, 0, stuck + 1, error)
+    assert unb64(anchors.view(stuck + 1)["ots"]) == UPGRADED
+
+
+def test_a_corrupt_record_reads_as_no_anchor(state_store, caplog):
+    state_store.put_record("ots-pending", "1", "{not json")
+    assert _anchors(state_store).view(1) is None
+    assert "anchor record unreadable (JSONDecodeError)" in caplog.text

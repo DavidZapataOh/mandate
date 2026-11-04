@@ -1,9 +1,15 @@
 """Public timestamps of registry seals through OpenTimestamps and Bitcoin."""
 
 import base64
+import binascii
 import hashlib
+import json
+import logging
+import os
 import re
+import threading
 from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx2
@@ -24,6 +30,7 @@ from opentimestamps.core.timestamp import (
 )
 
 from gate.registry import Anchor
+from gate.state import StateStore
 
 AGGREGATORS = (
     "https://a.pool.opentimestamps.org",
@@ -42,6 +49,11 @@ UPGRADE_BATCH = 64
 BLOCK_SOURCE = "https://blockstream.info/api"
 
 _DIGEST_PREFIX = b"mandate-anchor/v1:"
+_PENDING = "ots-pending"
+_CONFIRMED = "ots"
+_ANCHORED_TO = "anchored_to"
+
+_log = logging.getLogger(__name__)
 
 
 class AnchorError(ValueError):
@@ -128,10 +140,17 @@ def _serialized(proof: DetachedTimestampFile) -> bytes:
     return bytes(ctx.getbytes())
 
 
+def _answer_for(msg: bytes, answer: object) -> Timestamp | None:
+    # A timestamp of another message cannot be merged; it is no answer.
+    if isinstance(answer, Timestamp) and bytes(answer.msg) == msg:
+        return answer
+    return None
+
+
 def _ask(calendar: Calendar, digest: bytes) -> Timestamp | None:
     # A calendar that is down, slow or answers garbage counts as no answer.
     try:
-        return calendar.submit(digest, timeout=CALENDAR_TIMEOUT_S)
+        return _answer_for(digest, calendar.submit(digest, timeout=CALENDAR_TIMEOUT_S))
     except Exception:
         return None
 
@@ -245,8 +264,11 @@ def upgrade(
                 answer = cache[sub.msg]
             else:
                 try:
-                    answer = calendar_for(att.uri).get_timestamp(
-                        sub.msg, timeout=CALENDAR_TIMEOUT_S
+                    answer = _answer_for(
+                        sub.msg,
+                        calendar_for(att.uri).get_timestamp(
+                            sub.msg, timeout=CALENDAR_TIMEOUT_S
+                        ),
                     )
                 except Exception:
                     # Not found yet, down, slow or garbage: no answer this round.
@@ -395,3 +417,251 @@ class EsploraHeaders:
         if block_hash(header) != block:
             raise AnchorError("anchor: header source answered another block")
         return header
+
+
+@dataclass(frozen=True)
+class AnchorRound:
+    """What one round of `PublicAnchors` did.
+
+    Attributes:
+        stamped: Seals newly submitted to the calendars.
+        confirmed: Proofs newly confirmed against a Bitcoin block header.
+        pending: Proofs still without a confirmed Bitcoin block.
+        error: The first `AnchorError` of the round, or None.
+    """
+
+    stamped: int
+    confirmed: int
+    pending: int
+    error: str | None
+
+    def view(self) -> dict[str, Any]:
+        """The round as JSON-ready fields, in declaration order."""
+        return {
+            "stamped": self.stamped,
+            "confirmed": self.confirmed,
+            "pending": self.pending,
+            "error": self.error,
+        }
+
+
+def _nonce() -> bytes:
+    return os.urandom(NONCE_LEN)
+
+
+def _record(proof: bytes, bitcoin: dict[str, Any] | None, stamped_at: int) -> str:
+    return json.dumps(
+        {
+            "ots": base64.b64encode(proof).decode(),
+            "bitcoin": bitcoin,
+            "stamped_at": stamped_at,
+        },
+        separators=(",", ":"),
+    )
+
+
+class PublicAnchors:
+    """Stamps a durable store's seals and upgrades their proofs to Bitcoin.
+
+    Calendars and the block source are called with no lock held, the store's
+    included: a round reads what to do, calls out, then records the outcome in
+    one transaction, recording nothing another round already recorded.
+    """
+
+    def __init__(
+        self,
+        state: StateStore,
+        gate_public_key: bytes,
+        calendars: Sequence[Calendar],
+        headers: HeaderSource,
+        clock: Callable[[], int],
+        *,
+        calendar_for: Callable[[str], Calendar] = RemoteCalendar,
+        nonces: Callable[[], bytes] = _nonce,
+    ) -> None:
+        """Bind the store and the third parties.
+
+        Args:
+            state: The durable store holding the seals and their proofs.
+            gate_public_key: The gate's raw 32-byte Ed25519 public key.
+            calendars: The aggregators new seals are submitted to.
+            headers: Where Bitcoin block headers come from.
+            clock: Current unix time in seconds.
+            calendar_for: Builds the calendar client for a pending URI.
+            nonces: Source of one 16-byte nonce per stamped seal.
+        """
+        self._state = state
+        self._gate_public_key = gate_public_key
+        self._calendars = list(calendars)
+        self._headers = headers
+        self._clock = clock
+        self._calendar_for = calendar_for
+        self._nonces = nonces
+        self._rounds = threading.Lock()
+
+    def round(self) -> AnchorRound:
+        """Stamp new seals, upgrade pending proofs, record confirmed ones.
+
+        One round runs at a time; a second caller waits for the first.
+
+        Returns:
+            What the round did; an `AnchorError` is reported, not raised.
+        """
+        with self._rounds:
+            stamped, error = self._stamp()
+            confirmed, upgrade_error = self._upgrade()
+            pending = len(self._state.records(_PENDING))
+            return AnchorRound(stamped, confirmed, pending, error or upgrade_error)
+
+    def _anchored_to(self) -> int:
+        return int(self._state.get(_ANCHORED_TO) or 0)
+
+    def _stamp(self) -> tuple[int, str | None]:
+        mark = self._anchored_to()
+        views = self._state.seals_after(mark, STAMP_BATCH)
+        if not views:
+            return 0, None
+        digests = [anchor_digest_of(v, self._gate_public_key) for v in views]
+        try:
+            proofs = stamp(digests, self._calendars, self._nonces)
+        except AnchorError as exc:
+            return 0, str(exc)
+        now = self._clock()
+        with self._state.transaction():
+            if self._anchored_to() != mark:
+                return 0, None
+            for view, proof in zip(views, proofs, strict=True):
+                self._state.put_record(
+                    _PENDING, str(view["seq_to"]), _record(proof, None, now)
+                )
+            self._state.put(_ANCHORED_TO, str(views[-1]["seq_to"]))
+        return len(views), None
+
+    def _upgrade(self) -> tuple[int, str | None]:
+        cache: dict[bytes, Timestamp | None] = {}
+        headers: dict[int, bytes | AnchorError] = {}
+        confirmed, error = 0, None
+        for key, value in self._state.records(_PENDING)[:UPGRADE_BATCH]:
+            try:
+                confirmed += self._upgrade_one(key, value, cache, headers)
+            except AnchorError as exc:
+                error = error or str(exc)
+        return confirmed, error
+
+    def _header(self, height: int, headers: dict[int, bytes | AnchorError]) -> bytes:
+        # Proofs of one stamp share their heights: each is fetched once a
+        # round, and a failure is not retried until the next round.
+        if height not in headers:
+            try:
+                headers[height] = self._headers.header(height)
+            except AnchorError as exc:
+                headers[height] = exc
+            except Exception as exc:
+                _log.warning("anchor header source failed (%s)", type(exc).__name__)
+                headers[height] = AnchorError("anchor: header source unavailable")
+        found = headers[height]
+        if isinstance(found, AnchorError):
+            raise found
+        return found
+
+    def _digest(self, seq_to: int, proof: bytes) -> bytes:
+        # Recomputed from the stored seal, never read from the proof, and
+        # checked before any header is fetched for it.
+        found = self._state.seals_after(seq_to - 1, 1)
+        parsed = _parse(proof)
+        if (
+            not found
+            or found[0]["seq_to"] != seq_to
+            or not isinstance(parsed.file_hash_op, OpSHA256)
+            or bytes(parsed.file_digest)
+            != (digest := anchor_digest_of(found[0], self._gate_public_key))
+        ):
+            raise AnchorError("anchor: proof is not over this seal's anchor digest")
+        return digest
+
+    def _confirmed(
+        self,
+        key: str,
+        proof: bytes,
+        heights: list[int],
+        headers: dict[int, bytes | AnchorError],
+    ) -> dict[str, Any]:
+        # A bad attestation (a reorged block, a broken calendar) must not hide
+        # a good one at a higher height: the lowest that confirms wins.
+        digest = self._digest(int(key), proof)
+        failed = AnchorError("anchor: proof attests nothing")
+        for height in heights:
+            try:
+                header = self._header(height, headers)
+                confirm(proof, digest, height, header)
+            except AnchorError as exc:
+                failed = exc
+                continue
+            return {"height": height, "header": header.hex()}
+        raise failed
+
+    def _upgrade_one(
+        self,
+        key: str,
+        value: str,
+        cache: dict[bytes, Timestamp | None],
+        headers: dict[int, bytes | AnchorError],
+    ) -> int:
+        proof: bytes | None = None
+        upgraded: bytes | None = None
+        bitcoin, failed = None, None
+        try:
+            try:
+                record = json.loads(value)
+                proof = base64.b64decode(record["ots"], validate=True)
+                stamped_at = int(record["stamped_at"])
+            except (ValueError, KeyError, TypeError, binascii.Error) as exc:
+                raise AnchorError("anchor: proof malformed") from exc
+            upgraded = upgrade(proof, self._calendar_for, cache)
+            heights = attested_heights(upgraded)
+            if heights:
+                bitcoin = self._confirmed(key, upgraded, heights, headers)
+        except AnchorError as exc:
+            failed = exc
+        with self._state.transaction():
+            if self._state.record(_PENDING, key) != value:
+                return 0
+            if bitcoin is not None and upgraded is not None:
+                self._state.put_record(
+                    _CONFIRMED, key, _record(upgraded, bitcoin, stamped_at)
+                )
+                self._state.drop_record(_PENDING, key)
+            else:
+                # Re-inserted at the back, so proofs that stay stuck cannot
+                # hold the upgrade window; an upgrade is kept, so the next
+                # round does not ask the calendars again.
+                kept = value
+                if upgraded is not None and upgraded != proof:
+                    kept = _record(upgraded, None, stamped_at)
+                self._state.drop_record(_PENDING, key)
+                self._state.put_record(_PENDING, key, kept)
+        if failed is not None:
+            raise failed
+        return 0 if bitcoin is None else 1
+
+    def view(self, seq_to: int) -> dict[str, Any] | None:
+        """The receipt's `public_anchor` for the seal ending at `seq_to`.
+
+        Args:
+            seq_to: The last sequence number the seal covers.
+
+        Returns:
+            `{"v": 1, "ots": ..., "bitcoin": ...}`, confirmed proof first, or
+            None while the seal is not stamped.
+        """
+        for kind in (_CONFIRMED, _PENDING):
+            value = self._state.record(kind, str(seq_to))
+            if value is None:
+                continue
+            try:
+                record = json.loads(value)
+                return {"v": 1, "ots": record["ots"], "bitcoin": record["bitcoin"]}
+            except (ValueError, KeyError, TypeError) as exc:
+                # Absent never reads as a pass in the explorer.
+                _log.warning("anchor record unreadable (%s)", type(exc).__name__)
+        return None

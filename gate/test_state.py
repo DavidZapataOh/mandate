@@ -162,3 +162,11 @@ def test_a_gate_key_that_is_a_link_is_refused(tmp_path):
     (tmp_path / "gate.key").symlink_to(real)
     with pytest.raises(ValueError, match="^state: gate key must be a regular file$"):
         load_gate_key(tmp_path / "gate.key")
+
+
+def test_seals_after_reads_a_bounded_slice(state_store):
+    for seq in (1, 2, 3):
+        state_store.add_seal({"seq_to": seq, "root": f"{seq:064x}"})
+    assert [v["seq_to"] for v in state_store.seals_after(1, 1)] == [2]
+    assert [v["seq_to"] for v in state_store.seals_after(1, 5)] == [2, 3]
+    assert state_store.seals_after(3, 5) == []

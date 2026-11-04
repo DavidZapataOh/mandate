@@ -164,6 +164,9 @@ def proof_receipt(
             "seal": seal_view(seal),
         },
         "reasoning": None if reasoning is None else json.loads(reasoning.to_json()),
+        # Unsigned: the proof commits to the gate-signed seal, and it arrives
+        # (and grows) after the receipt was signed.
+        "public_anchor": None,
     }
 
 

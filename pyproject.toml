@@ -95,6 +95,7 @@ module = [
     "swarm.test_console_attacks",
     "swarm.test_console_line",
     "swarm.test_desk",
+    "swarm.test_desk_anchor",
     "swarm.test_desk_state",
     "swarm.test_desk_reconcile",
     "swarm.test_server_reconcile",

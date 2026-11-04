@@ -267,6 +267,14 @@ class StateStore:
         rows = self._all("SELECT seal FROM seals ORDER BY seq_to")
         return [json.loads(seal) for (seal,) in rows]
 
+    def seals_after(self, seq_to: int, limit: int) -> list[dict[str, Any]]:
+        """At most `limit` seal views past `seq_to`, oldest first."""
+        rows = self._all(
+            "SELECT seal FROM seals WHERE seq_to > ? ORDER BY seq_to LIMIT ?",
+            (seq_to, limit),
+        )
+        return [json.loads(seal) for (seal,) in rows]
+
     def add_seal(self, view: dict[str, Any]) -> None:
         """Store one seal view, keyed by the last sequence it covers."""
         self._write(

@@ -31,6 +31,7 @@ from evidence.zktls import (
     BankProofSetup,
     ZktlsError,
 )
+from gate.anchor_public import PublicAnchors
 from gate.cava import ACTION_SALT_LEN, CavaAction, Freshness, canonical_bytes
 from gate.certs import DEFAULT_TTL_S, generate_keypair, public_key_of
 from gate.consent import (
@@ -161,6 +162,8 @@ class PaymentDesk:
             through to; None keeps everything in memory. Open quotes are not
             kept. One process per store.
         holder_ids: Source of opaque holder ids; random "h:" + 16 hex when None.
+        anchors: Public timestamps of the store's seals, served as each
+            receipt's ``public_anchor``; None serves ``null``.
 
     Raises:
         ValueError: If ``zktls`` is given for a rail other than the sandbox, or
@@ -185,6 +188,7 @@ class PaymentDesk:
         zktls: BankProofSetup | None = None,
         state: StateStore | None = None,
         holder_ids: Callable[[], str] | None = None,
+        anchors: PublicAnchors | None = None,
     ) -> None:
         # A proof of an Increase balance says nothing about any other bank.
         if zktls is not None and bank.rail != SANDBOX:
@@ -207,6 +211,7 @@ class PaymentDesk:
         # Seals use the gate key: the "anchor/v1:" prefix cannot collide with
         # a JWS signing input, so one published key verifies both.
         self._state = state
+        self._anchors = anchors
         self.registry = Registry(keypair=(gate_key, self._gate_pub), state=state)
         self._ledger = ConsentLedger(state=state)
         try:
@@ -1309,12 +1314,24 @@ class PaymentDesk:
             payment_id: Executed payment.
 
         Returns:
-            A deep copy of the receipt with every Disclosure, or None when the
-            payment has no receipt.
+            A deep copy of the receipt with every Disclosure and the seal's
+            current ``public_anchor``, or None when the payment has no receipt.
         """
         with self._lock:
             found = self._proofs.get(payment_id)
-            return None if found is None else json.loads(json.dumps(found))
+            copy: dict[str, Any] | None = (
+                None if found is None else json.loads(json.dumps(found))
+            )
+        if copy is None:
+            return None
+        # Outside the desk lock: the store has its own, and a round never
+        # holds it across a calendar call.
+        copy["public_anchor"] = (
+            None
+            if self._anchors is None
+            else self._anchors.view(copy["registry"]["seal"]["seq_to"])
+        )
+        return copy
 
     def latest_seal(self) -> dict[str, Any] | None:
         """View of the newest registry seal, or None before the first append."""

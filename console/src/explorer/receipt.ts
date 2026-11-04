@@ -90,6 +90,13 @@ export interface ReceiptFunds {
   notary_key: string | null;
 }
 
+/** An OpenTimestamps proof of the receipt's seal, with the Bitcoin header it is checked against once confirmed. */
+export interface PublicAnchor {
+  v: 1;
+  ots: string;
+  bitcoin: { height: number; header: string } | null;
+}
+
 /** Proof receipt v2, field for field in wire order. */
 export interface Receipt {
   v: 2;
@@ -99,6 +106,8 @@ export interface Receipt {
   policy: ReceiptPolicy;
   registry: { entry: Entry; proof: Proof; seal: Seal };
   reasoning: ReasoningAnchor | null;
+  /** Null until the desk has stamped the receipt's seal. */
+  public_anchor: PublicAnchor | null;
 }
 
 /** The gate-signed SD-JWT payload with every received Disclosure in place. */
@@ -141,7 +150,18 @@ export type Kind =
   | { readonly shape: Readonly<Record<string, Kind>> };
 
 /** Extra top-level receipt keys, spread after this module's keys. */
-export const RECEIPT_EXTENSIONS: Readonly<Record<string, Kind>> = {};
+export const RECEIPT_EXTENSIONS: Readonly<Record<string, Kind>> = {
+  // Unsigned: the proof commits to the gate-signed seal's anchor digest, so editing it breaks the check, not a signature.
+  public_anchor: {
+    nullable: {
+      shape: {
+        v: { literal: 1 },
+        ots: { pattern: /^[A-Za-z0-9+/]+={0,2}$/ },
+        bitcoin: { nullable: { shape: { height: "integer", header: { pattern: /^[0-9a-f]{160}$/ } } } },
+      },
+    },
+  },
+};
 const strings: Kind = { array: "string" };
 const optStr: Kind = { nullable: "string" };
 

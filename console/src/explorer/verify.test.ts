@@ -34,6 +34,21 @@ const failed = async (text: string, trust: Trust = TRUST) =>
   (await verifyReceipt(JSON.parse(text), trust)).find((r) => r.status === "fail");
 
 describe("verifyReceipt", () => {
+  it.each([
+    [{ v: 2, ots: "AA==", bitcoin: null }, "receipt: public_anchor.v malformed"],
+    [{ v: 1, ots: "not base64!", bitcoin: null }, "receipt: public_anchor.ots malformed"],
+    [{ v: 1, ots: "AA==", bitcoin: { height: 1, header: "00" } }, "receipt: public_anchor.bitcoin.header malformed"],
+    [{ v: 1, ots: "AA==", bitcoin: null, extra: 1 }, "receipt: public_anchor malformed"],
+  ])("refuses a public anchor block of the wrong shape %#", (anchor, message) => {
+    expect(() => parseReceipt(JSON.parse(tamper("public_anchor", anchor)))).toThrow(message);
+  });
+
+  it("reads a receipt without a public anchor as null and refuses one missing the key", () => {
+    expect(parseReceipt(JSON.parse(RECEIPT)).public_anchor).toBeNull();
+    const { public_anchor: _, ...older } = JSON.parse(RECEIPT);
+    expect(() => parseReceipt(older)).toThrow("receipt: public_anchor malformed");
+  });
+
   it("passes every step of a receipt the desk issued", async () => {
     const results = await verifyReceipt(JSON.parse(RECEIPT), TRUST);
     expect(results.map((r) => r.step)).toEqual([...STEPS]);

@@ -2,6 +2,7 @@
 
 import base64
 import json
+import threading
 import urllib.error
 from pathlib import Path
 from typing import Any
@@ -91,3 +92,27 @@ class RecordedHeaders:
         if height not in self.headers:
             raise AnchorError("anchor: header source unavailable")
         return self.headers[height]
+
+
+class BlockingCalendar:
+    """A calendar that holds every call until the test releases it."""
+
+    def __init__(self, inner: Calendar) -> None:
+        self.inner = inner
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def _hold(self) -> None:
+        self.entered.set()
+        # Bounded, so a failing test cannot hang the run.
+        self.release.wait(10)
+
+    def submit(self, digest: bytes, timeout: float | None = None) -> Timestamp:
+        self._hold()
+        return self.inner.submit(digest, timeout)
+
+    def get_timestamp(
+        self, commitment: bytes, timeout: float | None = None
+    ) -> Timestamp:
+        self._hold()
+        return self.inner.get_timestamp(commitment, timeout)

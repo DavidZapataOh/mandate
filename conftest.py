@@ -15,6 +15,7 @@ from bank.api import Bank
 from bank.rail import BankRail
 from bank.verifier import Verifier
 from evidence.zktls import BankProofSetup
+from gate.anchor_public import PublicAnchors
 from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair, public_key_of
 from gate.consent import Consent, HolderApproval, sign_approval
@@ -123,6 +124,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
         bank: BankRail | None = None,
         zktls: BankProofSetup | None = None,
         state: StateStore | None = None,
+        anchors: PublicAnchors | None = None,
     ) -> tuple[PaymentDesk, bytes | None]:
         gate_priv, gate_pub = _keys(gate_key)
         counter = itertools.count(1)
@@ -144,6 +146,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             zktls=zktls,
             state=state,
             holder_ids=lambda: f"h:{next(holder_number):016x}",
+            anchors=anchors,
         )
         if not register:
             return desk, None
