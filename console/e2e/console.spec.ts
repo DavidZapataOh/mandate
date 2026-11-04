@@ -1,14 +1,7 @@
-import { type APIRequestContext, expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { attack, row } from "./attack";
 
-const SWAP = "TEMPLATE Blocked payee swap at model->gate: recipient differs from intent";
-
-async function attack(request: APIRequestContext, kind: string): Promise<string> {
-  const resp = await request.post("/api/attack", { data: { kind } });
-  expect(resp.status()).toBe(200);
-  return resp.text();
-}
-
-const row = (page: Page, seq: number) => page.locator(`#ledger button[data-seq="${seq}"]`);
+const SWAP = "Blocked payee swap at model->gate: recipient differs from intent";
 
 test("a template attack lands in the ledger and opens its forensic detail", async ({
   page,
@@ -17,8 +10,16 @@ test("a template attack lands in the ledger and opens its forensic detail", asyn
   await page.goto("/console/");
   await expect(page.locator("#stream-state")).toHaveText("LIVE");
   const line = JSON.parse(await attack(request, "payee_swap"));
-  await expect(row(page, line.seq)).toHaveText(SWAP);
+  await expect(row(page, line.seq).locator(".origin")).toHaveText("TEMPLATE");
+  await expect(row(page, line.seq).locator(".text")).toHaveText(SWAP);
   expect(line.forensic.action_hash).toMatch(/^[0-9a-f]{64}$/);
+  const time = await row(page, line.seq).locator(".t").textContent();
+  await expect(
+    page.getByRole("button", {
+      name: `TEMPLATE · ${time} · template attack · ${SWAP} · hash ${line.forensic.action_hash.slice(0, 6).toUpperCase()} struck · DENIED`,
+      exact: true,
+    }),
+  ).toHaveAttribute("data-seq", String(line.seq));
   await row(page, line.seq).click();
   const drawer = page.locator("#forensic");
   await expect(drawer).toBeVisible();
@@ -35,8 +36,8 @@ test("forensic mode shows the hash prefix of every row", async ({ page, request 
   await expect(page.locator("#stream-state")).toHaveText("LIVE");
   const line = JSON.parse(await attack(request, "payee_swap"));
   await page.getByRole("button", { name: "FORENSIC" }).click();
-  await expect(row(page, line.seq)).toHaveText(
-    `TEMPLATE #${line.seq} attack NOT_MET ${line.forensic.action_hash.slice(0, 12)} recipient differs from intent`,
+  await expect(row(page, line.seq).locator(".text")).toHaveText(
+    `#${line.seq} attack NOT_MET ${line.forensic.action_hash.slice(0, 12)} recipient differs from intent`,
   );
   await expect(page.getByRole("button", { name: "FORENSIC" })).toHaveAttribute(
     "aria-pressed",
@@ -112,8 +113,41 @@ test("replay plays a recorded stream as live showed it, labeled REPLAY", async (
   );
   await page.goto("/console/?replay=e2e");
   await expect(page.locator("#stream-state")).toHaveText("REPLAY");
-  await expect(page.locator("#ledger button")).toHaveCount(2);
+  // Replay is paced by the scene: the second line lands once the first visitor has left.
+  await expect(page.locator("#ledger button")).toHaveCount(2, { timeout: 15_000 });
   const replayed = await page.locator("#ledger button").allTextContents();
   expect(replayed).toEqual([...live].reverse());
   await expect(page.locator("#stream-state")).toHaveText("REPLAY");
+});
+
+test("replay keeps the ledger in step with the scene: never more than one row ahead of the booth", async ({ page, request }) => {
+  await page.goto("/console/");
+  await expect(page.locator("#stream-state")).toHaveText("LIVE");
+  const recorded: string[] = [];
+  for (const kind of ["mcp_exfil", "payee_swap", "scope_escalation", "replay"]) recorded.push(await attack(request, kind));
+  await page.route("**/console/replay/paced.jsonl", (route) =>
+    route.fulfill({ status: 200, contentType: "application/x-ndjson", body: recorded.join("\n") }),
+  );
+  await page.addInitScript(() => {
+    const out = { ahead: 0, animated: [] as string[] };
+    (window as unknown as { __paced: typeof out }).__paced = out;
+    const tick = (): void => {
+      for (const b of document.querySelectorAll<HTMLElement>("#overlay button.bubble")) {
+        const seq = b.dataset.seq ?? "";
+        if (!out.animated.includes(seq)) out.animated.push(seq);
+      }
+      const rows = document.querySelectorAll("#ledger button").length;
+      out.ahead = Math.max(out.ahead, rows - out.animated.length);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await page.goto("/console/?replay=paced");
+  await expect(page.locator("#stream-state")).toHaveText("REPLAY");
+  await expect(page.locator("#ledger button")).toHaveCount(4, { timeout: 30_000 });
+  const paced = () => page.evaluate(() => (window as unknown as { __paced: { ahead: number; animated: string[] } }).__paced);
+  expect((await paced()).ahead).toBeLessThanOrEqual(1);
+  await expect.poll(async () => (await paced()).animated.length, { timeout: 10_000 }).toBe(4);
+  expect((await paced()).ahead).toBeLessThanOrEqual(1);
+  expect([...(await paced()).animated].sort()).toEqual(recorded.map((t) => String(JSON.parse(t).seq)).sort());
 });

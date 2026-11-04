@@ -23,7 +23,7 @@ from swarm.test_console_line import RECORD
 from swarm.test_server import FOREIGN, PAIR, _asgi
 
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; frame-ancestors 'none'"
 )

@@ -1,5 +1,5 @@
 import { parseHello, parseLine } from "./parse";
-import type { ConsoleLine } from "./types";
+import type { ConsoleLine, Hello } from "./types";
 
 export type StreamState = "live" | "reconnecting";
 
@@ -20,6 +20,7 @@ export interface LiveOptions {
   onLine(line: ConsoleLine): void;
   onState(state: StreamState): void;
   onReset(): void;
+  onHello?(hello: Hello): void;
   onReject?(text: string, error: unknown): void;
   open?: (url: string) => EventSourceLike;
   schedule?: (run: () => void, ms: number) => void;
@@ -74,6 +75,7 @@ export function connectLive(options: LiveOptions): { close(): void } {
           return;
         }
         epoch = hello.epoch;
+        options.onHello?.(hello);
       } catch (error) {
         options.onReject?.(event.data, error);
       }

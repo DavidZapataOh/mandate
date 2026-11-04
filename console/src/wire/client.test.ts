@@ -49,6 +49,7 @@ function harness() {
   const lines: ConsoleLine[] = [];
   const states: StreamState[] = [];
   const rejected: string[] = [];
+  const hellos: number[] = [];
   const timers: Array<[() => void, number]> = [];
   let resets = 0;
   const client = connectLive({
@@ -58,6 +59,7 @@ function harness() {
       resets += 1;
     },
     onReject: (text) => rejected.push(text),
+    onHello: (hello) => hellos.push(hello.last_seq),
     open: (url) => {
       const source = new FakeSource(url);
       sources.push(source);
@@ -65,7 +67,7 @@ function harness() {
     },
     schedule: (run, ms) => timers.push([run, ms]),
   });
-  return { client, sources, lines, states, rejected, timers, resets: () => resets };
+  return { client, sources, lines, states, rejected, hellos, timers, resets: () => resets };
 }
 
 describe("connectLive", () => {
@@ -196,5 +198,13 @@ describe("connectLive", () => {
     h.sources[0]!.fail(2);
     h.timers[0]![0]();
     expect(h.sources.at(-1)!.url).toBe("/api/events?since=4");
+  });
+
+  it("reports each kept hello, not the one that restarts the stream", () => {
+    const h = harness();
+    h.sources[0]!.greet("e1", 7);
+    h.sources[0]!.greet("e2", 3);
+    h.sources[1]!.greet("e2", 3);
+    expect(h.hellos).toEqual([7, 3]);
   });
 });

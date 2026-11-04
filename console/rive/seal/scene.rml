@@ -1,0 +1,59 @@
+<Rive version="1" kind="fragment">
+    <Artboard defaultStateMachineId="0:7" styleId="0:5" width="256" height="256" name="Seal" id="0:2">
+        <LayoutComponentStyle name="Seal Style" id="0:5"/>
+        <Shape name="Top" id="0:20" y="-8"><PointsPath isClosed="true" name="Path">
+                <StraightVertex x="32" y="32"/><StraightVertex x="224" y="32"/><StraightVertex x="224" y="128"/>
+                <StraightVertex x="128" y="128"/><StraightVertex x="128" y="108"/><StraightVertex x="32" y="108"/>
+            </PointsPath><Fill name="Fill"><SolidColor colorValue="FF0B0D10" name="Color"/></Fill></Shape>
+        <Shape name="Bottom" id="0:21" y="8"><PointsPath isClosed="true" name="Path">
+                <StraightVertex x="32" y="224"/><StraightVertex x="224" y="224"/><StraightVertex x="224" y="148"/>
+                <StraightVertex x="128" y="148"/><StraightVertex x="128" y="128"/><StraightVertex x="32" y="128"/>
+            </PointsPath><Fill name="Fill"><SolidColor colorValue="FF0B0D10" name="Color"/></Fill></Shape>
+        <Shape name="Seam" id="0:22" opacity="0"><PointsPath isClosed="true" name="Path">
+                <StraightVertex x="32" y="108"/><StraightVertex x="128" y="108"/><StraightVertex x="128" y="128"/><StraightVertex x="224" y="128"/>
+                <StraightVertex x="224" y="148"/><StraightVertex x="128" y="148"/><StraightVertex x="128" y="128"/><StraightVertex x="32" y="128"/>
+            </PointsPath><Fill name="Fill"><SolidColor colorValue="FF1FD598" name="Color"/></Fill></Shape>
+        <Shape name="Alert" id="0:23" opacity="0" x="128" y="128"><Rectangle width="192" height="20" name="Path"/><Fill name="Fill"><SolidColor colorValue="FFFF5C5C" name="Color"/></Fill></Shape>
+        <StateMachine name="seal" id="0:7">
+            <StateMachineTrigger name="verify" id="0:40"/>
+            <StateMachineTrigger name="deny" id="0:41"/>
+            <StateMachineTrigger name="wait" id="0:42"/>
+            <StateMachineLayer name="Layer 1" id="0:8">
+                <AnyState x="0" y="-150">
+                    <StateTransition stateToId="0:13"><TransitionTriggerCondition inputId="0:40"/></StateTransition>
+                    <StateTransition stateToId="0:14"><TransitionTriggerCondition inputId="0:41"/></StateTransition>
+                    <StateTransition stateToId="0:12"><TransitionTriggerCondition inputId="0:42"/></StateTransition>
+                </AnyState>
+                <ExitState x="300" y="-150"/>
+                <EntryState x="-300" y="0"><StateTransition stateToId="0:12"/></EntryState>
+                <AnimationState x="0" y="0" animationId="0:30" id="0:12"/>
+                <AnimationState x="200" y="0" animationId="0:31" id="0:13"/>
+                <AnimationState x="200" y="150" animationId="0:32" id="0:14"/>
+            </StateMachineLayer>
+        </StateMachine>
+        <LinearAnimation loopValue="loop" duration="60" name="wait" id="0:30">
+            <KeyedObject objectId="0:20"><KeyedProperty propertyKey="14"><KeyFrameDouble value="-8" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:21"><KeyedProperty propertyKey="14"><KeyFrameDouble value="8" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:20"><KeyedProperty propertyKey="13"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:21"><KeyedProperty propertyKey="13"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:22"><KeyedProperty propertyKey="18"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:23"><KeyedProperty propertyKey="18"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+        </LinearAnimation>
+        <LinearAnimation duration="8" name="verify" id="0:31">
+            <KeyedObject objectId="0:20"><KeyedProperty propertyKey="14"><KeyFrameDouble value="-8" interpolationType="linear" frame="0"/><KeyFrameDouble value="0" interpolationType="linear" frame="8"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:21"><KeyedProperty propertyKey="14"><KeyFrameDouble value="8" interpolationType="linear" frame="0"/><KeyFrameDouble value="0" interpolationType="linear" frame="8"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:20"><KeyedProperty propertyKey="13"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:21"><KeyedProperty propertyKey="13"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:22"><KeyedProperty propertyKey="18"><KeyFrameDouble value="1" interpolationType="hold" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:23"><KeyedProperty propertyKey="18"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+        </LinearAnimation>
+        <LinearAnimation duration="24" name="deny" id="0:32">
+            <KeyedObject objectId="0:20"><KeyedProperty propertyKey="14"><KeyFrameDouble value="-8" interpolationType="linear" frame="0"/><KeyFrameDouble value="-16" interpolationType="linear" frame="6"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:21"><KeyedProperty propertyKey="14"><KeyFrameDouble value="8" interpolationType="linear" frame="0"/><KeyFrameDouble value="16" interpolationType="linear" frame="6"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:20"><KeyedProperty propertyKey="13"><KeyFrameDouble value="-6" interpolationType="hold" frame="0"/><KeyFrameDouble value="6" interpolationType="hold" frame="5"/><KeyFrameDouble value="-6" interpolationType="hold" frame="10"/><KeyFrameDouble value="6" interpolationType="hold" frame="14"/><KeyFrameDouble value="0" interpolationType="hold" frame="19"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:21"><KeyedProperty propertyKey="13"><KeyFrameDouble value="-6" interpolationType="hold" frame="0"/><KeyFrameDouble value="6" interpolationType="hold" frame="5"/><KeyFrameDouble value="-6" interpolationType="hold" frame="10"/><KeyFrameDouble value="6" interpolationType="hold" frame="14"/><KeyFrameDouble value="0" interpolationType="hold" frame="19"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:22"><KeyedProperty propertyKey="18"><KeyFrameDouble value="0" interpolationType="linear" frame="0"/></KeyedProperty></KeyedObject>
+            <KeyedObject objectId="0:23"><KeyedProperty propertyKey="18"><KeyFrameDouble value="1" interpolationType="hold" frame="0"/></KeyedProperty></KeyedObject>
+        </LinearAnimation>
+    </Artboard>
+</Rive>

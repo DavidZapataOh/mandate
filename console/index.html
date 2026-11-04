@@ -4,20 +4,44 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Mandate Console</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
   </head>
   <body>
-    <header>
-      <h1>Mandate</h1>
+    <header class="bar">
+      <h1><img class="wordmark" src="/brand/mandate-horizontal-white.svg" alt="Mandate" /></h1>
       <p id="stream-state" role="status">CONNECTING</p>
       <div role="group" aria-label="View mode">
         <button type="button" id="mode-game" aria-pressed="true">GAME</button>
         <button type="button" id="mode-forensic" aria-pressed="false">FORENSIC</button>
       </div>
+      <p class="counters">verified <b id="c-verified">0</b> · denied <b id="c-denied">0</b> · p50 <b id="c-p50">—</b></p>
     </header>
     <main>
-      <ol id="ledger" aria-label="Ledger" aria-live="polite"></ol>
+      <section id="stage" aria-label="Live branch: Meta's agents, the Mandate booth and the bank">
+        <canvas id="world" width="444" height="164"></canvas>
+        <div id="overlay">
+          <span class="tag" data-anchor="spark">Muse Spark</span>
+          <span class="tag" data-anchor="code">Muse Code</span>
+          <span class="tag" data-anchor="courier">Muse Code</span>
+        </div>
+        <div id="booth" data-seal="wait">
+          <span class="sign">TELLER</span>
+          <canvas id="seal" width="66" height="54"></canvas>
+        </div>
+        <p id="alert" role="status" hidden></p>
+      </section>
+      <section class="ledger-strip" aria-label="Ledger">
+        <ol id="ledger" aria-label="Ledger" aria-live="polite"></ol>
+      </section>
     </main>
     <aside id="forensic" aria-label="Forensic detail" hidden></aside>
+    <svg class="sprite" aria-hidden="true" width="0" height="0">
+      <symbol id="i-verified" viewBox="0 0 256 256"><path fill="#F6F4EE" d="M32 32H224V128H128V108H32ZM32 224H224V148H128V128H32Z"/><path fill="#1FD598" d="M32 108H128V128H32ZM128 128H224V148H128Z"/></symbol>
+      <symbol id="i-denied" viewBox="0 0 256 256"><path fill="#F6F4EE" d="M32 16H224V112H128V92H32ZM32 240H224V164H128V144H32Z"/><path fill="#FF5C5C" d="M32 118H224V138H32Z"/></symbol>
+      <symbol id="i-waiting" viewBox="0 0 256 256"><path fill="#8A8F98" d="M32 24H224V120H128V100H32ZM32 232H224V156H128V136H32Z"/></symbol>
+      <symbol id="i-breach" viewBox="0 0 256 256"><path fill="#FF5C5C" d="M32 118H224V138H32Z"/></symbol>
+      <symbol id="i-noted" viewBox="0 0 256 256"><path fill="#8A8F98" d="M112 112H144V144H112Z"/></symbol>
+    </svg>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

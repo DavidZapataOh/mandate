@@ -45,7 +45,7 @@ _HEARTBEAT_S = 15.0
 _NOT_FOUND = {"error": "not found"}
 _SEND_TIMEOUT_S = 10.0
 _CONSOLE_CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
     "base-uri 'none'; frame-ancestors 'none'"
 )

@@ -1,6 +1,7 @@
 import { closeForensic, forensicFetcher, openForensic } from "./forensic/drawer";
 import { mountLedger } from "./ledger/ledger";
 import type { Mode } from "./ledger/narrate";
+import { mountScene } from "./scene/mount";
 import { LineStore } from "./store/store";
 import { connectLive } from "./wire/client";
 import { parseRecording, playRecording, replayName } from "./wire/replay";
@@ -25,9 +26,11 @@ const name = selectedReplay();
 const fetchLine = forensicFetcher(name !== null);
 const store = new LineStore();
 const aside = byId("forensic");
-const ledger = mountLedger(byId("ledger"), store, (seq) => {
+const open = (seq: number): void => {
   void openForensic(aside, seq, store, fetchLine);
-});
+};
+const ledger = mountLedger(byId("ledger"), store, open);
+const scene = mountScene(document, store, open);
 
 const buttons: Record<Mode, HTMLElement> = {
   game: byId("mode-game"),
@@ -47,7 +50,7 @@ async function replay(name: string): Promise<void> {
   try {
     const resp = await fetch(`./replay/${name}.jsonl`);
     if (!resp.ok) throw new Error(`replay: ${resp.status}`);
-    playRecording(parseRecording(await resp.text()), (line) => void store.add(line));
+    playRecording(parseRecording(await resp.text()), (line) => void store.add(line), undefined, undefined, scene.idle);
   } catch {
     state.textContent = "REPLAY ERROR";
   }
@@ -64,6 +67,7 @@ function start(): void {
   }
   connectLive({
     onLine: (line) => void store.add(line),
+    onHello: (hello) => scene.hello(hello.last_seq),
     onState: (next) => {
       state.textContent = next === "live" ? "LIVE" : "RECONNECTING";
     },

@@ -2,6 +2,7 @@ import { parseLine, WireError } from "./parse";
 import type { ConsoleLine } from "./types";
 
 export const REPLAY_STEP_MS = 600;
+export const REPLAY_POLL_MS = 100;
 
 const NAME = /^[a-z0-9-]{1,40}$/;
 
@@ -36,12 +37,16 @@ export function parseRecording(text: string): ConsoleLine[] {
   return lines;
 }
 
-/** Deliver the first line at once, then one every `stepMs`, in recorded order. */
+/**
+ * Deliver the first line at once, then each next one no sooner than `stepMs` later and only once
+ * `ready` says the scene has played the previous one, in recorded order.
+ */
 export function playRecording(
   lines: readonly ConsoleLine[],
   onLine: (line: ConsoleLine) => void,
   schedule: Schedule = (run, ms) => void setTimeout(run, ms),
   stepMs: number = REPLAY_STEP_MS,
+  ready: () => boolean = () => true,
 ): void {
   const play = (index: number): void => {
     const line = lines[index];
@@ -53,7 +58,14 @@ export function playRecording(
         throw error;
       });
     }
-    schedule(() => play(index + 1), stepMs);
+    schedule(() => wait(index + 1), stepMs);
+  };
+  // A recording delivered faster than the booth serves it would put the ledger ahead of the
+  // scene and overflow the scene's queue.
+  const wait = (index: number): void => {
+    if (index >= lines.length) return;
+    if (ready()) play(index);
+    else schedule(() => wait(index), REPLAY_POLL_MS);
   };
   play(0);
 }

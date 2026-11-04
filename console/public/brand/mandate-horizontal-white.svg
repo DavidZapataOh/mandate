@@ -1,0 +1,44 @@
+<svg fill="#ffffff" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1260 256" width="1260" height="256" role="img" aria-labelledby="title"><title>Mandate logo</title>
+  <title id="title">Mandate horizontal lockup</title>
+  <g id="symbol">
+    <path fill="#ffffff" d="M32 32 H224 V128 H128 V108 H32 Z M32 224 H224 V148 H128 V128 H32 Z"/>
+  </g>
+  <g id="wordmark" transform="translate(320,0)" fill="#ffffff">
+    <g id="letter-m">
+      <path d="M0 68 H128 V96 H0 Z"/>
+      <path d="M0 68 H28 V188 H0 Z"/>
+      <path d="M50 88 H78 V158 H50 Z"/>
+      <path d="M100 68 H128 V188 H100 Z"/>
+    </g>
+    <g id="letter-a1" transform="translate(156,0)">
+      <path d="M0 188 L32.15 68 L60.15 68 L28 188 Z"/>
+      <path d="M100 188 L67.85 68 L39.85 68 L72 188 Z"/>
+      <path d="M32.15 68 H67.85 V96 H32.15 Z"/>
+      <path d="M20 140 H80 V164 H20 Z"/>
+    </g>
+    <g id="letter-n" transform="translate(284,0)">
+      <path d="M0 68 H28 V188 H0 Z"/>
+      <path d="M20 68 H52 L84.15 188 H52.15 Z"/>
+      <path d="M60.15 68 H88.15 V188 H60.15 Z"/>
+    </g>
+    <g id="letter-d" transform="translate(400.15,0)">
+      <path fill-rule="evenodd" d="M0 188 V68 H60 A60 60 0 0 1 60 188 H0 Z M28 160 V96 H60 A32 32 0 0 1 60 160 H28 Z"/>
+    </g>
+    <g id="letter-a2" transform="translate(548.15,0)">
+      <path d="M0 188 L32.15 68 L60.15 68 L28 188 Z"/>
+      <path d="M100 188 L67.85 68 L39.85 68 L72 188 Z"/>
+      <path d="M32.15 68 H67.85 V96 H32.15 Z"/>
+      <path d="M20 140 H80 V164 H20 Z"/>
+    </g>
+    <g id="letter-t" transform="translate(676.15,0)">
+      <path d="M0 68 H116 V96 H0 Z"/>
+      <path d="M44 88 H72 V188 H44 Z"/>
+    </g>
+    <g id="letter-e" transform="translate(820.15,0)">
+      <path d="M0 68 H28 V188 H0 Z"/>
+      <path d="M0 68 H104 V96 H0 Z"/>
+      <path d="M0 114 H88 V142 H0 Z"/>
+      <path d="M0 160 H104 V188 H0 Z"/>
+    </g>
+  </g>
+</svg>

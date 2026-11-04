@@ -29,6 +29,7 @@ Each row maps a Meta model to its role, provider, source file and the command th
 | Mandate MCP desk | `muse-spark-1.3` | Meta Model API, Muse Code | `swarm/server.py`, `swarm/mcp_bridge.py` | `pytest -m live e2e/test_mcp_live.py` |
 | WebMCP approval | glasses assistant | Meta Web App | `webapp/app.js` | `pytest e2e/test_webapp.py` (headless Node and in-browser tests; not run on real glasses) |
 | Intent drafting | `muse-spark-1.3` | Meta Model API | `swarm/intent.py` | `pytest -m live e2e/test_voice_live.py` |
+| Console world plates and frames | `muse-image-1.0` | Meta Model API (images) | `console/tools/muse_image.ts`, `console/tools/assets.json` | `cd console && npx vitest run tools/muse_image.test.ts` (request shape, offline); every plate's request id is in `console/tools/assets.json` and embedded in its PNG |
 
 Live tests are opt-in and need `MODEL_API_KEY` or `META_API_KEY`, plus `BASETEN_API_KEY` for the attacker row and a logged-in `muse` CLI for the swarm row.
 

@@ -1,0 +1,814 @@
+{
+  "assets": [
+    {
+      "file": "office.png",
+      "raw": "art/raw/office.webp",
+      "crop": [
+        0,
+        0,
+        1776,
+        1296
+      ],
+      "size": [
+        222,
+        164
+      ],
+      "key": null,
+      "model": "muse-image-1.0",
+      "request": "636b9455-eea2-4c5e-b57f-00562b8b695e",
+      "prompt": "tools/prompts/office.txt"
+    },
+    {
+      "file": "bank.png",
+      "raw": "art/raw/bank.webp",
+      "crop": [
+        0,
+        0,
+        1824,
+        1347
+      ],
+      "size": [
+        222,
+        164
+      ],
+      "key": null,
+      "model": "muse-image-1.0",
+      "request": "8c2ab064-e1c9-4fc6-9160-01e566c44071",
+      "prompt": "tools/prompts/bank.txt"
+    },
+    {
+      "file": "booth.png",
+      "raw": "art/raw/booth.webp",
+      "crop": [
+        0,
+        0,
+        1312,
+        1712
+      ],
+      "size": [
+        82,
+        107
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "bfca105c-d526-42a8-af59-46a72eb3e848",
+      "prompt": "tools/prompts/booth.txt"
+    },
+    {
+      "file": "vault.png",
+      "raw": "art/raw/vault.webp",
+      "crop": [
+        0,
+        0,
+        1440,
+        1712
+      ],
+      "size": [
+        53,
+        63
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "43d195f6-7753-4a67-826b-13cfb3d77a66",
+      "prompt": "tools/prompts/vault.txt"
+    },
+    {
+      "file": "spark.png",
+      "raw": "art/raw/spark.webp",
+      "crop": [
+        0,
+        0,
+        1648,
+        1536
+      ],
+      "size": [
+        30,
+        28
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "b0e58996-fad6-4c75-b08b-068925180568",
+      "prompt": "tools/prompts/spark.txt"
+    },
+    {
+      "file": "code-team.png",
+      "raw": "art/raw/code-team.webp",
+      "crop": [
+        0,
+        0,
+        2112,
+        1152
+      ],
+      "size": [
+        90,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "2e3350d9-acb9-4117-8718-ad9543be46b9",
+      "prompt": "tools/prompts/code-team.txt"
+    },
+    {
+      "file": "courier.png",
+      "raw": "art/raw/courier.webp",
+      "crop": [
+        0,
+        0,
+        1232,
+        1904
+      ],
+      "size": [
+        30,
+        47
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "79b3643f-f27f-42fe-96a8-cca01d42dc71",
+      "prompt": "tools/prompts/courier.txt"
+    },
+    {
+      "file": "thief.png",
+      "raw": "art/raw/thief-figure.png",
+      "crop": [
+        0,
+        0,
+        1200,
+        1714
+      ],
+      "size": [
+        42,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "4a68a155-97d3-4242-8037-21306eeca1b7",
+      "prompt": "tools/prompts/thief.txt"
+    },
+    {
+      "file": "clerks.png",
+      "raw": "art/raw/clerks.webp",
+      "crop": [
+        81,
+        0,
+        3005,
+        768
+      ],
+      "size": [
+        90,
+        23
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "a8939e57-bc1e-487c-ab07-5eb51920520d",
+      "prompt": "tools/prompts/clerks.txt"
+    },
+    {
+      "file": "spark-1.png",
+      "raw": "art/raw/spark-1.webp",
+      "crop": [
+        0,
+        0,
+        1648,
+        1536
+      ],
+      "size": [
+        30,
+        28
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "d6354af5-fb67-4447-9450-77439ced2556",
+      "prompt": "tools/prompts/spark-1.txt"
+    },
+    {
+      "file": "spark-2.png",
+      "raw": "art/raw/spark-2.webp",
+      "crop": [
+        0,
+        0,
+        1648,
+        1536
+      ],
+      "size": [
+        30,
+        28
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "07ac565e-f8b5-4e55-96d1-875187c8a053",
+      "prompt": "tools/prompts/spark-2.txt"
+    },
+    {
+      "file": "spark-3.png",
+      "raw": "art/raw/spark-3.webp",
+      "crop": [
+        0,
+        0,
+        1648,
+        1536
+      ],
+      "size": [
+        30,
+        28
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "cd2aacec-fabd-4e80-839e-cc28f47a500d",
+      "prompt": "tools/prompts/spark-3.txt"
+    },
+    {
+      "file": "code-team-1.png",
+      "raw": "art/raw/code-team-1.webp",
+      "crop": [
+        0,
+        0,
+        2044,
+        1136
+      ],
+      "size": [
+        90,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "70062d34-3be1-4a80-8493-eba39562308c",
+      "prompt": "tools/prompts/code-team-1.txt"
+    },
+    {
+      "file": "code-team-2.png",
+      "raw": "art/raw/code-team-2.webp",
+      "crop": [
+        0,
+        0,
+        2044,
+        1136
+      ],
+      "size": [
+        90,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "ff28390a-7761-495f-9fd1-d20d51b400f1",
+      "prompt": "tools/prompts/code-team-2.txt"
+    },
+    {
+      "file": "code-team-3.png",
+      "raw": "art/raw/code-team-3.webp",
+      "crop": [
+        0,
+        0,
+        2044,
+        1136
+      ],
+      "size": [
+        90,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "aa89a3fb-0d63-4a66-b997-6a1de6a5946c",
+      "prompt": "tools/prompts/code-team-3.txt"
+    },
+    {
+      "file": "clerks-1.png",
+      "raw": "art/raw/clerks-1.webp",
+      "crop": [
+        81,
+        0,
+        3005,
+        768
+      ],
+      "size": [
+        90,
+        23
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "0eb6eb0f-5901-469b-a21d-e3fca1adff0a",
+      "prompt": "tools/prompts/clerks-1.txt"
+    },
+    {
+      "file": "clerks-2.png",
+      "raw": "art/raw/clerks-2.webp",
+      "crop": [
+        81,
+        0,
+        3005,
+        768
+      ],
+      "size": [
+        90,
+        23
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "b435fdb9-ec3f-4662-91fb-c4b164a752ae",
+      "prompt": "tools/prompts/clerks-2.txt"
+    },
+    {
+      "file": "clerks-3.png",
+      "raw": "art/raw/clerks-3.webp",
+      "crop": [
+        81,
+        0,
+        3005,
+        768
+      ],
+      "size": [
+        90,
+        23
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "90f91a01-b645-4229-b494-f094064f11bf",
+      "prompt": "tools/prompts/clerks-3.txt"
+    },
+    {
+      "file": "vault-1.png",
+      "raw": "art/raw/vault-1.webp",
+      "crop": [
+        0,
+        0,
+        1440,
+        1712
+      ],
+      "size": [
+        53,
+        63
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "1f965329-90c7-4c16-9d57-d48af02beec3",
+      "prompt": "tools/prompts/vault-1.txt"
+    },
+    {
+      "file": "vault-2.png",
+      "raw": "art/raw/vault-2.webp",
+      "crop": [
+        0,
+        0,
+        1440,
+        1712
+      ],
+      "size": [
+        53,
+        63
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "ea0bb64d-db28-4428-8110-7f04e9b9669f",
+      "prompt": "tools/prompts/vault-2.txt"
+    },
+    {
+      "file": "vault-3.png",
+      "raw": "art/raw/vault-3.webp",
+      "crop": [
+        0,
+        0,
+        1440,
+        1712
+      ],
+      "size": [
+        53,
+        63
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "c12b7fcc-197c-449e-a127-c44288821ad9",
+      "prompt": "tools/prompts/vault-3.txt"
+    },
+    {
+      "file": "courier-1.png",
+      "raw": "art/raw/courier-1.webp",
+      "crop": [
+        0,
+        0,
+        1232,
+        1904
+      ],
+      "size": [
+        30,
+        47
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "01df08d2-be50-4f1c-94a7-40a3e627b5e5",
+      "prompt": "tools/prompts/courier-1.txt"
+    },
+    {
+      "file": "courier-2.png",
+      "raw": "art/raw/courier-2.webp",
+      "crop": [
+        0,
+        0,
+        1232,
+        1904
+      ],
+      "size": [
+        30,
+        47
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "fd7a1109-2e65-4656-9a6f-394b131eb89f",
+      "prompt": "tools/prompts/courier-2.txt"
+    },
+    {
+      "file": "courier-3.png",
+      "raw": "art/raw/courier-3.webp",
+      "crop": [
+        0,
+        0,
+        1232,
+        1904
+      ],
+      "size": [
+        30,
+        47
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "8a1cc9e4-6def-4d58-a078-6296aa66e17f",
+      "prompt": "tools/prompts/courier-3.txt"
+    },
+    {
+      "file": "courier-4.png",
+      "raw": "art/raw/courier-4.webp",
+      "crop": [
+        0,
+        0,
+        1232,
+        1904
+      ],
+      "size": [
+        30,
+        47
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "8d43b7c7-2a7a-434d-9287-83f4797685aa",
+      "prompt": "tools/prompts/courier-4.txt"
+    },
+    {
+      "file": "thief-1.png",
+      "raw": "art/raw/thief-1.webp",
+      "crop": [
+        0,
+        0,
+        1200,
+        1714
+      ],
+      "size": [
+        42,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "698904ff-2ad7-40d6-b0da-acdb14b0d2a0",
+      "prompt": "tools/prompts/thief-1.txt"
+    },
+    {
+      "file": "thief-2.png",
+      "raw": "art/raw/thief-2.webp",
+      "crop": [
+        0,
+        0,
+        1200,
+        1714
+      ],
+      "size": [
+        42,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "b30bc777-4065-4614-bb3d-6597ed053b86",
+      "prompt": "tools/prompts/thief-2.txt"
+    },
+    {
+      "file": "thief-3.png",
+      "raw": "art/raw/thief-3.webp",
+      "crop": [
+        0,
+        0,
+        1200,
+        1714
+      ],
+      "size": [
+        42,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "289f5a6a-52d6-4298-8b2f-c0a21c61f9c6",
+      "prompt": "tools/prompts/thief-3.txt"
+    },
+    {
+      "file": "thief-4.png",
+      "raw": "art/raw/thief-4.webp",
+      "crop": [
+        0,
+        0,
+        1200,
+        1714
+      ],
+      "size": [
+        42,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "967c6c18-292a-41c3-94d2-465d961ad391",
+      "prompt": "tools/prompts/thief-4.txt"
+    },
+    {
+      "file": "brute.png",
+      "raw": "art/raw/brute-0.webp",
+      "crop": [
+        0,
+        88,
+        1264,
+        1724
+      ],
+      "size": [
+        44,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "30ff57f0-12da-4d81-ae9c-07aa10444134",
+      "prompt": "tools/prompts/brute-0.txt"
+    },
+    {
+      "file": "brute-1.png",
+      "raw": "art/raw/brute-1.webp",
+      "crop": [
+        0,
+        88,
+        1264,
+        1724
+      ],
+      "size": [
+        44,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "769e7c4b-eb1d-46e3-a74c-238eae567aae",
+      "prompt": "tools/prompts/brute-1.txt"
+    },
+    {
+      "file": "brute-2.png",
+      "raw": "art/raw/brute-2.webp",
+      "crop": [
+        0,
+        88,
+        1264,
+        1724
+      ],
+      "size": [
+        44,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "cf42918a-d2ef-4101-95e0-9ba17043a5c0",
+      "prompt": "tools/prompts/brute-2.txt"
+    },
+    {
+      "file": "brute-3.png",
+      "raw": "art/raw/brute-3.webp",
+      "crop": [
+        0,
+        88,
+        1264,
+        1724
+      ],
+      "size": [
+        44,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "e7fe7238-88c0-49c2-8305-2ce095615285",
+      "prompt": "tools/prompts/brute-3.txt"
+    },
+    {
+      "file": "brute-4.png",
+      "raw": "art/raw/brute-4.webp",
+      "crop": [
+        0,
+        88,
+        1264,
+        1724
+      ],
+      "size": [
+        44,
+        60
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "ef66fed7-9b41-4129-9ee9-c5e728532cbc",
+      "prompt": "tools/prompts/brute-4.txt"
+    },
+    {
+      "file": "forger.png",
+      "raw": "art/raw/forger-0.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "b4d70cbd-8c61-4c90-a0b6-d05d71a593d7",
+      "prompt": "tools/prompts/forger-0.txt"
+    },
+    {
+      "file": "forger-1.png",
+      "raw": "art/raw/forger-1.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "6cdc2084-4a2a-438a-9a3e-c97ab4c97d55",
+      "prompt": "tools/prompts/forger-1.txt"
+    },
+    {
+      "file": "forger-2.png",
+      "raw": "art/raw/forger-2.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "c62869c7-4d68-4149-828b-38d28f588880",
+      "prompt": "tools/prompts/forger-2.txt"
+    },
+    {
+      "file": "forger-3.png",
+      "raw": "art/raw/forger-3.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "c2fc9d4c-4a1b-41eb-9488-7453d26b8b90",
+      "prompt": "tools/prompts/forger-3.txt"
+    },
+    {
+      "file": "forger-4.png",
+      "raw": "art/raw/forger-4.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "6b1debd7-1ff5-4ec0-a3b3-350c6f2d07bc",
+      "prompt": "tools/prompts/forger-4.txt"
+    },
+    {
+      "file": "switcher.png",
+      "raw": "art/raw/switcher-0.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "800eb218-c731-4749-9435-5c105f3435b2",
+      "prompt": "tools/prompts/switcher-0.txt"
+    },
+    {
+      "file": "switcher-1.png",
+      "raw": "art/raw/switcher-1.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "28ec47f4-c622-4e7f-b7e4-8d5d44656da0",
+      "prompt": "tools/prompts/switcher-1.txt"
+    },
+    {
+      "file": "switcher-2.png",
+      "raw": "art/raw/switcher-2.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "e0de45f1-aed0-48e4-add5-5c16e155c0f6",
+      "prompt": "tools/prompts/switcher-2.txt"
+    },
+    {
+      "file": "switcher-3.png",
+      "raw": "art/raw/switcher-3.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "37925357-7b1d-4942-ac6b-f9e6cb106d1f",
+      "prompt": "tools/prompts/switcher-3.txt"
+    },
+    {
+      "file": "switcher-4.png",
+      "raw": "art/raw/switcher-4.webp",
+      "crop": [
+        40,
+        64,
+        1197,
+        1760
+      ],
+      "size": [
+        34,
+        50
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "89a34385-d6f8-4e50-ba7e-d84cc010b9a0",
+      "prompt": "tools/prompts/switcher-4.txt"
+    },
+    {
+      "file": "envelope.png",
+      "raw": "art/raw/envelope-0.webp",
+      "crop": [
+        100,
+        60,
+        1560,
+        1248
+      ],
+      "size": [
+        10,
+        8
+      ],
+      "key": "ff00ff",
+      "model": "muse-image-1.0",
+      "request": "5559ee4f-fef9-4192-90a2-c495dd99a601",
+      "prompt": "tools/prompts/envelope-0.txt"
+    }
+  ]
+}

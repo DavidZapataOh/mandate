@@ -15,7 +15,10 @@ beforeEach(() => {
   opened = [];
 });
 
-const rows = () => [...list.querySelectorAll("button")].map((b) => b.textContent);
+const rows = () =>
+  [...list.querySelectorAll("button")].map((b) =>
+    [...b.querySelectorAll(".origin, .text")].map((span) => span.textContent).join(" "),
+  );
 
 describe("mountLedger", () => {
   it("shows the newest line first as a sentence", () => {

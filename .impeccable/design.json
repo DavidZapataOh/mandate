@@ -1,0 +1,580 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-03T23:53:17+00:00",
+  "title": "Design System: Mandate Console",
+  "extensions": {
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#0B0D10",
+        "purpose": "Page ground, tags, drawer and the seal halves.",
+        "tonalRamp": [
+          "#0A0B0D",
+          "#232529",
+          "#404246",
+          "#5F6165",
+          "#808287",
+          "#A2A5AA",
+          "#C6C9CE",
+          "#EDEFF1"
+        ]
+      },
+      "bone": {
+        "role": "neutral",
+        "displayName": "Bone",
+        "canonical": "#F6F4EE",
+        "purpose": "Primary text, hairlines at 14%, focus rings, pressed controls.",
+        "tonalRamp": [
+          "#0C0B09",
+          "#262521",
+          "#43423D",
+          "#63615C",
+          "#84827D",
+          "#A7A59F",
+          "#CBC9C3",
+          "#F0EEEB"
+        ]
+      },
+      "verify": {
+        "role": "primary",
+        "displayName": "Verify Green",
+        "canonical": "#1FD598",
+        "purpose": "Only on verified decisions: joined seal seam, VERIFIED, verified count.",
+        "tonalRamp": [
+          "#001501",
+          "#003808",
+          "#005927",
+          "#007B46",
+          "#009F66",
+          "#00C388",
+          "#43E9AB",
+          "#B1FFDC"
+        ]
+      },
+      "alert": {
+        "role": "secondary",
+        "displayName": "Refusal Red",
+        "canonical": "#FF5C5C",
+        "purpose": "Only on refusals: alert bar, refused seam, DENIED, struck hash. Ink text on it.",
+        "tonalRamp": [
+          "#2D0000",
+          "#670000",
+          "#8F0000",
+          "#B70121",
+          "#E13E43",
+          "#FF6665",
+          "#FF8D88",
+          "#FFCFC8"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted Steel",
+        "canonical": "#8A8F98",
+        "purpose": "Secondary text: times, hashes, separators, unpressed buttons.",
+        "tonalRamp": [
+          "#090B0F",
+          "#21252C",
+          "#3E424A",
+          "#5D616A",
+          "#7E838B",
+          "#A0A5AE",
+          "#C4C9D3",
+          "#EBEFF5"
+        ]
+      },
+      "booth-face": {
+        "role": "neutral",
+        "displayName": "Booth Face",
+        "canonical": "#EFF2E7",
+        "purpose": "Sampled from the booth plate; the seal sits on it.",
+        "tonalRamp": [
+          "#0B0C08",
+          "#24261E",
+          "#41433A",
+          "#606359",
+          "#81847A",
+          "#A4A69C",
+          "#C8CBC0",
+          "#EEEFE9"
+        ]
+      },
+      "world-0": {
+        "role": "world",
+        "displayName": "World 0",
+        "canonical": "#070E10",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#080C0D",
+          "#1F2729",
+          "#3B4446",
+          "#5A6366",
+          "#7B8487",
+          "#9DA7AA",
+          "#C1CBCE",
+          "#E9F0F2"
+        ]
+      },
+      "world-1": {
+        "role": "world",
+        "displayName": "World 1",
+        "canonical": "#081514",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#060D0C",
+          "#1A2827",
+          "#374544",
+          "#566563",
+          "#768685",
+          "#98A9A7",
+          "#BCCDCC",
+          "#E7F1F0"
+        ]
+      },
+      "world-2": {
+        "role": "world",
+        "displayName": "World 2",
+        "canonical": "#0E1D1B",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#060D0C",
+          "#192826",
+          "#364643",
+          "#546563",
+          "#758784",
+          "#97AAA7",
+          "#BBCECB",
+          "#E6F1EF"
+        ]
+      },
+      "world-3": {
+        "role": "world",
+        "displayName": "World 3",
+        "canonical": "#142D26",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#030E0A",
+          "#112A24",
+          "#2F4840",
+          "#4D685F",
+          "#6E8980",
+          "#90ACA3",
+          "#B4D1C7",
+          "#E1F3ED"
+        ]
+      },
+      "world-4": {
+        "role": "world",
+        "displayName": "World 4",
+        "canonical": "#062317",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#020E08",
+          "#0F2B1F",
+          "#2C493B",
+          "#4B695A",
+          "#6C8B7B",
+          "#8EAE9D",
+          "#B1D2C1",
+          "#E0F4E9"
+        ]
+      },
+      "world-5": {
+        "role": "world",
+        "displayName": "World 5",
+        "canonical": "#1E4B38",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#001007",
+          "#002E1D",
+          "#1F4C39",
+          "#3F6C58",
+          "#608E78",
+          "#83B19B",
+          "#A6D6BE",
+          "#DAF7E8"
+        ]
+      },
+      "world-6": {
+        "role": "world",
+        "displayName": "World 6",
+        "canonical": "#2A6C4A",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#001104",
+          "#003113",
+          "#024F2F",
+          "#2E704E",
+          "#51926E",
+          "#74B690",
+          "#98DBB4",
+          "#D2FAE1"
+        ]
+      },
+      "world-7": {
+        "role": "world",
+        "displayName": "World 7",
+        "canonical": "#3C7959",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#001104",
+          "#003015",
+          "#0A4F31",
+          "#326F50",
+          "#549270",
+          "#77B592",
+          "#9BDAB6",
+          "#D4F9E3"
+        ]
+      },
+      "world-8": {
+        "role": "world",
+        "displayName": "World 8",
+        "canonical": "#55A673",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#001201",
+          "#003306",
+          "#005225",
+          "#1C7343",
+          "#449664",
+          "#68BA85",
+          "#8DDFA9",
+          "#CDFCDB"
+        ]
+      },
+      "world-9": {
+        "role": "world",
+        "displayName": "World 9",
+        "canonical": "#7FD493",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#001200",
+          "#003300",
+          "#005319",
+          "#177439",
+          "#42975A",
+          "#66BB7B",
+          "#8BE09E",
+          "#CBFDD5"
+        ]
+      },
+      "world-10": {
+        "role": "world",
+        "displayName": "World 10",
+        "canonical": "#CCE3C7",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#050E04",
+          "#192A15",
+          "#354831",
+          "#54684F",
+          "#748970",
+          "#97AC92",
+          "#BAD1B5",
+          "#E5F3E2"
+        ]
+      },
+      "world-11": {
+        "role": "world",
+        "displayName": "World 11",
+        "canonical": "#EFF2E7",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#0B0C08",
+          "#24261E",
+          "#41433A",
+          "#606359",
+          "#81847A",
+          "#A4A69C",
+          "#C8CBC0",
+          "#EEEFE9"
+        ]
+      },
+      "world-12": {
+        "role": "world",
+        "displayName": "World 12",
+        "canonical": "#62775A",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#050E03",
+          "#192B11",
+          "#35482D",
+          "#54684C",
+          "#748A6C",
+          "#96AD8E",
+          "#BAD1B1",
+          "#E5F4E0"
+        ]
+      },
+      "world-13": {
+        "role": "world",
+        "displayName": "World 13",
+        "canonical": "#31372F",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#090C08",
+          "#21271F",
+          "#3E443C",
+          "#5D645B",
+          "#7E857B",
+          "#A0A89E",
+          "#C4CCC2",
+          "#EBF0EA"
+        ]
+      },
+      "world-14": {
+        "role": "world",
+        "displayName": "World 14",
+        "canonical": "#5F5E2B",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#0D0C00",
+          "#292700",
+          "#46440F",
+          "#656431",
+          "#868652",
+          "#A9A974",
+          "#CDCD97",
+          "#F1F1D0"
+        ]
+      },
+      "world-15": {
+        "role": "world",
+        "displayName": "World 15",
+        "canonical": "#989C4E",
+        "purpose": "Closed pixel-world palette entry; plates and frames only.",
+        "tonalRamp": [
+          "#0D0C00",
+          "#282800",
+          "#454600",
+          "#646611",
+          "#84883A",
+          "#A7AB5D",
+          "#CBD081",
+          "#EFF3C4"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "The white horizontal lockup SVG; 40px below 720px."
+      },
+      "counters": {
+        "displayName": "Counters",
+        "purpose": "Verified, denied and p50 in the top bar; 16px below 720px."
+      },
+      "ledger-row": {
+        "displayName": "Ledger row",
+        "purpose": "Every real event, newest first; 16px on a 24px line below 720px."
+      },
+      "world-tag": {
+        "displayName": "World tag",
+        "purpose": "Names and bubbles over the pixel world; follows the integer stage scale, floor 14px."
+      },
+      "alert": {
+        "displayName": "Alert",
+        "purpose": "The refusal sentence under the booth; follows the integer stage scale, floor 14px."
+      },
+      "booth-sign": {
+        "displayName": "Booth sign",
+        "purpose": "TELLER, the only pixel lettering; Press Start 2P loaded lazily."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Stream state, mode toggle, origin badge."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Forensic drawer title."
+      },
+      "body-mono": {
+        "displayName": "Body mono",
+        "purpose": "Forensic records."
+      }
+    },
+    "shadows": [
+      {
+        "name": "row-hover-hairline",
+        "value": "inset 0 0 0 1px #F6F4EE",
+        "purpose": "Ledger row hover without changing the 31px pitch."
+      }
+    ],
+    "motion": [
+      {
+        "name": "snap",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "The seam snap: fast in, dead stop, no overshoot."
+      },
+      {
+        "name": "snap-ms",
+        "value": "120ms",
+        "purpose": "Alert bar and bubble ink entering from opacity 0 over an already-placed box."
+      },
+      {
+        "name": "seal-verify",
+        "value": "133ms",
+        "purpose": "Seal halves closing on a verified decision."
+      },
+      {
+        "name": "seal-deny-shake",
+        "value": "80ms per step, ±6 units, 4 steps",
+        "purpose": "Seal halves refusing to meet."
+      },
+      {
+        "name": "walk",
+        "value": "96 native px/s, 120ms frames",
+        "purpose": "Requests walking to the booth; the world's own drift."
+      },
+      {
+        "name": "ambient",
+        "value": "140-400ms frame cycles",
+        "purpose": "Office and clerks idling."
+      },
+      {
+        "name": "proof-surfaces",
+        "value": "none",
+        "purpose": "Ledger, counters and top bar never animate."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact",
+        "value": "719.98px",
+        "purpose": "Counters wrap under the wordmark; two-line 16px ledger rows."
+      },
+      {
+        "name": "stage",
+        "value": "integer scale = max(2, min(floor(floor(h*0.66)/164), ceil(w/444)))",
+        "purpose": "2x on phones, 3x at 1280-1440, 4x at 1600x1000; cropped around the booth."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "World Tag",
+      "kind": "chip",
+      "refersTo": "world-tag",
+      "description": "Square Ink label naming a figure in the world.",
+      "html": "<span class=\"ds-tag\">Muse Spark</span>",
+      "css": ".ds-tag { display: inline-block; padding: 4px 8px; background: #0B0D10; color: #F6F4EE; font: 400 19px/1.05 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: -0.04em; white-space: nowrap; }"
+    },
+    {
+      "name": "Attack Bubble",
+      "kind": "custom",
+      "refersTo": "world-tag",
+      "description": "Who and what it tried; a click opens the forensic record.",
+      "html": "<button class=\"ds-bubble\" type=\"button\"><span class=\"ds-say\">template attack</span><span class=\"ds-say\">Call the undeclared evil-mcp server to dump secrets.</span></button>",
+      "css": ".ds-bubble { display: flex; gap: 12px; align-items: flex-start; padding: 0; border: 1px solid transparent; background: none; cursor: pointer; animation: ds-snap 120ms cubic-bezier(0.16, 1, 0.3, 1) both; } .ds-say { padding: 4px 8px; background: #0B0D10; color: #F6F4EE; font: 400 19px/1.05 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: -0.04em; } .ds-bubble:hover { border-color: #F6F4EE; } .ds-bubble:focus-visible { outline: 2px solid #F6F4EE; outline-offset: 2px; } .ds-bubble:active .ds-say { background: #F6F4EE; color: #0B0D10; } @keyframes ds-snap { from { opacity: 0; } }"
+    },
+    {
+      "name": "Alert Bar",
+      "kind": "custom",
+      "refersTo": "alert-bar",
+      "description": "The refusal under the booth; its ink snaps in over an already-placed box.",
+      "html": "<p class=\"ds-alert\" role=\"status\">denied · poisoned MCP tool · at the MCP proxy</p>",
+      "css": ".ds-alert { display: inline-flex; align-items: center; justify-content: center; height: 30px; margin: 0; padding: 0 12px; background: #FF5C5C; color: #0B0D10; font: 700 16px/1 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: -0.04em; white-space: nowrap; animation: ds-snap 120ms cubic-bezier(0.16, 1, 0.3, 1) both; } @keyframes ds-snap { from { opacity: 0; } }"
+    },
+    {
+      "name": "Seal (refused)",
+      "kind": "custom",
+      "refersTo": "seal-face",
+      "description": "The Reunion mark on the booth face, framed to its refused extent: halves apart, red seam.",
+      "html": "<div class=\"ds-seal\"><svg viewBox=\"16 16 224 224\" width=\"66\" height=\"54\" role=\"img\" aria-label=\"denied\"><path fill=\"#0B0D10\" d=\"M32 16H224V112H128V92H32ZM32 240H224V164H128V144H32Z\"/><path fill=\"#FF5C5C\" d=\"M32 118H224V138H32Z\"/></svg></div>",
+      "css": ".ds-seal { display: inline-block; background: #EFF2E7; line-height: 0; }"
+    },
+    {
+      "name": "Ledger Row (denied)",
+      "kind": "custom",
+      "refersTo": "ledger-row",
+      "description": "A real refusal; the row strikes the hash it refused.",
+      "html": "<button class=\"ds-row\" type=\"button\"><span class=\"ds-t\">23:50:02</span><span class=\"ds-sep\"> · </span><span>template attack</span><span class=\"ds-sep\"> · </span><span class=\"ds-text\">Blocked payee swap at model→gate</span><span class=\"ds-sep\"> · </span><s class=\"ds-hash\">DE0247</s><span class=\"ds-sep\"> · </span><span class=\"ds-deny\">DENIED</span></button>",
+      "css": ".ds-row { display: flex; width: 100%; padding: 0; border: 0; background: #0B0D10; color: #F6F4EE; font: 400 22px/31px \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; text-align: left; white-space: nowrap; cursor: pointer; } .ds-row:hover { box-shadow: inset 0 0 0 1px #F6F4EE; } .ds-row:focus-visible { outline: 2px solid #F6F4EE; outline-offset: 2px; } .ds-row:active { background: rgb(246 244 238 / 0.06); } .ds-t, .ds-sep { color: #8A8F98; white-space: pre; } .ds-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .ds-hash { color: #FF5C5C; text-decoration-thickness: 2px; } .ds-deny { color: #FF5C5C; }"
+    },
+    {
+      "name": "Ledger Row (verified)",
+      "kind": "custom",
+      "refersTo": "ledger-row",
+      "description": "A verified decision: the only green on the page besides the seal and the count.",
+      "html": "<button class=\"ds-row\" type=\"button\"><span class=\"ds-t\">23:51:10</span><span class=\"ds-sep\"> · </span><span>Muse Spark</span><span class=\"ds-sep\"> · </span><span class=\"ds-text\">Pay 42.00 USD to acme-991</span><span class=\"ds-sep\"> · </span><span class=\"ds-t\">A9B2C3</span><span class=\"ds-sep\"> · </span><span class=\"ds-ok\">VERIFIED</span></button>",
+      "css": ".ds-row { display: flex; width: 100%; padding: 0; border: 0; background: #0B0D10; color: #F6F4EE; font: 400 22px/31px \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; text-align: left; white-space: nowrap; cursor: pointer; } .ds-row:hover { box-shadow: inset 0 0 0 1px #F6F4EE; } .ds-row:focus-visible { outline: 2px solid #F6F4EE; outline-offset: 2px; } .ds-row:active { background: rgb(246 244 238 / 0.06); } .ds-t, .ds-sep { color: #8A8F98; white-space: pre; } .ds-text { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; } .ds-ok { color: #1FD598; }"
+    },
+    {
+      "name": "Mode Toggle",
+      "kind": "button",
+      "refersTo": "mode-button",
+      "description": "GAME / FORENSIC square label buttons.",
+      "html": "<div class=\"ds-modes\" role=\"group\" aria-label=\"View mode\"><button class=\"ds-mode\" type=\"button\" aria-pressed=\"true\">GAME</button><button class=\"ds-mode\" type=\"button\" aria-pressed=\"false\">FORENSIC</button></div>",
+      "css": ".ds-modes { display: flex; gap: 4px; } .ds-mode { padding: 4px 8px; border: 1px solid rgb(246 244 238 / 0.14); border-radius: 0; background: #0B0D10; color: #8A8F98; font: 400 14px/1.2 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: 0.02em; cursor: pointer; } .ds-mode:hover { color: #F6F4EE; } .ds-mode[aria-pressed=\"true\"] { color: #F6F4EE; border-color: #F6F4EE; } .ds-mode:focus-visible { outline: 2px solid #F6F4EE; outline-offset: 2px; } .ds-mode:active { background: #F6F4EE; color: #0B0D10; }"
+    },
+    {
+      "name": "Counters",
+      "kind": "nav",
+      "refersTo": "counters",
+      "description": "Live totals in the top bar; never animated.",
+      "html": "<p class=\"ds-counters\">verified <b class=\"ds-v\">12</b> · denied <b>3</b> · p50 <b>24µs</b></p>",
+      "css": ".ds-counters { margin: 0; color: #F6F4EE; font: 400 20px/1 \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; } .ds-counters b { font-weight: 400; } .ds-v { color: #1FD598; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Teller Window",
+    "overview": "The console is one small pixel world seen through a dark frame. Meta's agents work in an office on the left, the bank branch sits on the right, and between them stands a teller booth with the Mandate seal on its face. Every request walks to that window. A verified request joins the seal's halves with a green seam. An attack is refused: the halves shake apart, a red bar drops under the booth, and the intruder is thrown back. Everything around the world is dark security: Ink ground, Bone monospace labels, one-pixel hairlines, and a ledger of real events below.\n\nThe pixel world carries the warmth and the motion. The chrome stays quiet so the verdict at the booth is always the loudest thing on screen. Text is never painted into the world: tags, bubbles, the alert, the sign and every ledger cell are live DOM text set over the canvas, so they stay sharp, selectable and spoken. The brand commitments behind the palette and type (Ink and Bone, Verify reserved for verified states, Inter with JetBrains Mono, \"dark security + pixel soul\") are stated in `PRODUCT.md`. The surface's direction contract is `.impeccable/surfaces/console-index-html.md`.",
+    "keyCharacteristics": [
+      "An integer-scaled 444×164 pixel world at the centre of the first viewport, the booth always centred.",
+      "A 16-colour duotone-green world palette, separate from the UI palette.",
+      "Green means verified and red means refused, and nothing else uses either.",
+      "Square Ink tags with Bone monospace text, and no rounded bubbles.",
+      "One authored motion moment, the seal's verdict. The world drifts on its own; the proof surfaces never move."
+    ],
+    "rules": [
+      {
+        "name": "The Green Means Verified Rule",
+        "body": "Verify appears only where a gate decision verified something. A denied count stays Bone.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two Palettes Rule",
+        "body": "UI colours never enter the world, and world colours never style the UI. The one bridge is the booth face, which the seal borrows from the plate.",
+        "section": "colors"
+      },
+      {
+        "name": "The Live Text Rule",
+        "body": "No word is ever drawn into the pixels. Every word is DOM text over the canvas, so a screen reader, a selection and a zoom all reach it.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tracking Floor Rule",
+        "body": "Mono is never tracked tighter than −0.04em.",
+        "section": "typography"
+      },
+      {
+        "name": "The Integer Pixel Rule",
+        "body": "The world is only ever drawn at a whole-number scale, with `image-rendering: pixelated`, `imageSmoothingEnabled = false` and every draw at a whole native pixel. Never stretch the stage to fill a width; crop it around the booth.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat Chrome Rule",
+        "body": "No shadows, glass or glows on UI. If something needs to stand forward, it gets Ink behind it and a Bone hairline around it.",
+        "section": "elevation & depth"
+      }
+    ],
+    "dos": [
+      "**Do** draw the world at an integer scale and crop it around the booth when it does not fit.",
+      "**Do** snap every plate and frame to the 16 world colours before shipping it, and embed its generation prompt and request id in the PNG.",
+      "**Do** carry pass and deny in words and shape as well as colour: VERIFIED / DENIED, the joined or split seal, the struck hash.",
+      "**Do** put Ink text on Refusal Red, never Bone.",
+      "**Do** label honest seams: `template attack` against `open-weights attacker`, TEMPLATE against MODEL, the layer that refused.",
+      "**Do** keep every word as live text over the canvas."
+    ],
+    "donts": [
+      "**Don't** use Verify Green for anything but a verified decision.",
+      "**Don't** animate the ledger, the counters or any number. Motion belongs to the verdict and the world.",
+      "**Don't** add cards, rounded bubbles, shadows or containers around the world. Tags are square Ink.",
+      "**Don't** smooth, stretch or sub-pixel-position the world.",
+      "**Don't** paint words into a plate. The booth sign is DOM text.",
+      "**Don't** track mono tighter than −0.04em, or set world type under 14px."
+    ]
+  }
+}

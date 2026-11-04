@@ -8,5 +8,5 @@ export default defineConfig({
       input: { index: fileURLToPath(new URL("./index.html", import.meta.url)) },
     },
   },
-  test: { environment: "jsdom", include: ["src/**/*.test.ts"] },
+  test: { environment: "jsdom", include: ["src/**/*.test.ts", "tools/**/*.test.ts"] },
 });
