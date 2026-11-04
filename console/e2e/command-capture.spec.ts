@@ -31,3 +31,17 @@ test("mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: `${REVIEW}/mobile.png`, fullPage: true });
 });
+
+test("mobile attacks scrolled", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const scroller = page.locator("#attacks .scroll");
+  await page.locator("#attacks-h").scrollIntoViewIfNeeded();
+  // Scroll the Moved column out from under the sticky kind column.
+  await scroller.evaluate((el) => {
+    const moved = el.querySelector<HTMLElement>("thead th:nth-child(5)")!;
+    const kind = el.querySelector<HTMLElement>("thead th:first-child")!;
+    el.scrollTo({ left: moved.offsetLeft - kind.offsetWidth - 20 });
+  });
+  await expect(page.locator('[data-kind="payee_swap"] > *').nth(4)).toBeInViewport();
+  await page.screenshot({ path: `${REVIEW}/mobile-attacks-scrolled.png` });
+});

@@ -3,9 +3,9 @@ import { forensicText, gameText } from "../ledger/narrate";
 import { attackLabel } from "../scene/cues";
 import type { LineStore } from "../store/store";
 import type { ConsoleLine } from "../wire/types";
-import { computePosture, DEFINITIONS, formatCents, LABELS, type Posture } from "./posture";
+import { computePosture, counted, DEFINITIONS, formatCents, LABELS, type Posture } from "./posture";
 import { type Provenance, provenanceOf, type ServerProvenance } from "./provenance";
-import { buildReport, lineCount, metricValue, NOT_STOPPED, reportFileName, reportJson, reportMarkdown, stoppedAtParts, TILES } from "./report";
+import { attackTotal, buildReport, latencyParts, lineCount, metricValue, NOT_STOPPED, reportFileName, reportJson, reportMarkdown, stoppedAtParts, TILES } from "./report";
 import { APPLICABILITY, CONTROLS, DISCLAIMER, evidenceText, registryText } from "./standards";
 
 export interface CommandDeps {
@@ -176,6 +176,23 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
   const attackRows = new Map<string, RowView>();
   const layerRows = new Map<string, RowView>();
 
+  const columns = [...doc.querySelectorAll("#controls thead th")].map((th) => th.textContent ?? "");
+  must("#provisions").textContent = counted(CONTROLS.length, "provision", "provisions");
+  const register = must<HTMLElement>("#controls .register");
+  const markEnd = (): void => {
+    const end = String(register.scrollTop + register.clientHeight >= register.scrollHeight - 1);
+    if (register.dataset["atEnd"] !== end) register.dataset["atEnd"] = end;
+  };
+  register.addEventListener("scroll", markEnd, { passive: true });
+
+  const footRow = make("tr");
+  const footHead = make("th");
+  footHead.scope = "row";
+  const footCells = [make("td"), make("td"), make("td"), make("td")];
+  footCells[3]!.className = "moved";
+  footRow.append(footHead, ...footCells, make("td"), make("td"));
+  must("#attacks tfoot").replaceChildren(footRow);
+
   const controlRows = CONTROLS.map((c) => {
     const tr = make("tr");
     tr.dataset["control"] = `${c.framework} ${c.id}`;
@@ -189,9 +206,33 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
     const source = make("td");
     source.append(link);
     tr.append(make("td", c.framework), provision, make("td", c.mandate), evidence, make("td", c.gap), source);
+    // Each cell names its column, so a narrow screen can stack the row and keep every value labelled.
+    [...tr.children].forEach((cell, i) => {
+      (cell as HTMLElement).dataset["label"] = columns[i] ?? "";
+    });
     return { control: c, evidence };
   });
   must("#controls tbody").replaceChildren(...controlRows.map((r) => r.evidence.parentElement!));
+
+  const renderValue = (key: Tile, el: HTMLElement, value: string, posture: Posture): void => {
+    const parts = key === "latency" ? latencyParts(posture) : null;
+    if (parts !== null) {
+      const sub = make("span", parts[1]);
+      sub.className = "sub";
+      el.replaceChildren(parts[0], " ", sub);
+      return;
+    }
+    const at = value.indexOf(" · ");
+    if ((key === "consent" || key === "attribution") && at > 0) {
+      // Count and share are each kept whole, so a wrapped line never ends on the dot.
+      const count = make("span", value.slice(0, at));
+      const share = make("span", value.slice(at + 1));
+      count.className = share.className = "part";
+      el.replaceChildren(count, " ", share);
+      return;
+    }
+    el.textContent = value;
+  };
 
   const renderStopped = (td: HTMLElement, parts: readonly string[]): void => {
     if (td.textContent === parts.join(", ")) return;
@@ -246,7 +287,9 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
 
     for (const [key, tile] of tiles) {
       const value = metricValue(key, posture);
-      setText(tile.value, value);
+      if (tile.value.textContent !== value) renderValue(key, tile.value, value, posture);
+      const none = String(value.endsWith("in this window"));
+      if (tile.article.dataset["none"] !== none) tile.article.dataset["none"] = none;
       const zero = String(value === "0" || value === "0.00");
       if (tile.article.dataset["zero"] !== zero) tile.article.dataset["zero"] = zero;
       setText(tile.drill, showText(metricSeqs(key, posture).length));
@@ -280,7 +323,21 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
       return view.tr;
     }));
 
+    const total = attackTotal(posture);
+    if (footHead.textContent !== total.text) {
+      if (total.held) footHead.textContent = total.text;
+      else {
+        const alert = make("span", total.text);
+        alert.className = "alert";
+        footHead.replaceChildren(alert);
+      }
+    }
+    [total.attempts, total.blocked, total.breaches].forEach((n, i) => setText(footCells[i]!, String(n)));
+    setText(footCells[3]!, formatCents(total.movedCents));
+    footRow.dataset["breach"] = String(!total.held);
+
     for (const { control, evidence } of controlRows) setText(evidence, evidenceText(control.evidence, posture, prov));
+    markEnd();
 
     if (drill !== null) renderDrill(drill, posture);
   }

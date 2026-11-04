@@ -437,6 +437,16 @@
         "name": "proof-surfaces",
         "value": "none",
         "purpose": "Ledger, counters and top bar never animate."
+      },
+      {
+        "name": "command-drill",
+        "value": "180ms",
+        "purpose": "Command drill list fading in when a drill opens; nothing on load."
+      },
+      {
+        "name": "command-drawer",
+        "value": "200ms, 16px",
+        "purpose": "Forensic drawer fading and sliding in from the right on Command."
       }
     ],
     "breakpoints": [
@@ -516,6 +526,38 @@
       "description": "Live totals in the top bar; never animated.",
       "html": "<p class=\"ds-counters\">verified <b class=\"ds-v\">12</b> · denied <b>3</b> · p50 <b>24µs</b></p>",
       "css": ".ds-counters { margin: 0; color: #F6F4EE; font: 400 20px/1 \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; white-space: nowrap; } .ds-counters b { font-weight: 400; } .ds-v { color: #1FD598; }"
+    },
+    {
+      "name": "Command Metric Cell",
+      "kind": "stat",
+      "refersTo": "command-metric",
+      "description": "One of eight posture cells: label, mono value, Definition disclosure and a drill button. Verify only on the verified value; Alert only on a non-zero breach count or moved cents.",
+      "html": "<article class=\"ds-metric\"><h3>Moved by attacks</h3><p class=\"v\">0.00</p><p class=\"d\">Definition</p><p class=\"s\">Show the 7 lines</p></article>",
+      "css": ".ds-metric { padding: 6px 8px 0 14px; border-left: 1px solid rgb(246 244 238 / 0.14); background: #0B0D10; color: #F6F4EE; } .ds-metric h3 { margin: 0; font: 700 15px/19px \"Inter\", system-ui, sans-serif; } .ds-metric .v { margin: 8px 0; font: 700 48px/1.05 \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; } .ds-metric .d { margin: 0; color: rgb(246 244 238 / 0.82); font: 400 15px/1.2 \"Inter\", system-ui, sans-serif; } .ds-metric .s { margin: 6px 0 0; color: #8A8F98; font: 400 12px/1.4 \"JetBrains Mono\", ui-monospace, monospace; text-decoration: underline; text-underline-offset: 3px; }"
+    },
+    {
+      "name": "Command Register Row",
+      "kind": "table-row",
+      "refersTo": "command-register",
+      "description": "A framework provision mapped to a Mandate control with this window's evidence and its gap; header band in mid grey.",
+      "html": "<table class=\"ds-reg\"><thead><tr><th>Framework</th><th>Provision</th><th>Evidence in this window</th><th>Gap</th></tr></thead><tbody><tr><td>EU AI Act</td><td>Article 73(1): Reporting of serious incidents</td><td class=\"e\">0 attacks not blocked</td><td>Mandate does not report to any authority.</td></tr></tbody></table>",
+      "css": ".ds-reg { border-collapse: collapse; color: #F6F4EE; } .ds-reg th { padding: 0 10px; height: 37px; background: #5C5E62; font: 700 12.5px/1.1 \"Inter\", system-ui, sans-serif; text-align: left; text-transform: uppercase; } .ds-reg td { padding: 6px 10px; background: #16181C; font: 400 12px/1.28 \"Inter\", system-ui, sans-serif; vertical-align: top; } .ds-reg td:first-child { font: 700 15px/1.25 \"Inter\", system-ui, sans-serif; } .ds-reg .e { font: 700 12px/1.28 \"JetBrains Mono\", ui-monospace, monospace; }"
+    },
+    {
+      "name": "Command Attack Row (not stopped)",
+      "kind": "table-row",
+      "refersTo": "command-attacks",
+      "description": "A compact attack row whose kind got through: counts and cents in Alert, Stopped at says not stopped in words.",
+      "html": "<table class=\"ds-atk\"><tr><th>amount inflated</th><td>1</td><td>0</td><td class=\"a\">1</td><td class=\"a\">20000.00</td><td><span class=\"a\">not stopped</span></td></tr></table>",
+      "css": ".ds-atk { border-collapse: collapse; color: #F6F4EE; } .ds-atk th, .ds-atk td { height: 22px; padding: 0 4px; background: #16181C; font: 400 15px/1.2 \"JetBrains Mono\", ui-monospace, monospace; text-align: right; } .ds-atk th { padding-left: 10px; font: 700 15px/1.2 \"Inter\", system-ui, sans-serif; text-align: left; } .ds-atk .a { color: #FF5C5C; font-weight: 700; }"
+    },
+    {
+      "name": "Command Export Button",
+      "kind": "button",
+      "refersTo": "command-export",
+      "description": "Square outlined export control; fills Bone on press.",
+      "html": "<button class=\"ds-export\">Export Markdown</button>",
+      "css": ".ds-export { height: 44px; padding: 0 22px; border: 1px solid rgb(246 244 238 / 0.55); border-radius: 4px; background: #0B0D10; color: #F6F4EE; font: 700 16px/1 \"Inter\", system-ui, sans-serif; } .ds-export:hover { border-color: #F6F4EE; } .ds-export:active { background: #F6F4EE; color: #0B0D10; }"
     }
   ],
   "narrative": {
@@ -558,6 +600,16 @@
         "name": "The Flat Chrome Rule",
         "body": "No shadows, glass or glows on UI. If something needs to stand forward, it gets Ink behind it and a Bone hairline around it.",
         "section": "elevation & depth"
+      },
+      {
+        "name": "The Alert Only On Breach Rule",
+        "body": "On Command, Refusal Red appears only where an attack was not blocked or moved money: those counts, their cents, the words not stopped, and a total that falls short. Blocked counts and zero values stay Bone, and the words always say it as well as the colour.",
+        "section": "command"
+      },
+      {
+        "name": "The Real Columns Rule",
+        "body": "Every number on Command comes from a line in the window or from this process's registry and policies. A column the comp did not draw stays if the data has it; a value the comp invented never ships.",
+        "section": "command"
       }
     ],
     "dos": [

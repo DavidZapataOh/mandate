@@ -95,3 +95,25 @@ test("the page runs under the console CSP without a violation", async ({ page })
   expect(download.suggestedFilename()).toMatch(/^mandate-posture-(\d+-\d+|empty)\.md$/);
   expect(errors).toEqual([]);
 });
+
+test("on a phone the register stacks each provision: GOVERN 1.4 shows its evidence and gap, with no nested scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const row = page.locator('#controls tr[data-control="NIST AI RMF 1.0 GOVERN 1.4"]');
+  await row.scrollIntoViewIfNeeded();
+  await expect(page.locator("#controls thead")).toBeHidden();
+  for (const cell of [row.locator(".evidence"), row.locator("td").nth(4)]) {
+    await cell.scrollIntoViewIfNeeded();
+    await expect(cell).toBeInViewport({ ratio: 1 });
+  }
+  const register = page.locator("#controls .register");
+  const box = await register.evaluate((el) => [el.scrollHeight, el.clientHeight, el.scrollWidth, el.clientWidth]);
+  expect([box[0], box[2]]).toEqual([box[1], box[3]]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+test("the register fades at its foot until it is scrolled to its end", async ({ page }) => {
+  const register = page.locator("#controls .register");
+  await expect(register).toHaveAttribute("data-at-end", "false");
+  await register.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+  await expect(register).toHaveAttribute("data-at-end", "true");
+});

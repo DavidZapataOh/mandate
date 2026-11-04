@@ -73,10 +73,50 @@ export function metricValue(key: (typeof TILES)[number], p: Posture): string {
     case "moved": return formatCents(p.movedCents);
     case "consent": return formatShare(p.consent.withConsent.count, p.consent.certified.count);
     case "attribution": return formatShare(p.attribution.attributed.count, p.decided.count);
-    case "latency":
-      if (p.latency.p50Us === null || p.latency.p95Us === null) return "no gate events in this window";
-      return `p50 ${formatLatency(p.latency.p50Us)} · p95 ${formatLatency(p.latency.p95Us)} (${counted(p.latency.samples, "sample", "samples")})`;
+    case "latency": {
+      const parts = latencyParts(p);
+      return parts === null ? "no gate events in this window" : parts.join(" ");
+    }
   }
+}
+
+/** The gate time as its percentiles and its sample count, or null when no line in the window reached the gate. */
+export function latencyParts(p: Posture): readonly [string, string] | null {
+  if (p.latency.p50Us === null || p.latency.p95Us === null) return null;
+  return [
+    `p50 ${formatLatency(p.latency.p50Us)} · p95 ${formatLatency(p.latency.p95Us)}`,
+    `(${counted(p.latency.samples, "sample", "samples")})`,
+  ];
+}
+
+export interface AttackTotal {
+  readonly text: string;
+  /** True when no attempted kind got through. */
+  readonly held: boolean;
+  readonly attempts: number;
+  readonly blocked: number;
+  readonly breaches: number;
+  readonly movedCents: number;
+}
+
+/** The attacks table's total; it counts only kinds attempted in the window, so an untried kind is never called blocked. */
+export function attackTotal(p: Posture): AttackTotal {
+  const tried = p.attacks.filter((a) => a.attempts > 0);
+  const held = tried.filter((a) => a.breaches === 0).length;
+  const every = tried.length === p.attacks.length;
+  const kinds = (n: number) => (every ? counted(n, "kind", "kinds") : counted(n, "attempted kind", "attempted kinds"));
+  let text: string;
+  if (tried.length === 0) text = "no attacks attempted";
+  else if (held === tried.length) text = tried.length === 1 ? `${kinds(1)} blocked` : `all ${kinds(tried.length)} blocked`;
+  else text = `${held} of ${kinds(tried.length)} blocked`;
+  return {
+    text,
+    held: held === tried.length,
+    attempts: p.attacks.reduce((n, a) => n + a.attempts, 0),
+    blocked: p.attacks.reduce((n, a) => n + a.blocked, 0),
+    breaches: p.attacks.reduce((n, a) => n + a.breaches, 0),
+    movedCents: p.movedCents,
+  };
 }
 
 const ESCAPES: Readonly<Record<string, string>> = {

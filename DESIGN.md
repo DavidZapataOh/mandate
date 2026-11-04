@@ -279,6 +279,72 @@ Corners are square: tags, bubbles, buttons, badges, the alert bar and the drawer
 - **Never animated:** the ledger, the counters and the top bar. They are proof surfaces.
 - **Reduced motion:** walks and frame cycles stop and every verdict still lands at once. Transitions are removed.
 
+## Command
+
+`console/command.html` is the executive posture view, a control register for agent actions. It lives in the console's settled world without the pixel scene: Ink ground, Bone text, Muted secondary, hairline rules, JetBrains Mono for every number, hash and seq. Its direction contract is `.impeccable/surfaces/console-command-html.md`. Every value on it is computed from the console's retained lines and this process's registry and policies, and every metric opens down to those lines.
+
+### Layout
+- **Top bar:** the wordmark (48–50px), the view name in Muted uppercase 17px Inter 700 with +0.1em tracking, and Export Markdown and Export JSON at the right. The bar closes on a 3px Muted rule, the only heavier rule on the page.
+- **Provenance strip:** one Bone mono line on `#16181C` (one step off Ink) naming the window, where it starts and the registry it rests on. An empty registry reads `registry empty`, never a root over 0 entries. Stream state and the link back to the live console sit at its right.
+- **Metric band:** eight equal cells divided by hairlines, then a hairline under the band.
+- **Control register:** the framework table, grouped by framework.
+- **Compact tables:** attacks by kind and denials by layer side by side, split by a vertical hairline.
+- **Drill list:** under the tables, opened on demand.
+
+The page gutter is `clamp(16px, 2.92vw, 48px)`. Columns are fluid from 1280 to 1600. A 1100–1380px step shrinks the compact tables' type so both stay whole beside each other.
+
+### Metric cell
+- **Label:** Inter 700 15px on a 19px line, balanced.
+- **Value:** JetBrains Mono 700 at `clamp(36px, 3.34vw, 56px)`, tabular.
+- **Shares and gate time:**
+  - Shares (consent, attribution) use `clamp(20px, 1.7vw, 28px)` and render as two unbreakable spans, the count then `· share`, so a line never ends on the dot.
+  - Gate time sets its two percentiles on one line at `clamp(11px, 0.85vw, 14px)`, with the Muted sample count under them.
+  - A value that says the window has none (`none in this window`) drops to a 15px Bone 82% sentence.
+- **Colour:** the verified value is always Verify. Attacks not blocked and Moved by attacks take Alert only when they are not zero (`data-zero="false"`). Every other value is Bone.
+- **Below the value:** the Definition disclosure, and a `Show the n lines` drill button in Muted 12px underlined mono.
+
+### Definition disclosure
+A `summary` reading Definition, followed by an authored 14px info mark (ring, dot and stem, a data-URI mask filled with `currentcolor`). Opening it lays the exact definition over the page in a 320px Ink box with a 40% Bone hairline, so the band never shifts. The last three cells open leftward. The attacks and layers tables carry the same disclosure beside their headings.
+
+### Control register
+- **Heading:** an uppercase Inter 700 18px heading, with `17 provisions` (singular for one) in Muted 12px mono under it.
+- **Disclaimer and applicability:** right-aligned in Muted 13px. The applicability line sits above the table it calls "below".
+- **Header band:** `#5C5E62`, with Bone uppercase Inter 700 12.5px labels (5.1:1).
+- **Rows:** `#16181C` separated by 2px Ink.
+  - The framework name is in Inter 700 15px, said once per group; repeats are transparent but still spoken.
+  - The rule between groups is 40% Bone.
+  - Evidence is in mono 700.
+  - Source is a mono link.
+- **Size:** at desktop the register is a 275px scroll box with a sticky header. Its foot fades over 48px until it is scrolled to its end (`data-at-end`).
+- **≤720px:** each provision stacks as a block. Every value carries its column name above it from `data-label`, in Muted 10.5px uppercase mono, with no nested scroll.
+
+### Compact tables
+- **Rows and header:** 22px rows on `#16181C` with 2px Ink gaps. The header is Muted 10.5px uppercase mono.
+- **Text:** the kind or layer name is Inter 700 15px; numbers are mono and tabular, right-aligned.
+- **Attacks total row:** below a 40% Bone rule, it counts only kinds attempted in the window, so an untried kind is never called blocked (`all 7 kinds blocked`, `all 3 attempted kinds blocked`, `3 of 4 attempted kinds blocked`, `no attacks attempted`).
+- **An attack kind that got through:**
+  - Its Not blocked and Moved cells turn Alert.
+  - Stopped at reads `not stopped` in Alert 700.
+  - The total names how many kinds held, in Alert.
+- **≤720px:** the tables scroll sideways inside their section. The name column is sticky (`left: 0`, 104–120px, wrapping), on `--raised` in the body and on Ink in the header.
+
+### Drill list
+A hairline-ruled list under a 22px Inter 700 title (`<label> · n lines`), newest line first.
+- **Row:** a full-width button with the game sentence in Inter 15px and the forensic mono row in Muted 13px. It opens the record in the console's right-side forensic drawer.
+- **States:** hover is the inset Bone hairline; press is a 6% Bone wash.
+- **Announcement:** opening a drill is announced once through a polite status element. The list itself is not a live region, so a busy stream never re-announces it.
+
+### Export controls
+Square outlined buttons, 44px tall with 4px corners, a 55% Bone border, and Inter 700 16px. The border goes full Bone on hover, and on press the button fills Bone with Ink text.
+
+### Motion
+Only state changes move. The drill list fades in over 180ms, and the forensic drawer fades and slides 16px over 200ms, both on the snap curve and through `@starting-style`, so nothing animates on load. Numbers never animate. Reduced motion removes every transition.
+
+### Named Rules
+**The Alert Only On Breach Rule.** On Command, Refusal Red appears only where an attack was not blocked or moved money: those counts, their cents, the words `not stopped`, and a total that falls short. Blocked counts and zero values stay Bone, and the words always say it as well as the colour.
+
+**The Real Columns Rule.** Every number on Command comes from a line in the window or from this process's registry and policies. A column the comp did not draw stays if the data has it; a value the comp invented never ships.
+
 ## Do's and Don'ts
 
 ### Do:

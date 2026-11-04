@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LineStore } from "../store/store";
 import type { ConsoleLine } from "../wire/types";
 import { SERVER_BODY } from "./__fixtures__/provenance";
-import { BREACH, lines, WINDOW } from "./__fixtures__/window";
-import { DEFINITIONS } from "./posture";
+import { attackLine, BREACH, lines, WINDOW } from "./__fixtures__/window";
+import { ATTACK_KINDS, DEFINITIONS } from "./posture";
 import { parseProvenance, type ServerProvenance } from "./provenance";
 import { type CommandDeps, mountCommand, provenanceSummary } from "./view";
 
@@ -205,6 +205,70 @@ describe("mountCommand", () => {
     const blocked = lines([BREACH.replace('"seq":10', '"seq":11').replace('"blocked":false', '"blocked":true').replace('"moved_cents":2000000', '"moved_cents":0').replace('ok: executed', 'amount: exceeds intent')]);
     setup({ window: [...lines([BREACH]), ...blocked] });
     expect(document.querySelectorAll('[data-kind="amount_inflate"] > *')[5]!.textContent).toBe("gate, not stopped");
+  });
+
+  it("labels every register cell with its column, so a phone can stack the row", () => {
+    setup();
+    const row = document.querySelector('[data-control="NIST AI RMF 1.0 GOVERN 1.4"]')!;
+    expect([...row.children].map((c) => (c as HTMLElement).dataset["label"])).toEqual([
+      "Framework", "Provision", "Maps to (Mandate control)", "Evidence in this window", "Gap", "Source",
+    ]);
+  });
+
+  it("names how many provisions the register maps", () => {
+    setup();
+    expect(text("#provisions")).toBe("17 provisions");
+  });
+
+  it("the register says whether it is scrolled to its end", () => {
+    setup();
+    expect(document.querySelector<HTMLElement>(".register")!.dataset["atEnd"]).toBe("true");
+  });
+
+  it("splits the gate time into its percentiles and its sample count", () => {
+    setup();
+    expect(text('[data-metric="latency"] .value .sub')).toBe("(5 samples)");
+    expect(text('[data-metric="latency"] .value')).toBe("p50 61µs · p95 90µs (5 samples)");
+  });
+
+  it("keeps a share's count and its percentage each whole, so a line never ends on the dot", () => {
+    setup();
+    const parts = (key: string) => [...document.querySelectorAll(`[data-metric="${key}"] .value .part`)].map((e) => e.textContent);
+    expect(parts("consent")).toEqual(["1 of 2", "· 50.0%"]);
+    expect(parts("attribution")).toEqual(["4 of 7", "· 57.1%"]);
+    expect(text('[data-metric="consent"] .value')).toBe("1 of 2 · 50.0%");
+  });
+
+  it("marks a value that says the window has none, so it reads as a sentence", () => {
+    setup({ window: [] });
+    expect(document.querySelector<HTMLElement>('[data-metric="consent"]')!.dataset["none"]).toBe("true");
+    expect(document.querySelector<HTMLElement>('[data-metric="decided"]')!.dataset["none"]).toBe("false");
+  });
+
+  it("totals the attacks without claiming an untried kind was blocked", () => {
+    setup();
+    const foot = () => [...document.querySelectorAll("#attacks tfoot tr > *")].slice(0, 5).map((c) => c.textContent);
+    expect(foot()).toEqual(["all 3 attempted kinds blocked", "3", "3", "0", "0.00"]);
+    expect(document.querySelector("#attacks tfoot .alert")).toBeNull();
+  });
+
+  it("a total with an attack let through says how many kinds held, in the alert style", () => {
+    setup({ window: lines([...WINDOW, BREACH]) });
+    const head = document.querySelector("#attacks tfoot th")!;
+    expect(head.textContent).toBe("3 of 4 attempted kinds blocked");
+    expect(head.querySelector(".alert")!.textContent).toBe("3 of 4 attempted kinds blocked");
+    expect(document.querySelectorAll("#attacks tfoot tr > *")[4]!.textContent).toBe("20000.00");
+  });
+
+  it("every kind attempted and blocked reads as all of them", () => {
+    const all = ATTACK_KINDS.map((kind, i) => attackLine(20 + i, kind, "mcp", "denied: server undeclared", null));
+    setup({ window: lines(all) });
+    expect(text("#attacks tfoot th")).toBe("all 7 kinds blocked");
+  });
+
+  it("an empty window says no attack was attempted", () => {
+    setup({ window: [] });
+    expect(text("#attacks tfoot th")).toBe("no attacks attempted");
   });
 
   it("coalesces a burst of lines into one render", () => {

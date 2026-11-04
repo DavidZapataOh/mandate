@@ -240,14 +240,36 @@ main {
 }
 
 #tiles [data-metric="consent"] .value,
-#tiles [data-metric="attribution"] .value {
-  font-size: clamp(14px, 1.12vw, 19px);
-  letter-spacing: -0.02em;
+#tiles [data-metric="attribution"] .value,
+#tiles [data-metric="latency"] .value {
+  font-size: clamp(20px, 1.7vw, 28px);
+  letter-spacing: -0.04em;
   white-space: normal;
 }
 
+/* Both percentiles hold one line in a 1280–1600 cell; the count sits under them. */
 #tiles [data-metric="latency"] .value {
-  font-size: clamp(12px, 0.9vw, 15px);
+  font-size: clamp(11px, 0.85vw, 14px);
+  letter-spacing: -0.03em;
+}
+
+#tiles .value .part {
+  white-space: nowrap;
+}
+
+#tiles .value .sub {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font: 400 12px/1.2 var(--mono);
+  letter-spacing: 0;
+}
+
+/* A value that says the window has none reads as a sentence, a step below the numbers. */
+#tiles [data-none="true"] .value,
+#tiles [data-metric][data-none="true"] .value {
+  color: rgb(246 244 238 / 0.82);
+  font: 400 15px/1.3 var(--mono);
   letter-spacing: -0.02em;
   white-space: normal;
 }
@@ -282,14 +304,12 @@ summary::-webkit-details-marker {
 }
 
 summary::after {
-  content: "i";
-  display: inline-grid;
-  place-items: center;
+  content: "";
   width: 14px;
   height: 14px;
-  border: 1.5px solid currentcolor;
-  border-radius: 50%;
-  font: 700 9px/1 var(--sans);
+  background: currentcolor;
+  /* Authored info mark: a ring, a dot and a stem on a 14px grid. */
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Ccircle cx='7' cy='7' r='6.25' fill='none' stroke='%23000' stroke-width='1.5'/%3E%3Crect x='6.25' y='3.25' width='1.5' height='1.5'/%3E%3Crect x='6.25' y='5.75' width='1.5' height='5'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 summary:hover,
@@ -348,7 +368,7 @@ button.drill:hover {
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas:
     "h disclaimer"
-    "h applicability"
+    "count applicability"
     "table table";
   column-gap: 32px;
   margin-top: 17px;
@@ -365,7 +385,14 @@ button.drill:hover {
 
 #controls-h {
   grid-area: h;
-  align-self: center;
+  align-self: end;
+}
+
+#provisions {
+  grid-area: count;
+  align-self: start;
+  color: var(--muted);
+  font: 400 12px/16px var(--mono);
 }
 
 #disclaimer,
@@ -386,10 +413,15 @@ button.drill:hover {
 
 .register {
   grid-area: table;
-  max-height: 213px;
+  max-height: 275px;
   margin-top: 4px;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+/* More rows below: the foot fades until the register is scrolled to its end. */
+.register[data-at-end="false"] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 48px), transparent);
 }
 
 .register table,
@@ -572,6 +604,26 @@ button.drill:hover {
 .scroll button.drill {
   margin: 0;
   font-size: 11px;
+}
+
+#attacks tfoot tr {
+  border-top: 1px solid rgb(246 244 238 / 0.4);
+}
+
+#attacks tfoot th,
+#attacks tfoot td {
+  height: 26px;
+  padding: 0 4px;
+  font: 700 14px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+#attacks tfoot th {
+  padding-left: 10px;
+  font: 700 13px/1.2 var(--sans);
+  text-align: left;
 }
 
 /* An attack that got through: the counts and the cents it moved, and the words "not stopped". */
@@ -860,6 +912,7 @@ button.drill:hover {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       "h"
+      "count"
       "disclaimer"
       "applicability"
       "table";
@@ -879,9 +932,83 @@ button.drill:hover {
     text-align: left;
   }
 
+  /* On a phone each provision stacks; every value keeps its column's name. */
   .register {
-    max-height: 60vh;
+    max-height: none;
+    overflow: visible;
+    mask-image: none;
   }
+
+  .register[data-at-end="false"] {
+    mask-image: none;
+  }
+
+  .register table {
+    min-width: 0;
+  }
+
+  .register thead {
+    display: none;
+  }
+
+  .register table,
+  .register tbody,
+  .register tr,
+  .register tbody td,
+  .register tbody th {
+    display: block;
+    width: auto;
+  }
+
+  .register tbody tr {
+    padding: 6px 0;
+  }
+
+  .register tbody td,
+  .register tbody th {
+    padding: 4px 10px;
+  }
+
+  .register tbody td::before,
+  .register tbody th::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--muted);
+    font: 400 10.5px/1.2 var(--mono);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  /* A group's first row names the framework; the repeats are dropped, not blanked. */
+  .register tr[data-control^="NIST"] + tr[data-control^="NIST"] > td:first-child,
+  .register tr[data-control^="ISO"] + tr[data-control^="ISO"] > td:first-child,
+  .register tr[data-control^="EU"] + tr[data-control^="EU"] > td:first-child {
+    display: none;
+  }
+
+  /* The kind or layer stays in view while its numbers scroll under it. */
+  .scroll tbody th,
+  .scroll thead th:first-child,
+  #attacks tfoot th {
+    position: sticky;
+    z-index: 1;
+    left: 0;
+  }
+
+  .scroll tbody th,
+  #attacks tfoot th {
+    min-width: 104px;
+    max-width: 120px;
+    background: var(--raised);
+    white-space: normal;
+  }
+
+  .scroll thead th:first-child {
+    background: var(--ink);
+  }
+
+
 
   .scroll table {
     min-width: 560px;
