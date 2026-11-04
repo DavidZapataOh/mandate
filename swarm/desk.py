@@ -1,6 +1,7 @@
 """Payment desk: quote, holder approval, gated confirm, receipt."""
 
 import json
+import logging
 import os
 import threading
 from collections.abc import Callable
@@ -21,11 +22,12 @@ from gate.consent import (
 )
 from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule
-from gate.registry import Registry
+from gate.registry import LogEntry, Registry
 from gate.shim import Mode, RawCall
 from mandate.client import RunRequest, run_governed
 from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
 from swarm.meta_client import reasoning_commitment
+from swarm.receipt import proof_receipt, seal_view
 
 DESK_POLICY = Policy(
     "desk",
@@ -36,6 +38,7 @@ DESK_POLICY = Policy(
         ),
     ),
 )
+_log = logging.getLogger(__name__)
 _KEY_LEN = 32
 _REVOCATION_BITS = 1024
 _T = TypeVar("_T")
@@ -69,6 +72,8 @@ class PaymentDesk:
             so line order is the desk's order.
         action_salts: Source of 32-byte action salts, one per confirm; None
             draws them from the operating system.
+        salts: Source of 16-byte SD-JWT Disclosure salts for proof receipts;
+            None draws them from the operating system.
     """
 
     def __init__(
@@ -82,9 +87,9 @@ class PaymentDesk:
         quote_ttl_s: int = 600,
         publish: Callable[[ConsoleLine], object] | None = None,
         action_salts: Callable[[], bytes] | None = None,
+        salts: Callable[[], bytes] | None = None,
     ) -> None:
         self.bank = bank
-        self.registry = Registry()
         self._source = source
         self._verifier = verifier
         self._gate_key = gate_key
@@ -93,14 +98,18 @@ class PaymentDesk:
         self._ttl = quote_ttl_s
         self._publish = publish
         self._action_salts = action_salts or (lambda: os.urandom(ACTION_SALT_LEN))
+        self._salts = salts or (lambda: os.urandom(16))
         self._gate_pub = public_key_of(gate_key)
+        # Seals use the gate key: the "anchor/v1:" prefix cannot collide with
+        # a JWS signing input, so one published key verifies both.
+        self.registry = Registry(keypair=(gate_key, self._gate_pub))
         self._ledger = ConsentLedger()
         self._holders: tuple[bytes, ...] = ()
         self._quotes: dict[str, _Quote] = {}
         self._receipts: dict[str, dict[str, Any]] = {}
-        # Private to the desk: each payment's action salt, kept for the
-        # holder's copy of the receipt and never published.
-        self._payment_salts: dict[str, bytes] = {}
+        # Holder copies: every Disclosure, the action salt included, so they
+        # leave the desk only through `proof_receipt`.
+        self._proofs: dict[str, dict[str, Any]] = {}
         self._seq = 0
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
@@ -121,6 +130,11 @@ class PaymentDesk:
         """
         with self._lock:
             return work(self.bank, self._verifier)
+
+    @property
+    def gate_public_key(self) -> bytes:
+        """Raw Ed25519 public key that verifies certificates, seals and receipts."""
+        return self._gate_pub
 
     @property
     def holder_keys(self) -> tuple[bytes, ...]:
@@ -289,6 +303,26 @@ class PaymentDesk:
                 return {"status": "unknown", "payment_id": payment_id}
             return dict(found)
 
+    def proof_receipt(self, payment_id: str) -> dict[str, Any] | None:
+        """Holder copy of a confirmed payment's proof receipt.
+
+        Args:
+            payment_id: Executed payment.
+
+        Returns:
+            A deep copy of the receipt with every Disclosure, or None when the
+            payment has no receipt.
+        """
+        with self._lock:
+            found = self._proofs.get(payment_id)
+            return None if found is None else json.loads(json.dumps(found))
+
+    def latest_seal(self) -> dict[str, Any] | None:
+        """View of the newest registry seal, or None before the first append."""
+        with self._lock:
+            seals = self.registry.anchors()
+            return seal_view(seals[-1]) if seals else None
+
     def _execute(self, quote_id: str, record: _Quote) -> dict[str, Any]:
         c = record.consent
         now = self._clock()
@@ -336,14 +370,43 @@ class PaymentDesk:
         record.result = result
         if payment_id is not None:
             self._receipts[payment_id] = result
-            if outcome.salt is not None:
-                self._payment_salts[payment_id] = outcome.salt
         body = json.dumps(
             {k: result[k] for k in ("payment_id", "quote_id", "reason", "status")},
             sort_keys=True,
             separators=(",", ":"),
         )
-        seq = self.registry.append("execution" if paid else "denial", body)
+        kind = "execution" if paid else "denial"
+        seq = self.registry.append(kind, body)
+        seal = self.registry.anchor(now)
+        proof = self.registry.prove(seq)
+        if (
+            payment_id is not None
+            and outcome.certificate
+            and outcome.action
+            and outcome.salt
+        ):
+            # The bank already paid: a receipt that cannot be built must not
+            # turn the confirm into an error. The payment simply has none.
+            try:
+                self._proofs[payment_id] = proof_receipt(
+                    payment_id,
+                    outcome.certificate,
+                    outcome.action,
+                    DESK_POLICY,
+                    c,
+                    next(k for k in self._holders if verify_signature(c, (k,))),
+                    LogEntry(seq, kind, body),
+                    proof,
+                    seal,
+                    self._gate_key,
+                    self._salts,
+                    action_salt=outcome.salt,
+                )
+            except Exception as exc:
+                # Only the type: a message could carry consent fields or keys.
+                _log.error(
+                    "receipt not built for %s (%s)", payment_id, type(exc).__name__
+                )
         forensic = None
         if outcome.action is not None:
             forensic = forensic_of(
@@ -352,7 +415,7 @@ class PaymentDesk:
                 outcome.certificate,
                 self._gate_pub,
                 consent=c,
-                proof=self.registry.prove(seq),
+                proof=proof,
                 salt=outcome.salt,
             )
         self._emit("confirm", result, c, outcome.event, forensic)

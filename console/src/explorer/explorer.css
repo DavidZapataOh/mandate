@@ -1,0 +1,884 @@
+:root {
+  --ink: #0b0d10;
+  --bone: #f6f4ee;
+  --verify: #1fd598;
+  --alert: #ff5c5c;
+  --muted: #8a8f98;
+  /* The booth plate's face, so the seal reads as painted on it. */
+  --booth-face: #eff2e7;
+  --rule: rgb(246 244 238 / 0.14);
+  --frame: rgb(246 244 238 / 0.42);
+  --wash: rgb(246 244 238 / 0.035);
+  --band: rgb(246 244 238 / 0.075);
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --sans: "Inter", system-ui, sans-serif;
+  --gutter: clamp(16px, 5vw, 72px);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
+  scrollbar-color: var(--muted) var(--ink);
+  caret-color: var(--bone);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--bone);
+  font-family: var(--sans);
+}
+
+body {
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--ink);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted);
+}
+
+h1,
+h2,
+h3,
+p,
+ol,
+ul,
+dl,
+dd,
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+
+button {
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.visually-hidden,
+#reveal legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Top bar: the lockup, the page and the way back, the booth. */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 116px;
+  padding: 0 calc(var(--gutter) + 26px) 0 calc(var(--gutter) - 21px);
+}
+
+/* The lockup's ink starts 32/1260 into its viewBox and fills 192 of its 256 rows. */
+.wordmark {
+  display: block;
+  height: 63px;
+  width: auto;
+  margin-right: auto;
+}
+
+.bar h1,
+.bar .page {
+  padding: 4px 9px;
+  border: 1px solid var(--frame);
+  font: 700 17px/1.2 var(--mono);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bar h1 {
+  border-color: var(--bone);
+  color: var(--bone);
+}
+
+.bar .page {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.bar .page:hover {
+  color: var(--bone);
+  border-color: var(--bone);
+}
+
+.booth {
+  position: relative;
+  flex: none;
+  width: 85px;
+  height: 111px;
+  margin: 2px 0 0 23px;
+}
+
+.booth img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+/* The seal on the booth face stamps the verdict: apart while it waits, split on a refusal, joined on a pass. */
+.seal {
+  position: absolute;
+  left: 35%;
+  top: 22.8%;
+  width: 30%;
+  aspect-ratio: 1;
+  background: var(--booth-face);
+}
+
+.seal .half {
+  fill: var(--ink);
+}
+
+.seal .top {
+  transform: translateY(-4px);
+}
+
+.seal .bottom {
+  transform: translateY(4px);
+}
+
+.seal .seam {
+  fill: none;
+}
+
+body:has(#verdict[data-verdict="failed"]) .seal .top {
+  transform: translateY(-10px);
+}
+
+body:has(#verdict[data-verdict="failed"]) .seal .bottom {
+  transform: translateY(10px);
+}
+
+body:has(#verdict[data-verdict="failed"]) .seal .seam {
+  fill: var(--alert);
+}
+
+body:has(#verdict[data-verdict="verified"]) .seal .half {
+  transform: none;
+}
+
+body:has(#verdict[data-verdict="verified"]) .seal .seam {
+  fill: var(--verify);
+}
+
+/* Gate key band. */
+
+.keybar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 50px;
+  padding: 6px var(--gutter) 6px calc(var(--gutter) - 3px);
+  border-top: 1px solid var(--frame);
+  border-bottom: 1px solid var(--rule);
+  background: var(--band);
+  font: 400 17px/1.2 var(--mono);
+}
+
+.key-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: square;
+  margin-right: 4px;
+}
+
+.keybar label {
+  color: var(--muted);
+}
+
+#gate-key {
+  width: 13ch;
+  min-width: 0;
+  padding: 2px 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--bone);
+  font: 700 18px/1.2 var(--mono);
+  text-overflow: ellipsis;
+}
+
+#gate-key:hover {
+  border-color: var(--rule);
+}
+
+/* A key is compared character by character: editing shows all of it. */
+#gate-key:focus {
+  width: min(46ch, 100%);
+  border-color: var(--frame);
+}
+
+#key-source {
+  color: var(--bone);
+}
+
+#key-source::before {
+  content: "·";
+  margin-right: 12px;
+  color: var(--muted);
+}
+
+/* Two columns: the receipt and its chain, then what it reveals and how to share it. */
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 692fr) minmax(0, 581fr);
+  gap: 24px;
+  align-items: start;
+  padding: 21px var(--gutter) 0;
+}
+
+.receipt,
+.panel {
+  border: 1px solid var(--frame);
+  background: var(--wash);
+}
+
+.receipt {
+  padding: 16px 20px 12px;
+}
+
+.receipt > label,
+.panel h2 {
+  display: block;
+  font: 800 21px/1.2 var(--sans);
+}
+
+.paste {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  height: 122px;
+  margin-top: 8px;
+  /* 1 + 12 + 4 lines of 24 + 12 + 1: the box shows whole lines only. */
+  padding: 12px 6px 12px 12px;
+  border: 1px solid var(--frame);
+}
+
+#paste {
+  height: 100%;
+  padding: 0;
+  border: 0;
+  resize: none;
+  background: transparent;
+  color: var(--bone);
+  font: 700 16px/24px var(--mono);
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+#paste:focus-visible {
+  outline-offset: 6px;
+}
+
+#verify,
+.actions button {
+  border: 1px solid var(--frame);
+  background: var(--ink);
+  color: var(--bone);
+  font: 700 17px/1.2 var(--mono);
+}
+
+#verify {
+  background: transparent;
+  width: 102px;
+  height: 36px;
+  padding: 0;
+  margin-right: 1px;
+}
+
+#verify:hover,
+.actions button:hover {
+  background: var(--band);
+}
+
+#verify:active,
+.actions button:active {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+/* The verdict: a refusal is a red bar with Ink words; its label is stamped on Ink so the word carries the colour. */
+
+#verdict {
+  margin-top: 15px;
+  padding: 5px 12px;
+  border: 1px solid var(--frame);
+  font: 700 18px/1.35 var(--mono);
+  letter-spacing: -0.04em;
+  overflow-wrap: anywhere;
+}
+
+#verdict:empty {
+  padding: 0;
+  border: 0;
+}
+
+#verdict .label {
+  margin-right: 10px;
+  padding: 0 6px;
+  background: var(--ink);
+  color: var(--bone);
+}
+
+#verdict .text {
+  font-size: 16px;
+}
+
+#verdict[data-verdict="failed"] {
+  border-color: var(--alert);
+  background: var(--alert);
+  color: var(--ink);
+}
+
+#verdict[data-verdict="failed"] .label {
+  color: var(--alert);
+}
+
+#verdict[data-verdict="verified"] {
+  border-color: var(--verify);
+  background: var(--verify);
+  color: var(--ink);
+}
+
+#verdict[data-verdict="verified"] .label {
+  color: var(--verify);
+}
+
+/* The chain: one row per link, its proof beside the name, its mark at the end. */
+
+#steps {
+  list-style: none;
+  counter-reset: step;
+  margin-top: 8px;
+}
+
+#steps li {
+  position: relative;
+  counter-increment: step;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 210px) 1px minmax(0, 1fr) auto;
+  grid-template-rows: minmax(38px, auto) auto;
+  grid-template-areas:
+    "num name rule note mark"
+    ". detail detail detail detail";
+  align-items: center;
+  column-gap: 16px;
+  padding: 0 18px 0 5px;
+}
+
+#steps li::before {
+  content: counter(step);
+  grid-area: num;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--muted);
+  border-radius: 50%;
+  color: var(--muted);
+  font: 700 15px/1 var(--mono);
+}
+
+#steps li::after {
+  content: "";
+  grid-area: rule;
+  width: 1px;
+  height: 26px;
+  background: var(--frame);
+}
+
+/* The tick and the cross are drawn in Ink on the filled circle. */
+#steps li[data-status="pass"]::before,
+#steps li[data-status="fail"]::before {
+  content: "";
+  border: 0;
+  background: var(--glyph) center / 16px 16px no-repeat, var(--disc);
+}
+
+#steps li[data-status="pass"]::before {
+  --disc: var(--verify);
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 8.5l4 4 8-9' fill='none' stroke='%230b0d10' stroke-width='2.6'/%3E%3C/svg%3E");
+}
+
+#steps li[data-status="fail"]::before {
+  --disc: var(--alert);
+  --glyph: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 3l10 10M13 3L3 13' fill='none' stroke='%230b0d10' stroke-width='2.6'/%3E%3C/svg%3E");
+}
+
+#steps h3 {
+  grid-area: name;
+  font: 700 20px/1.2 var(--sans);
+  letter-spacing: -0.03em;
+}
+
+/* A mark is a chip filled with its status colour; its word is set in Ink on it. */
+#steps .mark {
+  grid-area: mark;
+  justify-self: end;
+  min-width: 76px;
+  padding: 4px 12px;
+  background-color: var(--muted);
+  color: var(--ink);
+  text-align: center;
+  font: 700 15px/1.2 var(--mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+#steps li[data-status="pass"] .mark {
+  background-color: var(--verify);
+}
+
+#steps li[data-status="fail"] .mark {
+  background-color: var(--alert);
+}
+
+#steps p {
+  grid-area: note;
+  padding: 4px 0;
+  color: var(--muted);
+  font: 400 13px/1.3 var(--sans);
+  overflow-wrap: anywhere;
+}
+
+#steps li[data-status="withheld"] p {
+  grid-area: detail;
+  padding: 0 0 6px;
+}
+
+#steps li[data-status="fail"] p {
+  grid-area: detail;
+  margin: 0 0 4px -26px;
+  padding: 5px 12px;
+  background: var(--band);
+  color: var(--bone);
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+
+/* An unchecked link has nothing to say beyond its mark; the verdict says why. */
+#steps li[data-status="unchecked"] p {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* State changes settle in 180ms: the verdict bar and the marks change colour, nothing moves. */
+#verdict,
+#steps li,
+#steps li::before,
+#steps .mark {
+  transition:
+    color 180ms var(--ease),
+    background-color 180ms var(--ease),
+    border-color 180ms var(--ease);
+}
+
+.method {
+  margin: 6px 0 0 5px;
+  color: var(--muted);
+  font: 400 15px/1.3 var(--sans);
+  letter-spacing: -0.02em;
+}
+
+/* Right column. */
+
+.side {
+  display: grid;
+  gap: 13px;
+}
+
+.panel {
+  padding: 18px 20px 20px;
+}
+
+.reveals {
+  min-height: 136px;
+}
+
+#reveals {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 12px;
+  margin-top: 16px;
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+#reveals dt {
+  font: 700 16px/1.35 var(--sans);
+}
+
+#reveals dd {
+  font: 400 16px/1.35 var(--mono);
+  overflow-wrap: anywhere;
+}
+
+#reveals [data-withheld] {
+  color: var(--muted);
+}
+
+.reveals .empty {
+  margin-top: 18px;
+  color: var(--muted);
+  font: 400 19px/1.4 var(--sans);
+  letter-spacing: -0.03em;
+}
+
+#reveals:not(:empty) + .empty {
+  display: none;
+}
+
+/* The limits sit under the heading; the list closes the panel, next to the holder's choices. */
+.never {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding-top: 12px;
+  padding-bottom: 14px;
+}
+
+.never #never {
+  order: 2;
+}
+
+.never h2 {
+  display: inline-block;
+  padding: 4px 12px;
+  margin-left: -8px;
+  border: 1px solid var(--frame);
+}
+
+#never {
+  list-style: none;
+  margin-top: 10px;
+  font: 700 15px/1.4 var(--sans);
+  letter-spacing: -0.02em;
+}
+
+#never li {
+  display: inline;
+}
+
+#never li + li::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--muted);
+}
+
+#limits {
+  margin-top: 6px;
+  color: var(--muted);
+  font: 400 13px/1.45 var(--sans);
+  max-width: 75ch;
+}
+
+#reveal {
+  display: grid;
+  gap: 11px;
+  margin-top: 14px;
+  border: 0;
+}
+
+#reveal label {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: fit-content;
+  font: 700 19px/1.2 var(--mono);
+  cursor: pointer;
+}
+
+#reveal input {
+  appearance: none;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  border: 2px solid var(--bone);
+  background: var(--ink);
+  cursor: pointer;
+}
+
+#reveal input:checked {
+  background: var(--bone);
+}
+
+#reveal input:checked::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: var(--ink);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 8.5l4 4 8-9' fill='none' stroke='%23000' stroke-width='2.6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+  margin-top: 16px;
+}
+
+.actions button {
+  background: transparent;
+  height: 38px;
+  padding: 0 8px;
+  font-size: clamp(15px, 1.18vw, 17px);
+  white-space: nowrap;
+}
+
+#present {
+  border-color: transparent;
+  background: rgb(138 143 152 / 0.6);
+}
+
+#present:hover {
+  background: rgb(138 143 152 / 0.8);
+}
+
+.output {
+  display: grid;
+  gap: 6px;
+  margin-top: 16px;
+}
+
+/* The copy box opens once there is a copy in it. */
+.output:has(#presentation:placeholder-shown) {
+  display: none;
+}
+
+.output label {
+  color: var(--muted);
+  font: 400 14px/1.2 var(--mono);
+  letter-spacing: 0.02em;
+}
+
+#presentation {
+  min-height: 120px;
+  padding: 8px 12px;
+  border: 1px solid var(--frame);
+  background: var(--ink);
+  color: var(--bone);
+  font: 400 14px/1.5 var(--mono);
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+
+.foot {
+  padding: 7px calc(var(--gutter) - 1px) 6px;
+  color: var(--bone);
+  font: 700 17px/1.3 var(--mono);
+  letter-spacing: -0.04em;
+}
+
+/* Phones and narrow windows: one column, the verdict first under the paste. */
+
+@media (max-width: 960px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --gutter: 10px;
+  }
+
+  .bar {
+    height: auto;
+    min-height: 64px;
+    padding: 8px var(--gutter);
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .wordmark {
+    height: 52px;
+    margin-left: -8px;
+  }
+
+  .bar h1,
+  .bar .page {
+    font-size: 14px;
+  }
+
+  /* The lockup and the booth share the first row; the two pages wrap under them. */
+  .booth {
+    order: 1;
+    width: 40px;
+    height: 52px;
+    margin: 0;
+  }
+
+  .bar .page,
+  .bar h1 {
+    order: 2;
+  }
+
+  .bar .page {
+    margin-right: 0;
+  }
+
+  .bar h1 {
+    margin-right: auto;
+  }
+
+  .keybar,
+  #gate-key {
+    font-size: 15px;
+  }
+
+  #gate-key:focus {
+    width: 100%;
+  }
+
+  .key-icon {
+    width: 22px;
+    height: 22px;
+  }
+
+  main {
+    padding-top: 12px;
+    gap: 12px;
+  }
+
+  .receipt,
+  .panel {
+    padding: 12px;
+  }
+
+  .receipt > label,
+  .panel h2 {
+    font-size: 18px;
+  }
+
+  /* 1 + 12 + 3 lines of 24 + 12 + 1. */
+  .paste {
+    height: 98px;
+  }
+
+  #paste {
+    font-size: 14px;
+  }
+
+  /* The source takes its own line under the key; in the wrapping band that needs the full basis. */
+  #key-source {
+    display: block;
+    flex-basis: 100%;
+  }
+
+  #key-source::before {
+    content: none;
+  }
+
+  #verify {
+    padding: 6px 12px;
+    font-size: 16px;
+  }
+
+  #verdict {
+    margin-top: 10px;
+    font-size: 15px;
+  }
+
+  #steps li {
+    grid-template-columns: 24px minmax(0, 1fr) auto;
+    grid-template-rows: minmax(34px, auto) auto;
+    grid-template-areas:
+      "num name mark"
+      ". note note"
+      ". detail detail";
+    column-gap: 10px;
+    min-height: 34px;
+    padding: 0;
+  }
+
+  #steps li::after {
+    display: none;
+  }
+
+  #steps li::before {
+    width: 24px;
+    height: 24px;
+    font-size: 13px;
+  }
+
+  #steps h3 {
+    font-size: 17px;
+  }
+
+  #steps .mark {
+    font-size: 13px;
+    padding: 2px 6px;
+  }
+
+  #steps li[data-status="fail"] p {
+    margin-left: 0;
+    font-size: 15px;
+  }
+
+  #reveal label {
+    font-size: 18px;
+  }
+
+  .actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .foot {
+    padding: 10px var(--gutter) 16px;
+    font-size: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #verdict,
+  #steps li,
+  #steps li::before,
+  #steps .mark {
+    transition: none;
+  }
+}

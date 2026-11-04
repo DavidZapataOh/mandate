@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mandate Proof Explorer</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+  </head>
+  <body>
+    <header class="bar">
+      <img class="wordmark" src="/brand/mandate-horizontal-white.svg" alt="Mandate" />
+      <a class="page" href="/console/">Console</a>
+      <h1>Proof Explorer</h1>
+      <div class="booth" aria-hidden="true">
+        <img src="/world/booth.png" alt="" width="492" height="642" />
+        <svg class="seal" viewBox="0 0 256 256">
+          <rect class="seam" x="32" y="118" width="192" height="20" />
+          <path class="half top" d="M32 32 H224 V128 H128 V108 H32 Z" />
+          <path class="half bottom" d="M32 224 H224 V148 H128 V128 H32 Z" />
+        </svg>
+      </div>
+    </header>
+    <section class="keybar" aria-label="Gate key">
+      <svg class="key-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="7.5" cy="15.5" r="4.5" />
+        <path d="M10.7 12.3 20 3M16.5 6.5l3 3M14 9l2.5 2.5" />
+      </svg>
+      <label for="gate-key">Gate key</label>
+      <input id="gate-key" spellcheck="false" autocomplete="off" aria-describedby="key-source key-format" />
+      <p id="key-source">Loading the published key</p>
+      <p id="key-format" class="visually-hidden">Ed25519 public key, 32 bytes in base64</p>
+    </section>
+    <main>
+      <section class="receipt" aria-label="Paste">
+        <label for="paste">Receipt, certificate, payment id or console line</label>
+        <div class="paste">
+          <textarea id="paste" spellcheck="false"></textarea>
+          <button type="button" id="verify">Verify</button>
+        </div>
+        <p id="verdict" role="status"></p>
+        <ol id="steps" aria-label="Proof chain"></ol>
+        <p class="method">Each link is checked in this browser, in order; nothing after a broken link is ticked.</p>
+      </section>
+      <div class="side">
+        <section class="panel reveals" aria-labelledby="reveals-title">
+          <h2 id="reveals-title">What this receipt reveals</h2>
+          <dl id="reveals"></dl>
+          <p class="empty">Fields appear here once a receipt's disclosures verify.</p>
+        </section>
+        <section class="panel never" aria-labelledby="never-title">
+          <h2 id="never-title">Never in a receipt</h2>
+          <ul id="never"></ul>
+          <p id="limits">Receipts share no holder key: each payment is signed by a key used once, and the holder's own key appears only when the holder discloses it. The gate that issued a receipt can still link it to its holder. A withheld field cannot be confirmed by guessing: the certificate's action hash is salted.</p>
+        </section>
+        <section class="panel share" aria-labelledby="share-title">
+          <h2 id="share-title">Share with an auditor</h2>
+          <fieldset id="reveal">
+            <legend>Fields to disclose</legend>
+            <label><input type="checkbox" name="reveal" value="amount" /> Amount</label>
+            <label><input type="checkbox" name="reveal" value="payee" /> Payee account</label>
+            <label><input type="checkbox" name="reveal" value="account" /> Debit account</label>
+            <label><input type="checkbox" name="reveal" value="reference" /> Reference</label>
+            <label><input type="checkbox" name="reveal" value="holder" /> Holder identity</label>
+          </fieldset>
+          <div class="actions">
+            <button type="button" id="holder-copy">Load the holder copy</button>
+            <button type="button" id="present">Make the auditor copy</button>
+          </div>
+          <div class="output">
+            <label for="presentation">Auditor copy</label>
+            <textarea id="presentation" readonly spellcheck="false" placeholder=" "></textarea>
+          </div>
+        </section>
+      </div>
+    </main>
+    <footer class="foot">Mandate Proof Explorer · no account and no secret needed</footer>
+    <script type="module" src="/src/explorer.ts"></script>
+  </body>
+</html>

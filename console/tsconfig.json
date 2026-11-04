@@ -14,5 +14,13 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": false
   },
-  "include": ["src", "tools", "e2e", "vite.config.ts", "playwright.config.ts"]
+  "include": [
+    "src",
+    "tools",
+    "e2e",
+    "walkthrough",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "playwright.walkthrough.config.ts"
+  ]
 }

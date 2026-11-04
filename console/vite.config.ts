@@ -5,7 +5,10 @@ export default defineConfig({
   base: "/console/",
   build: {
     rolldownOptions: {
-      input: { index: fileURLToPath(new URL("./index.html", import.meta.url)) },
+      input: {
+        index: fileURLToPath(new URL("./index.html", import.meta.url)),
+        explorer: fileURLToPath(new URL("./explorer.html", import.meta.url)),
+      },
     },
   },
   test: { environment: "jsdom", include: ["src/**/*.test.ts", "tools/**/*.test.ts"] },

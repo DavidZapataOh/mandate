@@ -13,7 +13,7 @@ import uvicorn
 from bank.api import Bank
 from bank.verifier import Verifier
 from gate.cava import CavaAction, Freshness
-from gate.certs import CertClaims, generate_keypair
+from gate.certs import CertClaims, generate_keypair, public_key_of
 from gate.consent import Consent, HolderApproval, sign_approval
 from gate.policy import Intent, Policy, Rule, Verdict
 from swarm.console_line import ConsoleLine
@@ -98,16 +98,25 @@ def cert_claims() -> CertClaims:
 DESK_NOW = 1800001000
 
 
+def _keys(private: bytes | None) -> tuple[bytes, bytes]:
+    if private is None:
+        return generate_keypair()
+    return (private, public_key_of(private))
+
+
 @pytest.fixture
 def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
     def build(
         register: bool = True,
         clock: Callable[[], int] | None = None,
         publish: Callable[[ConsoleLine], object] | None = None,
+        gate_key: bytes | None = None,
+        holder_key: bytes | None = None,
     ) -> tuple[PaymentDesk, bytes | None]:
-        gate_priv, gate_pub = generate_keypair()
+        gate_priv, gate_pub = _keys(gate_key)
         counter = itertools.count(1)
         salt = itertools.count(1)
+        sd_salt = itertools.count(1)
         desk = PaymentDesk(
             source="checking-881",
             bank=Bank({"checking-881": 50000, "acme-991": 0}),
@@ -117,10 +126,11 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             nonces=lambda: f"{next(counter):032x}",
             publish=publish,
             action_salts=lambda: bytes([next(salt)]) * 32,
+            salts=lambda: bytes([next(sd_salt)]) * 16,
         )
         if not register:
             return desk, None
-        holder_priv, holder_pub = generate_keypair()
+        holder_priv, holder_pub = _keys(holder_key)
         desk.register_holder(holder_pub)
         return desk, holder_priv
 

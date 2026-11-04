@@ -31,7 +31,7 @@ from swarm.voice import transcriber_from_env
 
 CONSOLE_DIST = Path(__file__).resolve().parent.parent / "console" / "dist"
 _DEMO_BALANCE_CENTS = 10000000
-_LOCAL_HOSTS = ("127.0.0.1", "localhost")
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _GRACEFUL_SHUTDOWN_S = 2
 _INTENT = Intent(
     amount_cents=20000, currency="USD", recipient="acme-991", reference="A-991"
@@ -256,7 +256,13 @@ def cli(argv: list[str] | None = None) -> None:
         "--public-host",
         action="append",
         default=[],
-        help="extra Host name the routes accept, e.g. an HTTPS proxy name",
+        help=(
+            "extra Host name the routes accept, e.g. an HTTPS proxy name; "
+            "the console routes (/api/lines, /api/events, /api/forensic) show "
+            "every payment's amount, payee, reference and debit account in "
+            "clear to anyone who reaches that name: use a public host for "
+            "demo data only"
+        ),
     )
     args = parser.parse_args(argv)
     index = args.console_dir / "index.html"

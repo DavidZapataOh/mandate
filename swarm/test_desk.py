@@ -5,7 +5,9 @@ import json
 from gate.certs import generate_keypair
 from gate.consent import Consent, HolderApproval, sign_approval
 from gate.registry import InclusionProof, Registry, verify_inclusion
+from gate.sdjwt import process
 from swarm.console_line import console_line_json
+from swarm.receipt import RECEIPT_TYP, present
 
 NOW = 1800001000
 SUMMARY = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881"
@@ -330,9 +332,14 @@ def test_the_desk_keeps_the_action_salt_privately(make_desk, sign_quote):
     desk.approve("q:000001", sign_quote(holder, q))
     result = desk.confirm("q:000001")
     pid = result["payment_id"]
-    salt = b"\x01" * 32
-    assert desk._payment_salts[pid] == salt
-    hexed = salt.hex()
+    hexed = (b"\x01" * 32).hex()
+    held = desk.proof_receipt(pid)
+    holder_view, _ = process(held["sd"], desk.gate_public_key, RECEIPT_TYP)
+    assert holder_view["cava"]["action_salt"] == hexed
+    auditor = present(held, frozenset())
+    auditor_view, _ = process(auditor["sd"], desk.gate_public_key, RECEIPT_TYP)
+    assert "action_salt" not in auditor_view["cava"]
+    assert hexed not in json.dumps(auditor)
     assert hexed not in json.dumps(desk.receipt(pid))
     assert hexed not in json.dumps(result)
     assert hexed not in repr(result)
@@ -397,3 +404,25 @@ def test_an_approval_using_the_paired_key_directly_leaves_the_quote_open(make_de
     out = desk.approve(q["quote_id"], sign_approval(holder, unsigned, holder))
     assert (out["status"], out["reason"]) == ("denied", "consent: key reused")
     assert desk.status(q["quote_id"])["status"] == "quoted"
+
+
+def test_a_receipt_failure_keeps_the_paid_confirm(
+    make_desk, sign_quote, monkeypatch, caplog
+):
+    def broken(*args, **kwargs):
+        raise ValueError("secret-detail acme-991 A-991")
+
+    monkeypatch.setattr("swarm.desk.proof_receipt", broken)
+    desk, holder, lines = _published(make_desk)
+    quote_id = _approved(desk, holder, sign_quote)
+    with caplog.at_level("ERROR", logger="swarm.desk"):
+        done = desk.confirm(quote_id)
+    assert (done["status"], done["payment_id"]) == ("confirmed", "pay:000001")
+    assert desk.bank.get_balance("acme-991") == 20000
+    assert desk.proof_receipt("pay:000001") is None
+    assert [x.subject["status"] for x in lines][-1] == "confirmed"
+    assert [r.getMessage() for r in caplog.records] == [
+        "receipt not built for pay:000001 (ValueError)"
+    ]
+    assert "secret-detail" not in caplog.text
+    assert "acme-991" not in caplog.text

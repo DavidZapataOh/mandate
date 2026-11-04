@@ -427,3 +427,15 @@ def test_counted_salts_reproduce_the_golden_deploy_hash():
     line = runner.run(NimbusStep.RELEASE)
     assert line.event["action"] == line.forensic["action_hash"] == DEPLOY_HASH
     assert line.forensic["cert_claims"]["action_hash"] == DEPLOY_HASH
+
+
+def test_public_host_help_says_the_console_routes_publish_payments(monkeypatch, capsys):
+    monkeypatch.setenv("COLUMNS", "400")
+    with pytest.raises(SystemExit):
+        console.cli(["--help"])
+    text = " ".join(capsys.readouterr().out.split())
+    assert (
+        "the console routes (/api/lines, /api/events, /api/forensic) show every "
+        "payment's amount, payee, reference and debit account in clear to anyone "
+        "who reaches that name: use a public host for demo data only"
+    ) in text

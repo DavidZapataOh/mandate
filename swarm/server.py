@@ -43,6 +43,7 @@ from swarm.live_attack import (
     NoPlanError,
 )
 from swarm.nimbus import NimbusStep
+from swarm.receipt import present
 from swarm.redteam import TEMPLATES, AttackKind
 from swarm.voice import (
     MAX_WAV_BYTES,
@@ -60,7 +61,18 @@ _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
 _BAD_REQUEST = {"error": "bad request"}
 _APPROVAL = ("signature", "consent_key", "key_signature")
 _DEMO_BALANCE_CENTS = 100000
-_LOCAL_HOSTS = ("127.0.0.1", "localhost")
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
+_LOOPBACK_CLIENTS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+# Any of these means a proxy relayed the request, so its loopback peer
+# address says nothing about who asked.
+_PROXY_HEADERS = (
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "cf-connecting-ip",
+)
 _KEY_LEN = 32
 _POLL_S = 0.05
 _MAX_DIGITS = 18
@@ -119,6 +131,10 @@ class _BoundedStream(StreamingResponse):
             await super().__call__(scope, receive, bounded)
         except* TimeoutError:
             pass
+
+
+def _b64(raw: bytes) -> str:
+    return base64.b64encode(raw).decode("ascii")
 
 
 def _bad_request() -> JSONResponse:
@@ -337,6 +353,35 @@ state is returned."""
             return _bad_request()
         return JSONResponse({"registered": desk.register_holder(key)})
 
+    async def keys(request: Request) -> Response:
+        """Publish the gate key and the paired holder keys.
+
+        Holder keys are published so a holder can check their own disclosure.
+        """
+        return JSONResponse(
+            {
+                "gate_key": _b64(desk.gate_public_key),
+                "holder_keys": [_b64(key) for key in desk.holder_keys],
+            }
+        )
+
+    async def registry(request: Request) -> Response:
+        return JSONResponse({"seal": desk.latest_seal()})
+
+    async def receipt(request: Request) -> Response:
+        query = dict(request.query_params)
+        if query.keys() - {"disclose"} or query.get("disclose", "all") != "all":
+            return _bad_request()
+        everything = "disclose" in query
+        if everything and not _loopback_only(request):
+            return JSONResponse({"error": "holder copy is local only"}, status_code=403)
+        found = desk.proof_receipt(request.path_params["payment_id"])
+        if found is None:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        # The holder copy stays on this origin; anything shared leaves without
+        # the personal fields unless the holder adds them.
+        return JSONResponse(found if everything else present(found, frozenset()))
+
     async def device(request: Request) -> Response:
         keys = desk.holder_keys
         fingerprint = hashlib.sha256(keys[0]).hexdigest()[:16] if keys else None
@@ -499,6 +544,9 @@ state is returned."""
         ("/api/approve", "POST", approve),
         ("/api/holder", "POST", holder),
         ("/api/device", "GET", device),
+        ("/api/keys", "GET", keys),
+        ("/api/registry", "GET", registry),
+        ("/api/receipt/{payment_id}", "GET", receipt),
         ("/api/voice", "POST", voice_text),
     ):
         _route(srv, path, method, _host_guard(handler, allowed_hosts))
@@ -581,6 +629,17 @@ def _console_response(served: dict[str, Path], name: str) -> Response:
 
 
 _Handler = Callable[[Request], Awaitable[Response]]
+
+
+def _loopback_only(request: Request) -> bool:
+    # Not authentication: anyone who can open a loopback connection to the
+    # desk passes. It keeps the holder copy off every remote or proxied path.
+    client = request.client.host if request.client else None
+    return (
+        client in _LOOPBACK_CLIENTS
+        and request.url.hostname in _LOCAL_HOSTS
+        and not any(name in request.headers for name in _PROXY_HEADERS)
+    )
 
 
 def _host_guard(handler: _Handler, allowed: tuple[str, ...]) -> _Handler:

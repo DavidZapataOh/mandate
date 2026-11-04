@@ -1,0 +1,8 @@
+{
+  "model": "muse-image-1.0",
+  "endpoint": "/v1/images/edits",
+  "request": "34d2d53e-9e6a-4755-9218-85a5d0111183",
+  "reference": "console/art/explorer-anchor.png",
+  "prompt_file": "teller-window.prompt.txt",
+  "approved": true
+}

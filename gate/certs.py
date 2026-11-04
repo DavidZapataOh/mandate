@@ -1,7 +1,6 @@
 """RFC 8417 certificates: issue, offline verify, single-use, revocation."""
 
 import base64
-import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -15,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from gate.policy import Verdict
+from gate.sdjwt import digest, disclosure, serialize
 
 EVENT_TYPE = "urn:mandate:secevent:cert:v1"
 DEFAULT_TTL_S = 300
@@ -221,22 +221,8 @@ def verify_certificate(
     return (True, "ok: verified")
 
 
-def _b64u(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
-
-
 def _b64u_decode(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-
-
-def _disclosure(key: str, value: Any) -> str:
-    salt = _b64u(os.urandom(16))
-    raw = json.dumps([salt, key, value], separators=(",", ":"), ensure_ascii=True)
-    return _b64u(raw.encode("ascii"))
-
-
-def _digest(disclosure: str) -> str:
-    return _b64u(hashlib.sha256(disclosure.encode("ascii")).digest())
 
 
 def issue_sd_jwt(
@@ -247,9 +233,11 @@ def issue_sd_jwt(
 ) -> tuple[str, dict[str, str]]:
     """SD-JWT with salted disclosures for the named top-level keys."""
     subject = _subject(claims)
-    disclosures = {key: _disclosure(key, subject[key]) for key in disclosable}
+    disclosures = {
+        key: disclosure(os.urandom(16), key, subject[key]) for key in disclosable
+    }
     body = {key: value for key, value in subject.items() if key not in disclosures}
-    body["_sd"] = sorted(_digest(d) for d in disclosures.values())
+    body["_sd"] = sorted(digest(d) for d in disclosures.values())
     key = Ed25519PrivateKey.from_private_bytes(private_key)
     payload = _payload(claims, jti, body)
     token = jwt.encode(payload, key, algorithm="EdDSA", headers={"typ": "secevent+jwt"})
@@ -257,8 +245,8 @@ def issue_sd_jwt(
 
 
 def disclose(token: str, disclosures: dict[str, str], keys: tuple[str, ...]) -> str:
-    """Sandwich token with the chosen disclosures only."""
-    return token + "~" + "~".join(disclosures[key] for key in keys) + "~"
+    """Compact SD-JWT with the chosen disclosures only (RFC 9901 §4)."""
+    return serialize(token, [disclosures[key] for key in keys])
 
 
 def verify_sd_jwt(
@@ -277,16 +265,17 @@ def verify_sd_jwt(
         digests = set(body["_sd"])
     except (KeyError, TypeError):
         return ({}, False, "malformed: token undecodable")
+    sent = [text for text in parts[1:] if text]
+    if len(set(sent)) != len(sent):
+        return ({}, False, "tampered: disclosure repeated")
     visible: dict[str, object] = {
         key: value for key, value in body.items() if key != "_sd"
     }
-    for disclosure in parts[1:]:
-        if not disclosure:
-            continue
-        if _digest(disclosure) not in digests:
+    for text in sent:
+        if digest(text) not in digests:
             return ({}, False, "tampered: disclosure digest unknown")
         try:
-            salted = json.loads(_b64u_decode(disclosure).decode("ascii"))
+            salted = json.loads(_b64u_decode(text).decode("ascii"))
             _, key, value = salted
         except (ValueError, TypeError):
             return ({}, False, "tampered: disclosure digest unknown")

@@ -125,3 +125,22 @@ def test_bad_public_key_is_a_reason(keypair, cert_claims):
 def test_public_key_of_matches_keypair(keypair):
     private_key, public_key = keypair
     assert public_key_of(private_key) == public_key
+
+
+def test_no_disclosures_end_with_one_tilde(keypair, cert_claims):
+    private_key, public_key = keypair
+    token, disclosures = issue_sd_jwt(cert_claims, private_key, "jti-sd0", ("scope",))
+    assert disclose(token, disclosures, ()) == token + "~"
+    _, ok, _ = verify_sd_jwt(token + "~", public_key, 1800000100)
+    assert ok is True
+
+
+def test_a_disclosure_sent_twice_is_refused(keypair, cert_claims):
+    private_key, public_key = keypair
+    token, disclosures = issue_sd_jwt(cert_claims, private_key, "jti-sd2", ("scope",))
+    twice = f"{token}~{disclosures['scope']}~{disclosures['scope']}~"
+    assert verify_sd_jwt(twice, public_key, 1800000100) == (
+        {},
+        False,
+        "tampered: disclosure repeated",
+    )
