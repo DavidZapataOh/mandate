@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const BIN = process.env.MANDATE_CONSOLE ?? `${ROOT}.venv/bin/mandate-console`;
-const PYTHON = `${ROOT}.venv/bin/python`;
+const PYTHON = process.env.MANDATE_PYTHON ?? `${ROOT}.venv/bin/python`;
 const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 
 export interface OwnConsole {
