@@ -68,11 +68,17 @@ function step(seq: number, name: string, layer: string, reason: string, blocked:
   return patch(DEPLOY, { seq, event }, { step: name, layer, reason, blocked });
 }
 
-/** Nimbus steps: one release and two refused steps. */
+function intent(seq: number, status: string, reason: string | null): string {
+  return patch(CONFIRM, { seq, event: null, forensic: null }, { step: "intent", quote_id: null, status, payment_id: null, reason });
+}
+
+/** Nimbus steps and holder intents: one release, two refused steps, one refused and one signed intent. */
 export const HQ: readonly string[] = [
   DEPLOY.replace('"seq":9', '"seq":12'),
   step(13, "poisoned_tool", "mcp", "denied: tool undeclared", true),
   step(14, "stale_migration", "gate", "no rule matches", true),
+  intent(15, "denied", "intent: bad signature"),
+  intent(16, "signed", null),
 ];
 
 /** A stale migration the gate let through. */

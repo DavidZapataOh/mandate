@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from bank.api import Bank, PaymentRequest
+from bank.api import Bank, PaymentRequest, RailError
+from bank.conftest import RecordingRail
 from bank.verifier import (
     Freshness,
     ProposedAction,
@@ -361,3 +362,85 @@ def test_a_malformed_salt_pays_nothing(keypair, salt):
         None,
     )
     assert bank.get_balance("checking-881") == 50000
+
+
+def test_rail_gets_one_call_keyed_by_the_certificate(keypair):
+    priv, pub = keypair
+    digest = gate_commitment(_gate_action(), SALT)
+    rail = RecordingRail()
+    result = Verifier(pub).verify_and_execute(
+        rail, _token(digest, priv, "c1" * 16), _proposed(), NOW, SALT
+    )
+    assert (result.accepted, result.reason) == (True, "ok: executed")
+    assert result.payment.payment_id == "account_transfer_t1"
+    assert rail.calls == [
+        (
+            PaymentRequest("checking-881", "acme-991", 20000, "USD", "A-991"),
+            digest,
+            "mandate-cert-" + "c1" * 16,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["bad-signature", "expired", "mismatch", "revoked", "replayed"],
+)
+def test_rail_never_called_when_a_check_fails(keypair, case):
+    priv, pub = keypair
+    digest = gate_commitment(_gate_action(), SALT)
+    verifier = Verifier(pub)
+    token = _token(digest, priv, "d1" * 16)
+    action, now = _proposed(), NOW
+    if case == "bad-signature":
+        verifier = Verifier(generate_keypair()[1])
+    elif case == "expired":
+        now = TS + 301
+    elif case == "mismatch":
+        action = _proposed(tuple(t.replace("acme", "evil") for t in TARGETS))
+    elif case == "revoked":
+        verifier.revoke(7)
+    else:
+        verifier.verify_and_execute(RecordingRail(), token, action, now, SALT)
+    rail = RecordingRail()
+    result = verifier.verify_and_execute(rail, token, action, now, SALT)
+    assert result.accepted is False
+    assert rail.calls == []
+
+
+def test_unusable_jti_never_reaches_the_rail(keypair):
+    priv, pub = keypair
+    rail = RecordingRail()
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "has space")
+    result = Verifier(pub).verify_and_execute(rail, token, _proposed(), NOW, SALT)
+    assert (result.accepted, result.reason) == (False, "malformed: token undecodable")
+    assert rail.calls == []
+
+
+def test_fresh_verifier_replay_moves_nothing(keypair):
+    priv, pub = keypair
+    bank = _bank()
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "e1" * 16)
+    first = Verifier(pub).verify_and_execute(bank, token, _proposed(), NOW, SALT)
+    again = Verifier(pub).verify_and_execute(bank, token, _proposed(), NOW, SALT)
+    assert (first.reason, again.reason) == (
+        "ok: executed",
+        "replay: bank idempotency key",
+    )
+    assert again.payment is None
+    assert bank.get_balance("acme-991") == 20000
+
+
+@pytest.mark.parametrize(
+    "reason", ["bank: unavailable", "bank: outcome unknown", "bank: refused"]
+)
+def test_rail_failure_is_a_denial_and_spends_the_certificate(keypair, reason):
+    priv, pub = keypair
+    verifier = Verifier(pub)
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "f1" * 16)
+    failed = verifier.verify_and_execute(
+        RecordingRail(RailError(reason)), token, _proposed(), NOW, SALT
+    )
+    retry = verifier.verify_and_execute(RecordingRail(), token, _proposed(), NOW, SALT)
+    assert (failed.accepted, failed.reason, failed.payment) == (False, reason, None)
+    assert retry.reason == "replay: jti consumed"

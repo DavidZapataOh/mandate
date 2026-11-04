@@ -30,6 +30,16 @@ const bill = (verdict: string) =>
 describe("gameText", () => {
   it.each([
     [
+      "intent signed",
+      patch(CONFIRM, { event: null }, { step: "intent", status: "signed", quote_id: null, payment_id: null, reason: null }),
+      "Holder signed intent: MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881",
+    ],
+    [
+      "intent refused",
+      patch(CONFIRM, { event: null }, { step: "intent", status: "denied", quote_id: null, payment_id: null, reason: "intent: bad signature" }),
+      "Intent refused: intent: bad signature",
+    ],
+    [
       "paid",
       CONFIRM,
       "Paid ✓ MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881 in 61µs",

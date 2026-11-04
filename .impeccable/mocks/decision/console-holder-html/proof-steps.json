@@ -1,0 +1,1 @@
+{"model": "muse-image-1.0", "endpoint": "/v1/images/edits", "request": "5103fa36-f7a9-4fc5-a79d-389eac1ab259", "reference": ".impeccable/mocks/decision/console-holder-html/reference-portrait.png", "prompt_file": "proof-steps.prompt.txt", "approved": false}

@@ -1,5 +1,7 @@
-"""Payment desk: quote, holder approval, gated confirm, receipt."""
+"""Payment desk: holder intent, quote, holder approval, gated confirm, receipt."""
 
+import base64
+import dataclasses
 import json
 import logging
 import os
@@ -8,10 +10,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from bank.api import Bank
+from bank.rail import BankRail
 from bank.verifier import Verifier
+from evidence.cooperative import sign_state
+from evidence.seams import opaque_cooperative_ref, opaque_intent_ref
 from gate.cava import ACTION_SALT_LEN
-from gate.certs import public_key_of
+from gate.certs import generate_keypair, public_key_of
 from gate.consent import (
     Consent,
     ConsentLedger,
@@ -22,10 +26,11 @@ from gate.consent import (
 )
 from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule
-from gate.registry import LogEntry, Registry
+from gate.registry import Anchor, LogEntry, Registry
 from gate.shim import Mode, RawCall
 from mandate.client import RunRequest, run_governed
 from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
+from swarm.intent import IntentError, confirmed_intent, intent_hash
 from swarm.meta_client import reasoning_commitment
 from swarm.receipt import proof_receipt, seal_view
 
@@ -41,6 +46,7 @@ DESK_POLICY = Policy(
 _log = logging.getLogger(__name__)
 _KEY_LEN = 32
 _REVOCATION_BITS = 1024
+_STATEMENT_TTL_S = 300
 _T = TypeVar("_T")
 
 
@@ -50,6 +56,16 @@ class _Quote:
     consent: Consent
     status: str = "quoted"
     result: dict[str, Any] | None = None
+    intent_id: str | None = None
+
+
+@dataclass
+class _Intent:
+    intent: Intent
+    hash: str
+    funds_ref: str
+    intent_ref: str
+    payment_id: str | None = None
 
 
 # The debit account stays out of the certificate: the salted action hash
@@ -60,9 +76,14 @@ PAY_SCOPE = "mcp:bank.pay:transfer"
 class PaymentDesk:
     """Holds quotes until the holder signs, then pays once through the gate.
 
+    The holder may first sign an intent on their own device. The desk keeps
+    only the reference of the bank statement it signs for that intent. A quote
+    naming an intent is checked against it at the gate; a quote naming none is
+    checked against the holder's consent only.
+
     Args:
         source: Account every quote debits.
-        bank: Ledger the confirmed payments execute against.
+        bank: Rail the confirmed payments execute against.
         verifier: Certificate verifier bound to the gate's public key.
         gate_key: Raw Ed25519 private key the gate signs certificates with.
         clock: Current unix time in seconds.
@@ -74,12 +95,16 @@ class PaymentDesk:
             draws them from the operating system.
         salts: Source of 16-byte SD-JWT Disclosure salts for proof receipts;
             None draws them from the operating system.
+        bank_key: Raw Ed25519 private key the simulated bank signs funds
+            statements with; None generates a fresh one.
+        require_intent: When True, a quote naming no intent is denied at
+            confirm before the gate runs.
     """
 
     def __init__(
         self,
         source: str,
-        bank: Bank,
+        bank: BankRail,
         verifier: Verifier,
         gate_key: bytes,
         clock: Callable[[], int],
@@ -88,6 +113,9 @@ class PaymentDesk:
         publish: Callable[[ConsoleLine], object] | None = None,
         action_salts: Callable[[], bytes] | None = None,
         salts: Callable[[], bytes] | None = None,
+        *,
+        bank_key: bytes | None = None,
+        require_intent: bool = False,
     ) -> None:
         self.bank = bank
         self._source = source
@@ -100,6 +128,9 @@ class PaymentDesk:
         self._action_salts = action_salts or (lambda: os.urandom(ACTION_SALT_LEN))
         self._salts = salts or (lambda: os.urandom(16))
         self._gate_pub = public_key_of(gate_key)
+        self._bank_key = generate_keypair()[0] if bank_key is None else bank_key
+        self._bank_pub = public_key_of(self._bank_key)
+        self._require_intent = require_intent
         # Seals use the gate key: the "anchor/v1:" prefix cannot collide with
         # a JWS signing input, so one published key verifies both.
         self.registry = Registry(keypair=(gate_key, self._gate_pub))
@@ -111,6 +142,8 @@ class PaymentDesk:
         # leave the desk only through `proof_receipt`.
         self._proofs: dict[str, dict[str, Any]] = {}
         self._seq = 0
+        self._intents: dict[str, _Intent] = {}
+        self._intent_hashes: set[str] = set()
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
 
@@ -119,11 +152,11 @@ class PaymentDesk:
         """Account every quote debits."""
         return self._source
 
-    def guarded(self, work: Callable[[Bank, Verifier], _T]) -> _T:
+    def guarded(self, work: Callable[[BankRail, Verifier], _T]) -> _T:
         """Run ``work`` against the desk's bank and verifier under the desk lock.
 
         Args:
-            work: Callable receiving the bank and the verifier.
+            work: Callable receiving the bank rail and the verifier.
 
         Returns:
             Whatever ``work`` returns.
@@ -135,6 +168,11 @@ class PaymentDesk:
     def gate_public_key(self) -> bytes:
         """Raw Ed25519 public key that verifies certificates, seals and receipts."""
         return self._gate_pub
+
+    @property
+    def bank_public_key(self) -> bytes:
+        """Raw Ed25519 public key that verifies the bank's funds statements."""
+        return self._bank_pub
 
     @property
     def holder_keys(self) -> tuple[bytes, ...]:
@@ -162,8 +200,75 @@ class PaymentDesk:
             self._holders = (public_key,)
             return True
 
+    def record_intent(self, intent: Intent, signature: bytes) -> dict[str, Any]:
+        """Record a holder-signed intent and sign a funds statement for it.
+
+        The statement's nonce is the intent hash. The desk keeps only the
+        statement's reference; the statement itself goes back to the holder.
+
+        Args:
+            intent: Amount, currency, payee and reference the holder signed.
+            signature: The holder's Ed25519 signature over the intent bytes.
+
+        Returns:
+            The signed view with the intent id, hash, summary, the statement's
+            reference, the statement and the bank's public key; or a denied
+            dict with the reason.
+        """
+        summary = pay_summary(
+            str(intent.amount_cents),
+            intent.currency,
+            intent.recipient,
+            intent.reference,
+            self._source,
+        )
+        with self._lock:
+            view = self._record_intent(intent, signature, summary)
+            self._line("intent", view, summary)
+            return view
+
+    def intent_receipt(self, intent_id: str) -> dict[str, Any]:
+        """Agent view of a recorded intent: fields and references only.
+
+        Args:
+            intent_id: Intent to read.
+
+        Returns:
+            Status (``signed`` or ``paid``), ids, hash, summary, the four
+            fields, the statement's reference and the payment id; an unknown
+            view when no such intent exists.
+        """
+        with self._lock:
+            found = self._intents.get(intent_id)
+            if found is None:
+                return {"status": "unknown", "intent_id": intent_id}
+            i = found.intent
+            return {
+                "status": "signed" if found.payment_id is None else "paid",
+                "intent_id": intent_id,
+                "intent_hash": found.hash,
+                "summary": pay_summary(
+                    str(i.amount_cents),
+                    i.currency,
+                    i.recipient,
+                    i.reference,
+                    self._source,
+                ),
+                "amount_cents": i.amount_cents,
+                "currency": i.currency,
+                "recipient": i.recipient,
+                "reference": i.reference,
+                "evidence_ref": found.funds_ref,
+                "payment_id": found.payment_id,
+            }
+
     def quote(
-        self, recipient: str, amount_cents: int, currency: str, reference: str
+        self,
+        recipient: str,
+        amount_cents: int,
+        currency: str,
+        reference: str,
+        intent_id: str | None = None,
     ) -> dict[str, Any]:
         """Open a quote the holder can approve.
 
@@ -172,11 +277,25 @@ class PaymentDesk:
             amount_cents: Amount in integer cents.
             currency: Currency code.
             reference: Payment reference.
+            intent_id: Recorded intent the quote is bound to, or None. A
+                bound quote is checked against that intent at the gate.
 
         Returns:
-            The quoted view, or a denied dict when a field is malformed.
+            The quoted view, or a denied dict when a field is malformed or
+            the intent is unknown.
         """
         with self._lock:
+            if intent_id is not None and intent_id not in self._intents:
+                unknown = {
+                    "status": "denied",
+                    "reason": "intent: unknown",
+                    "intent_id": intent_id,
+                }
+                summary = pay_summary(
+                    str(amount_cents), currency, recipient, reference, self._source
+                )
+                self._line("quote", unknown, summary)
+                return unknown
             consent = Consent(
                 amount_cents,
                 currency,
@@ -194,7 +313,7 @@ class PaymentDesk:
                 self._emit("quote", denied, consent)
                 return denied
             self._seq += 1
-            record = _Quote(self._seq, consent)
+            record = _Quote(self._seq, consent, intent_id=intent_id)
             self._quotes[_quote_id(self._seq)] = record
             view = self._quoted_view(record)
             self._emit("quote", view, consent)
@@ -270,6 +389,13 @@ class PaymentDesk:
         Args:
             quote_id: Quote to execute.
 
+        A quote naming no intent on a desk that requires one, or naming an
+        intent that already paid, is denied without a gate run; the denial is
+        still appended to the registry and sealed.
+
+        Args:
+            quote_id: Quote to execute.
+
         Returns:
             The stored result; later calls return it unchanged.
         """
@@ -279,13 +405,22 @@ class PaymentDesk:
                 return _unknown(quote_id)
             if record.status != "approved":
                 return self._view(quote_id, record)
+            iid = record.intent_id
+            bound = None if iid is None else self._intents[iid]
+            refusal = None
+            if self._require_intent and bound is None:
+                refusal = "intent: missing"
+            elif bound is not None and bound.payment_id is not None:
+                refusal = "intent: already used"
             if not self.registry.has_room():
                 return {
                     "status": "denied",
                     "reason": "registry: full",
                     "quote_id": quote_id,
                 }
-            return self._execute(quote_id, record)
+            if refusal is not None:
+                return self._refuse(quote_id, record, refusal)
+            return self._execute(quote_id, record, bound)
 
     def status(self, quote_id: str) -> dict[str, Any]:
         """Latest view of a quote."""
@@ -323,9 +458,81 @@ class PaymentDesk:
             seals = self.registry.anchors()
             return seal_view(seals[-1]) if seals else None
 
-    def _execute(self, quote_id: str, record: _Quote) -> dict[str, Any]:
+    def _record_intent(
+        self, intent: Intent, signature: bytes, summary: str
+    ) -> dict[str, Any]:
+        if not self._holders:
+            return _denied_intent("intent: no holder")
+        try:
+            confirmed_intent(self._holders[0], intent, signature)
+        except IntentError as exc:
+            malformed = str(exc) == "intent: malformed"
+            return _denied_intent(
+                "intent: malformed" if malformed else "intent: bad signature"
+            )
+        digest = intent_hash(intent)
+        if digest in self._intent_hashes:
+            return _denied_intent("intent: already recorded")
+        balance = self.bank.get_balance(self._source)
+        if balance < intent.amount_cents:
+            return _denied_intent("state: insufficient funds")
+        state = sign_state(
+            self._bank_key,
+            subject=self._source,
+            statement="funds-sufficient",
+            balance_cents=balance,
+            currency=intent.currency,
+            nonce=digest,
+            issued_at=self._clock(),
+            ttl_s=_STATEMENT_TTL_S,
+        )
+        funds_ref = opaque_cooperative_ref(state)
+        intent_id = f"i:{len(self._intents) + 1:06d}"
+        self._intents[intent_id] = _Intent(
+            intent, digest, funds_ref, opaque_intent_ref(intent, signature)
+        )
+        self._intent_hashes.add(digest)
+        statement = dataclasses.asdict(state)
+        statement["signature"] = base64.b64encode(state.signature).decode("ascii")
+        return {
+            "status": "signed",
+            "intent_id": intent_id,
+            "intent_hash": digest,
+            "summary": summary,
+            "evidence_ref": funds_ref,
+            "state": statement,
+            "bank_key": base64.b64encode(self._bank_pub).decode("ascii"),
+        }
+
+    def _append(self, kind: str, body: str) -> tuple[int, Anchor]:
+        # Every entry is sealed right away, so the newest seal covers the log.
+        seq = self.registry.append(kind, body)
+        return seq, self.registry.anchor(self._clock())
+
+    def _refuse(self, quote_id: str, record: _Quote, reason: str) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "status": "denied",
+            "quote_id": quote_id,
+            "reason": reason,
+            "payment_id": None,
+        }
+        record.status = "denied"
+        record.result = result
+        self._append("denial", _result_body(result))
+        self._emit("confirm", result, record.consent)
+        return dict(result)
+
+    def _execute(
+        self, quote_id: str, record: _Quote, bound: _Intent | None
+    ) -> dict[str, Any]:
         c = record.consent
         now = self._clock()
+        if bound is None:
+            intent = Intent(c.amount_cents, c.currency, c.recipient, c.reference)
+            refs: tuple[str, ...] = (quote_id,)
+        else:
+            intent = bound.intent
+            refs = (quote_id, bound.intent_ref, bound.funds_ref)
         request = RunRequest(
             call=RawCall(
                 runtime="mcp",
@@ -339,11 +546,11 @@ class PaymentDesk:
                     ("ref", c.reference),
                 ),
                 category="payments",
-                evidence_refs=(quote_id,),
+                evidence_refs=refs,
                 reversible=False,
             ),
             policy=DESK_POLICY,
-            intent=Intent(c.amount_cents, c.currency, c.recipient, c.reference),
+            intent=intent,
             private_key=self._gate_key,
             mode=Mode.ENFORCE,
             now=now,
@@ -370,14 +577,11 @@ class PaymentDesk:
         record.result = result
         if payment_id is not None:
             self._receipts[payment_id] = result
-        body = json.dumps(
-            {k: result[k] for k in ("payment_id", "quote_id", "reason", "status")},
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+            if bound is not None:
+                bound.payment_id = payment_id
+        body = _result_body(result)
         kind = "execution" if paid else "denial"
-        seq = self.registry.append(kind, body)
-        seal = self.registry.anchor(now)
+        seq, seal = self._append(kind, body)
         proof = self.registry.prove(seq)
         if (
             payment_id is not None
@@ -429,8 +633,6 @@ class PaymentDesk:
         event: DecisionEvent | None = None,
         forensic: dict[str, Any] | None = None,
     ) -> None:
-        if self._publish is None:
-            return
         summary = pay_summary(
             str(consent.amount_cents),
             consent.currency,
@@ -438,7 +640,18 @@ class PaymentDesk:
             consent.reference,
             consent.source,
         )
-        self._publish(desk_line(step, view, summary, event, forensic))
+        self._line(step, view, summary, event, forensic)
+
+    def _line(
+        self,
+        step: str,
+        view: dict[str, Any],
+        summary: str,
+        event: DecisionEvent | None = None,
+        forensic: dict[str, Any] | None = None,
+    ) -> None:
+        if self._publish is not None:
+            self._publish(desk_line(step, view, summary, event, forensic))
 
     def _quoted_view(self, record: _Quote) -> dict[str, Any]:
         c = record.consent
@@ -458,6 +671,7 @@ class PaymentDesk:
                 "reference": c.reference,
                 "source": c.source,
             },
+            "intent_id": record.intent_id,
         }
 
     def _view(self, quote_id: str, record: _Quote) -> dict[str, Any]:
@@ -474,3 +688,15 @@ def _quote_id(number: int) -> str:
 
 def _unknown(quote_id: str) -> dict[str, Any]:
     return {"status": "unknown", "quote_id": quote_id}
+
+
+def _denied_intent(reason: str) -> dict[str, Any]:
+    return {"status": "denied", "reason": reason}
+
+
+def _result_body(result: dict[str, Any]) -> str:
+    return json.dumps(
+        {k: result[k] for k in ("payment_id", "quote_id", "reason", "status")},
+        sort_keys=True,
+        separators=(",", ":"),
+    )

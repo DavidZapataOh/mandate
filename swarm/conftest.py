@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from gate.policy import Intent
 from swarm.meta_client import MetaResponse, MetaTrace
 
 TRACE = MetaTrace(
@@ -20,6 +21,7 @@ ARGS = {
     "reference": "A-991",
     "to_account": "acme-991",
 }
+DEMO_INTENT = Intent(20000, "USD", "acme-991", "A-991")
 REASONING = {
     "id": "rs_1",
     "summary": [],

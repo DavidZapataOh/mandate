@@ -1,15 +1,30 @@
+import base64
+import dataclasses
 import hashlib
 import hmac
 import json
 
+import pytest
+
+from evidence.cooperative import SignedState, verify_state
+from evidence.seams import select_cooperative
 from gate.certs import generate_keypair
 from gate.consent import Consent, HolderApproval, sign_approval
+from gate.policy import Intent
 from gate.registry import InclusionProof, Registry, verify_inclusion
 from gate.sdjwt import process
 from swarm.console_line import console_line_json
+from swarm.intent import sign_intent
 from swarm.receipt import RECEIPT_TYP, present
 
 NOW = 1800001000
+INTENT_HASH = "a7a12d73de0370d60b0ea24041a748ee6fc4db6974cf47b3b502f2c7d52b3ed8"
+INTENT_REF = "ev:holder-intent:f72f9907d8ea7ed0df42df9598a981ac"
+COOP_REF = "ev:cooperative-signed:c97da00074742018dff37a1130a145f3"
+# The statement golden is signed with this simulated-bank seed.
+BANK = bytes([7]) * 32
+# The intent ref golden is the intent signed with this holder seed.
+HOLDER_SEED = bytes([7]) * 32
 SUMMARY = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881"
 ZERO = HolderApproval(b"\x00" * 64, b"\x00" * 32, b"\x00" * 64)
 
@@ -426,3 +441,235 @@ def test_a_receipt_failure_keeps_the_paid_confirm(
     ]
     assert "secret-detail" not in caplog.text
     assert "acme-991" not in caplog.text
+
+
+ACME = Intent(20000, "USD", "acme-991", "A-991")
+STATE = {
+    "subject": "checking-881",
+    "statement": "funds-sufficient",
+    "balance_cents": 50000,
+    "currency": "USD",
+    "nonce": INTENT_HASH,
+    "issued_at": NOW,
+    "expires_at": NOW + 300,
+}
+
+
+def _bound(desk, **change):
+    fields = {
+        "recipient": "acme-991",
+        "amount_cents": 20000,
+        "currency": "USD",
+        "reference": "A-991",
+        **change,
+    }
+    return desk.quote(**fields, intent_id="i:000001")
+
+
+def test_signed_intent_gets_a_bank_statement(make_desk):
+    desk, holder = make_desk(bank_key=BANK)
+    signature = sign_intent(holder, ACME)
+    view = desk.record_intent(ACME, signature)
+    assert {k: v for k, v in view.items() if k not in ("state", "bank_key")} == {
+        "status": "signed",
+        "intent_id": "i:000001",
+        "intent_hash": INTENT_HASH,
+        "summary": SUMMARY,
+        "evidence_ref": COOP_REF,
+    }
+    state = view["state"]
+    assert {k: v for k, v in state.items() if k != "signature"} == STATE
+    assert base64.b64decode(view["bank_key"]) == desk.bank_public_key
+    signed = SignedState(**STATE, signature=base64.b64decode(state["signature"]))
+    assert verify_state(signed, desk.bank_public_key, NOW) == (True, "ok: cooperative")
+
+
+@pytest.mark.parametrize(
+    ("register", "intent", "forge", "reason"),
+    [
+        (False, ACME, False, "intent: no holder"),
+        (True, ACME, True, "intent: bad signature"),
+        (True, Intent(0, "USD", "acme-991", "A-991"), True, "intent: malformed"),
+        (True, ACME, False, "intent: already recorded"),
+        (
+            True,
+            Intent(50001, "USD", "acme-991", "A-991"),
+            False,
+            "state: insufficient funds",
+        ),
+    ],
+)
+def test_intent_refusals(make_desk, register, intent, forge, reason):
+    desk, holder = make_desk(register=register, intents=(ACME,))
+    signature = b"\x00" * 64 if forge or holder is None else sign_intent(holder, intent)
+    assert desk.record_intent(intent, signature) == {
+        "status": "denied",
+        "reason": reason,
+    }
+
+
+def test_agent_reads_fields_and_references_only(make_desk, sign_quote):
+    desk, holder = make_desk(intents=(ACME,), bank_key=BANK)
+    receipt = {
+        "status": "signed",
+        "intent_id": "i:000001",
+        "intent_hash": INTENT_HASH,
+        "summary": SUMMARY,
+        "amount_cents": 20000,
+        "currency": "USD",
+        "recipient": "acme-991",
+        "reference": "A-991",
+        "evidence_ref": COOP_REF,
+        "payment_id": None,
+    }
+    assert desk.intent_receipt("i:000001") == receipt
+    q = _bound(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    paid = {**receipt, "status": "paid", "payment_id": "pay:000001"}
+    assert desk.intent_receipt("i:000001") == paid
+    assert desk.intent_receipt("i:999999") == {
+        "status": "unknown",
+        "intent_id": "i:999999",
+    }
+
+
+def test_quote_names_its_intent(make_desk):
+    desk, _ = make_desk(intents=(ACME,))
+    assert [_quote(desk)["intent_id"], _bound(desk)["intent_id"]] == [None, "i:000001"]
+    assert desk.quote("acme-991", 20000, "USD", "A-991", "i:000009") == {
+        "status": "denied",
+        "reason": "intent: unknown",
+        "intent_id": "i:000009",
+    }
+    assert [p["quote_id"] for p in desk.pending()] == ["q:000001", "q:000002"]
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ({"recipient": "evil-666"}, "recipient differs from intent"),
+        ({"amount_cents": 2000000}, "amount differs from intent"),
+        ({"reference": "A-992"}, "reference differs from intent"),
+        ({"currency": "EUR"}, "currency mismatch"),
+    ],
+)
+def test_quote_that_differs_from_intent_dies_at_gate(
+    make_desk, sign_quote, change, reason
+):
+    desk, holder = make_desk(intents=(ACME,))
+    q = _bound(desk, **change)
+    assert desk.approve("q:000001", sign_quote(holder, q))["status"] == "approved"
+    assert desk.confirm("q:000001") == {
+        "status": "denied",
+        "quote_id": "q:000001",
+        "reason": reason,
+        "payment_id": None,
+    }
+    assert desk.bank.get_balance("checking-881") == 50000
+    assert desk.intent_receipt("i:000001")["status"] == "signed"
+
+
+def test_bound_payment_carries_intent_and_statement(make_desk, sign_quote):
+    lines = []
+    desk, holder = make_desk(
+        intents=(ACME,), publish=lines.append, bank_key=BANK, holder_key=HOLDER_SEED
+    )
+    q = _bound(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    assert desk.confirm("q:000001")["status"] == "confirmed"
+    forensic = lines[-1].forensic
+    refs = ["q:000001", INTENT_REF, COOP_REF]
+    assert forensic["cava"]["evidence_refs"] == refs
+    assert forensic["cert_claims"]["evidence_refs"] == refs
+    assert INTENT_HASH not in json.dumps(forensic["cert_claims"])
+
+
+def test_an_intent_pays_once(make_desk, sign_quote):
+    desk, holder = make_desk(intents=(ACME,))
+    first, second = _bound(desk), _bound(desk)
+    desk.approve(first["quote_id"], sign_quote(holder, first))
+    desk.approve(second["quote_id"], sign_quote(holder, second))
+    assert desk.confirm(first["quote_id"])["status"] == "confirmed"
+    assert desk.confirm(second["quote_id"])["reason"] == "intent: already used"
+    assert desk.bank.get_balance("acme-991") == 20000
+    assert desk.latest_seal()["seq_to"] == desk.registry.size() == 2
+
+
+def test_intent_line_holds_no_signature_or_balance(make_desk):
+    lines = []
+    desk, holder = make_desk(publish=lines.append)
+    signature = sign_intent(holder, ACME)
+    view = desk.record_intent(ACME, signature)
+    assert lines[0].subject == {
+        "step": "intent",
+        "quote_id": None,
+        "status": "signed",
+        "summary": SUMMARY,
+        "payment_id": None,
+        "reason": None,
+    }
+    assert (lines[0].event, lines[0].meta, lines[0].forensic) == (None, None, None)
+    wire = console_line_json(dataclasses.replace(lines[0], seq=1))
+    for secret in (
+        base64.b64encode(signature).decode(),
+        view["state"]["signature"],
+        view["bank_key"],
+        "50000",
+    ):
+        assert secret not in wire
+
+
+def test_statement_ref_cannot_be_rebuilt_from_a_guessed_balance(make_desk):
+    desk, holder = make_desk(bank_key=BANK)
+    view = desk.record_intent(ACME, sign_intent(holder, ACME))
+    unsigned = SignedState(**STATE, signature=b"")
+    assert view["evidence_ref"] == COOP_REF
+    assert select_cooperative(unsigned) != COOP_REF
+
+
+@pytest.mark.parametrize(
+    ("require_intent", "status", "reason", "paid"),
+    [
+        (False, "confirmed", "ok: executed", 20000),
+        (True, "denied", "intent: missing", 0),
+    ],
+)
+def test_unbound_quote_pays_only_where_binding_is_optional(
+    make_desk, sign_quote, require_intent, status, reason, paid
+):
+    desk, holder = make_desk(require_intent=require_intent)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    result = desk.confirm("q:000001")
+    assert (result["status"], result["reason"]) == (status, reason)
+    assert desk.bank.get_balance("acme-991") == paid
+
+
+def test_mandatory_binding_pays_a_bound_quote(make_desk, sign_quote):
+    desk, holder = make_desk(require_intent=True, intents=(ACME,))
+    q = _bound(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    assert desk.confirm("q:000001")["status"] == "confirmed"
+    assert desk.intent_receipt("i:000001")["status"] == "paid"
+
+
+def test_missing_intent_is_a_sealed_denial_without_a_gate_run(make_desk, sign_quote):
+    lines = []
+    desk, holder = make_desk(require_intent=True, publish=lines.append)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    assert desk.confirm("q:000001") == {
+        "status": "denied",
+        "quote_id": "q:000001",
+        "reason": "intent: missing",
+        "payment_id": None,
+    }
+    last = lines[-1]
+    assert (last.subject["step"], last.subject["reason"]) == (
+        "confirm",
+        "intent: missing",
+    )
+    assert (last.event, last.forensic) == (None, None)
+    assert desk.bank.get_balance("checking-881") == 50000
+    assert desk.latest_seal()["seq_to"] == desk.registry.size() == 1

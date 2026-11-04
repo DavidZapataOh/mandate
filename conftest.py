@@ -18,6 +18,7 @@ from gate.consent import Consent, HolderApproval, sign_approval
 from gate.policy import Intent, Policy, Rule, Verdict
 from swarm.console_line import ConsoleLine
 from swarm.desk import PaymentDesk
+from swarm.intent import sign_intent
 
 
 @pytest.fixture
@@ -112,6 +113,9 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
         publish: Callable[[ConsoleLine], object] | None = None,
         gate_key: bytes | None = None,
         holder_key: bytes | None = None,
+        intents: tuple[Intent, ...] = (),
+        bank_key: bytes | None = None,
+        require_intent: bool = False,
     ) -> tuple[PaymentDesk, bytes | None]:
         gate_priv, gate_pub = _keys(gate_key)
         counter = itertools.count(1)
@@ -127,11 +131,15 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             publish=publish,
             action_salts=lambda: bytes([next(salt)]) * 32,
             salts=lambda: bytes([next(sd_salt)]) * 16,
+            bank_key=bank_key,
+            require_intent=require_intent,
         )
         if not register:
             return desk, None
         holder_priv, holder_pub = _keys(holder_key)
         desk.register_holder(holder_pub)
+        for intent in intents:
+            desk.record_intent(intent, sign_intent(holder_priv, intent))
         return desk, holder_priv
 
     return build

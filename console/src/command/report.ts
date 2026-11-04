@@ -21,7 +21,7 @@ export interface Report {
   readonly controls: readonly ReportControl[];
 }
 
-export const TILES = ["decided", "verified", "denied", "breaches", "moved", "consent", "latency", "attribution"] as const;
+export const TILES = ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution"] as const;
 
 /** Builds the report for a window; every field is derived from the posture and provenance given. */
 export function buildReport(posture: Posture, provenance: Provenance, generatedAtMs: number): Report {
@@ -70,6 +70,7 @@ export function metricValue(key: (typeof TILES)[number], p: Posture): string {
     case "verified": return String(p.verified.count);
     case "denied": return String(p.denied.count);
     case "breaches": return String(p.breaches.count);
+    case "stepsRan": return String(p.stepsRan.count);
     case "moved": return formatCents(p.movedCents);
     case "consent": return formatShare(p.consent.withConsent.count, p.consent.certified.count);
     case "attribution": return formatShare(p.attribution.attributed.count, p.decided.count);
@@ -123,12 +124,14 @@ const ESCAPES: Readonly<Record<string, string>> = {
   "\\": "\\\\", "|": "\\|", "<": "&lt;", ">": "&gt;", "&": "&amp;", "[": "\\[", "]": "\\]", "`": "\\`",
 };
 
-/** Escapes text for a Markdown table cell so it stays one inert cell: no breakout, link, image, tag or autolink. */
+/** Escapes text for a Markdown table cell so it stays one inert cell: no breakout, link, image, tag or autolink (including `www.` and email forms). */
 export function cell(text: string): string {
   return text
     .replace(/\r\n|\r|\n/g, " ")
     .replace(/[\\|<>&[\]`]/g, (c) => ESCAPES[c]!)
-    .replace(/:\/\//g, ":&#47;&#47;");
+    .replace(/:\/\//g, ":&#47;&#47;")
+    .replace(/www\./gi, (m) => `${m.slice(0, 3)}&#46;`)
+    .replace(/@/g, "&#64;");
 }
 
 /** The report as JSON with a fixed key order and a trailing newline. */

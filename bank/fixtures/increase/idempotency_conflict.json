@@ -1,0 +1,11 @@
+{
+  "body": {
+    "detail": null,
+    "resource_id": "sandbox_account_transfer_4nicrwgr1kludye5vcc1",
+    "status": 409,
+    "title": "The idempotency key submitted has already been used. Fetch the created object or use a different idempotency key.",
+    "type": "idempotency_key_already_used_error"
+  },
+  "replayed": null,
+  "status": 409
+}

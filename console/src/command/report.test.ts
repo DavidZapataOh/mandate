@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SERVER_BODY } from "./__fixtures__/provenance";
-import { attackLine, BREACH, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
+import { attackLine, BREACH, DEPLOY_BREACH, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
 import { computePosture } from "./posture";
 import { parseProvenance, provenanceOf } from "./provenance";
 import { buildReport, cell, lineCount, metricValue, reportFileName, reportJson, reportMarkdown, TILES } from "./report";
@@ -50,7 +50,7 @@ describe("reportMarkdown", () => {
     const rows = reportMarkdown(live).split("\n").filter((l) => /^\| (NIST AI RMF 1.0|ISO\/IEC 42001:2023|EU AI Act) \|/.test(l));
     expect(rows).toHaveLength(17);
     expect(rows[16]).toBe(
-      "| EU AI Act | Article 73(1): Reporting of serious incidents by providers to the market surveillance authorities. | Attacks that were not blocked are counted, and each opens its forensic record. | 0 attacks not blocked | Mandate does not report to any authority. | https://eur-lex.europa.eu/eli/reg/2024/1689/oj |",
+      "| EU AI Act | Article 73(1): Reporting of serious incidents by providers to the market surveillance authorities. | Attacks that were not blocked and Nimbus steps that ran when they should not are counted, and each opens its forensic record. | 0 attacks not blocked · 0 deploy steps ran when they should not | Mandate does not report to any authority. | https://eur-lex.europa.eu/eli/reg/2024/1689/oj |",
     );
   });
 
@@ -104,6 +104,19 @@ describe("empty registry", () => {
   });
 });
 
+describe("an attack window with one Nimbus step that ran", () => {
+  const w = lines([...WINDOW, DEPLOY_BREACH]);
+  const md = reportMarkdown(buildReport(computePosture(w), provenanceOf(w, parseProvenance(SERVER_BODY), null), AT));
+
+  it("reads consistently in the tiles, the attacks table and the evidence", () => {
+    expect(md).toContain("| Attacks not blocked | 0 |");
+    expect(md).toContain("| Deploy steps that ran when they should not | 1 |");
+    expect(md).toContain("| 3 of 3 attacks blocked · 0.00 moved |");
+    expect(md).toContain("| 0 attacks not blocked · 1 deploy step ran when it should not |");
+    expect(md).not.toMatch(/\| [1-9]\d* attacks not blocked/);
+  });
+});
+
 describe("sample count", () => {
   it("a single latency sample reads in the singular", () => {
     expect(metricValue("latency", computePosture(window.slice(8)))).toBe("p50 90µs · p95 90µs (1 sample)");
@@ -143,6 +156,13 @@ describe("markdown injection", () => {
     expect(md).toContain("&lt;img");
   });
 
+  it("breaks www. and email autolinks", () => {
+    const out = cell("see www.evil.com and Www.Evil.com and evil@x.com");
+    expect(out).not.toMatch(/www\./i);
+    expect(out).not.toContain("@");
+    expect(out).toBe("see www&#46;evil.com and Www&#46;Evil.com and evil&#64;x.com");
+  });
+
   it("keeps every table row on one line", () => {
     expect(cell("a\r\nb\nc")).toBe("a b c");
     for (const row of md.split("\n").filter((l) => l.startsWith("| "))) expect(row.endsWith("|")).toBe(true);
@@ -164,7 +184,7 @@ describe("metricValue", () => {
   it("renders each tile", () => {
     const p = computePosture(window);
     expect(TILES.map((k) => metricValue(k, p))).toEqual([
-      "7", "3", "4", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%",
+      "7", "3", "4", "0", "0", "0.00", "1 of 2 · 50.0%", "p50 61µs · p95 90µs (5 samples)", "4 of 7 · 57.1%",
     ]);
   });
 });

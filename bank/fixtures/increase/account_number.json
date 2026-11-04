@@ -1,0 +1,22 @@
+{
+  "body": {
+    "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+    "account_number": "8368175000",
+    "created_at": "2026-11-04T08:58:55Z",
+    "id": "sandbox_account_number_9sskbhbp8gkgazy7bf2l",
+    "idempotency_key": "mandate-capture-number-payer",
+    "inbound_ach": {
+      "debit_status": "allowed"
+    },
+    "inbound_checks": {
+      "status": "check_transfers_only"
+    },
+    "name": "capture funding",
+    "path": "/account_numbers/sandbox_account_number_9sskbhbp8gkgazy7bf2l",
+    "routing_number": "123308582",
+    "status": "active",
+    "type": "account_number"
+  },
+  "replayed": null,
+  "status": 200
+}

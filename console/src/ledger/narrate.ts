@@ -14,6 +14,9 @@ export function reasonOf(line: ConsoleLine): string {
 function deskText(line: Extract<ConsoleLine, { source: "desk" }>): string {
   const s = line.subject;
   const reason = reasonOf(line);
+  if (s.step === "intent") {
+    return s.status === "signed" ? `Holder signed intent: ${s.summary}` : `Intent refused: ${reason}`;
+  }
   if (s.step === "quote") {
     return s.quote_id === null || s.status !== "quoted"
       ? `Quote refused: ${reason}`

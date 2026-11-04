@@ -237,6 +237,7 @@ MANDATE_TOOLS = (
     "mcp__mandate__get_payment_status",
     "mcp__mandate__confirm_payment",
     "mcp__mandate__get_receipt",
+    "mcp__mandate__get_intent",
 )
 
 

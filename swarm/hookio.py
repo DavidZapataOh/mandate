@@ -21,6 +21,7 @@ MANDATE_MCP_TOOLS = frozenset(
         "mcp__mandate__get_payment_status",
         "mcp__mandate__confirm_payment",
         "mcp__mandate__get_receipt",
+        "mcp__mandate__get_intent",
     }
 )
 _PATH_KEYS = ("path", "file_path", "dir", "cwd")

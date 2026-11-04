@@ -1,0 +1,409 @@
+:root {
+  --ink: #0b0d10;
+  --bone: #f6f4ee;
+  --verify: #1fd598;
+  --alert: #ff5c5c;
+  --muted: #8a8f98;
+  --hairline: 1px solid rgb(246 244 238 / 0.14);
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  /* The page column is the approved comp's phone width at every size. */
+  --column: 432px;
+  --gutter: clamp(16px, 6.5vw, 28px);
+  --snap: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
+  scrollbar-color: var(--muted) var(--ink);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+html {
+  background: var(--ink);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--ink);
+  color: var(--bone);
+  font: 400 15px / 1.4 var(--mono);
+  letter-spacing: -0.02em;
+  caret-color: var(--bone);
+}
+
+::selection {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+
+/* Top bar: the brand lockup over one full-width hairline. */
+.bar {
+  height: 74px;
+  border-bottom: var(--hairline);
+}
+
+.wordmark {
+  display: block;
+  width: 100%;
+  max-width: calc(var(--column) - 2 * var(--gutter));
+  height: 61px;
+  margin: 0 auto;
+  padding-top: 5px;
+  /* The lockup draws at its height and sits on the column's left edge. */
+  object-fit: contain;
+  object-position: left center;
+}
+
+.bar,
+#holder {
+  padding-inline: var(--gutter);
+}
+
+#holder {
+  max-width: var(--column);
+  margin: 0 auto;
+  padding-bottom: 40px;
+}
+
+#intent-title {
+  margin: 32px 0 0;
+  font: 700 36px / 1.1 var(--mono);
+  letter-spacing: -0.03em;
+  text-wrap: balance;
+}
+
+#pairing {
+  margin: 8px 0 0;
+  font: 400 13px / 18px var(--mono);
+  color: var(--muted);
+}
+
+#pairing:empty {
+  display: none;
+}
+
+/* The request: one framed slip holding the words and the three ways in. */
+#intent-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  grid-template-areas:
+    "label label label"
+    "text text text"
+    "read record clip";
+  column-gap: 12px;
+  margin-top: 22px;
+  padding: 11px 15px 22px;
+  border: 1px solid var(--bone);
+  border-radius: 4px;
+}
+
+label[for="intent-text"] {
+  grid-area: label;
+  font: 500 14px / 20px var(--mono);
+  color: var(--muted);
+  text-align: center;
+}
+
+#intent-text {
+  grid-area: text;
+  display: block;
+  width: 100%;
+  min-height: 25px;
+  max-height: calc(6 * 21px + 4px);
+  margin-top: 6px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--bone);
+  font: 500 15px / 21px var(--mono);
+  text-align: center;
+  resize: none;
+  field-sizing: content;
+  overflow-wrap: anywhere;
+}
+
+#intent-text::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+#intent-text:disabled {
+  color: var(--bone);
+  -webkit-text-fill-color: var(--bone);
+}
+
+#intent-read {
+  grid-area: read;
+}
+
+#intent-record {
+  grid-area: record;
+}
+
+label[for="intent-file"] {
+  grid-area: clip;
+}
+
+#intent-read,
+#intent-record,
+label[for="intent-file"] {
+  margin-top: 21px;
+}
+
+/* The file input stays in the tab order; its label is the visible control. */
+#intent-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+button,
+label[for="intent-file"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 41px;
+  padding: 0 8px;
+  border: 1px solid var(--bone);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bone);
+  font: 600 13px / 1.2 var(--mono);
+  letter-spacing: -0.02em;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--snap),
+    color 120ms var(--snap),
+    border-color 120ms var(--snap);
+}
+
+label[for="intent-file"]:has(+ #intent-file:focus-visible) {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+
+button:hover:not(:disabled),
+label[for="intent-file"]:hover:has(+ #intent-file:enabled) {
+  background: rgb(246 244 238 / 0.06);
+}
+
+button:active:not(:disabled),
+label[for="intent-file"]:active:has(+ #intent-file:enabled) {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+button:disabled,
+label[for="intent-file"]:has(+ #intent-file:disabled) {
+  border-color: rgb(246 244 238 / 0.4);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+#intent-record[aria-pressed="true"] {
+  background: var(--bone);
+  color: var(--ink);
+}
+
+/* Status sentences: progress in Muted, a refusal in Alert with its words. */
+#intent-status {
+  min-height: 20px;
+  margin: 20px 0 0;
+  font: 400 14px / 20px var(--mono);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+#intent-status[data-tone="refused"],
+#agent-state[data-tone="refused"],
+#pairing[data-tone="refused"] {
+  color: var(--alert);
+}
+
+/* The cheque: the fields Muse Spark drafted, as a mono list. */
+#intent-review dl {
+  display: grid;
+  grid-template-columns: 49% 1fr;
+  row-gap: 14.5px;
+  margin: 20px 0 0;
+}
+
+#intent-review dt {
+  font: 500 15px / 21px var(--mono);
+  color: var(--muted);
+}
+
+#intent-review dd {
+  margin: 0;
+  font: 500 15px / 21px var(--mono);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+#intent-sign,
+#intent-discard {
+  margin-top: 22px;
+}
+
+#intent-review {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+}
+
+#intent-review dl {
+  grid-column: 1 / -1;
+}
+
+/* The stub: the receipt kept on this device, Bone paper with a perforated edge. */
+#intent-receipt {
+  margin-top: 18px;
+}
+
+.receipt-label {
+  margin: 0 0 12px;
+  font: 500 16px / 21px var(--mono);
+  color: var(--muted);
+}
+
+#intent-receipt dl {
+  margin: 0;
+  padding: 5px 8px 9px;
+  border: 2px dashed var(--ink);
+  outline: 1px solid var(--bone);
+  outline-offset: -1px;
+  background: var(--bone);
+  color: var(--ink);
+}
+
+#intent-receipt dt {
+  font: 500 14px / 18px var(--mono);
+}
+
+#intent-receipt dd {
+  margin: 0 0 3px;
+  font: 400 14px / 18px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+#intent-receipt #receipt-hash,
+#intent-receipt #receipt-evidence {
+  font-size: 10.5px;
+  line-height: 14px;
+  word-break: break-all;
+}
+
+#intent-receipt #receipt-evidence {
+  margin-bottom: 0;
+}
+
+/* The full hash wraps to two legible lines rather than shrinking to fit one. */
+#intent-receipt #receipt-hash {
+  font-size: 10.5px;
+}
+
+/* Funds: an Ink stamp on the stub, so Verify keeps its contrast on paper. */
+#intent-receipt .funds {
+  position: relative;
+  margin: 3px -4px 5px;
+  padding: 5px 10px 5px 40px;
+  border: 1px dashed var(--muted);
+  border-radius: 3px;
+  background: var(--ink);
+  color: var(--bone);
+  font: 500 11px / 15px var(--mono);
+}
+
+#intent-receipt .funds dt,
+#intent-receipt .funds dd {
+  display: inline;
+  margin: 0;
+  font: inherit;
+}
+
+#intent-receipt .funds dt {
+  margin-right: 0.6ch;
+}
+
+#receipt-funds[data-verified="true"],
+#intent-receipt .funds:has(#receipt-funds[data-verified="true"]) {
+  color: var(--verify);
+}
+
+#receipt-funds[data-verified="false"],
+#intent-receipt .funds:has(#receipt-funds[data-verified="false"]) {
+  color: var(--alert);
+}
+
+/* The verified mark: a ring with a tick, drawn only on a verified statement. */
+#intent-receipt .funds:has(#receipt-funds[data-verified="true"])::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  background: var(--verify);
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M10 0a10 10 0 1 1 0 20a10 10 0 0 1 0-20Zm4.6 6.1L8.6 12.1 5.4 8.9 4 10.3l4.6 4.6 7.4-7.4Z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+#intent-seam {
+  margin: 7px -14px 0 0;
+  font: 400 10.5px / 15px var(--mono);
+  color: var(--muted);
+}
+
+#intent-handoff {
+  width: 100%;
+  min-height: 43px;
+  margin-top: 21px;
+  font-size: 21px;
+}
+
+#agent-state {
+  min-height: 22px;
+  margin: 14px 0 0;
+  font: 500 14px / 22px var(--mono);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+/* The review and the receipt arrive with the seam snap: fast in, dead stop. */
+#intent-review,
+#intent-receipt {
+  transition: opacity 120ms var(--snap);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+  }
+}

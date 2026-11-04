@@ -92,7 +92,7 @@ function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
       const agent = agentOf(line.meta);
       const walker = (actor: ActorKind) => ({ actor, tag: TAGS[actor] as string });
       if (s.status === "denied" || s.status === "expired") {
-        const holder = s.step === "approve";
+        const holder = s.step === "approve" || s.step === "intent";
         return {
           ...base,
           ...walker(holder ? "holder" : agent),
@@ -102,6 +102,9 @@ function buildCue(line: ConsoleLine): Omit<Cue, "venue"> {
           bubble: clip(`${s.summary} · denied`),
           alert: `denied · ${s.reason ?? s.status}${lat(line.event)}`,
         };
+      }
+      if (s.step === "intent" && s.status === "signed") {
+        return { ...base, ...walker("holder"), route: "none", seal: null, outcome: "note", bubble: clip(`Holder signed: ${s.summary}`) };
       }
       if (s.status === "quoted") {
         return { ...base, ...walker(agent), route: "desk", seal: "wait", outcome: "hold", bubble: clip(`${s.summary} · waiting for the holder`) };

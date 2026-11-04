@@ -286,7 +286,7 @@ Corners are square: tags, bubbles, buttons, badges, the alert bar and the drawer
 ### Layout
 - **Top bar:** the wordmark (48–50px), the view name in Muted uppercase 17px Inter 700 with +0.1em tracking, and Export Markdown and Export JSON at the right. The bar closes on a 3px Muted rule, the only heavier rule on the page.
 - **Provenance strip:** one Bone mono line on `#16181C` (one step off Ink) naming the window, where it starts and the registry it rests on. An empty registry reads `registry empty`, never a root over 0 entries. Stream state and the link back to the live console sit at its right.
-- **Metric band:** eight equal cells divided by hairlines, then a hairline under the band.
+- **Metric band:** nine equal cells (three per row below 1100px) divided by hairlines, then a hairline under the band.
 - **Control register:** the framework table, grouped by framework.
 - **Compact tables:** attacks by kind and denials by layer side by side, split by a vertical hairline.
 - **Drill list:** under the tables, opened on demand.
@@ -341,7 +341,7 @@ Square outlined buttons, 44px tall with 4px corners, a 55% Bone border, and Inte
 Only state changes move. The drill list fades in over 180ms, and the forensic drawer fades and slides 16px over 200ms, both on the snap curve and through `@starting-style`, so nothing animates on load. Numbers never animate. Reduced motion removes every transition.
 
 ### Named Rules
-**The Alert Only On Breach Rule.** On Command, Refusal Red appears only where an attack was not blocked or moved money: those counts, their cents, the words `not stopped`, and a total that falls short. Blocked counts and zero values stay Bone, and the words always say it as well as the colour.
+**The Alert Only On Breach Rule.** On Command, Refusal Red appears only where an attack was not blocked or moved money, or a Nimbus step ran when it should not: those counts, their cents, the words `not stopped`, and a total that falls short. Blocked counts and zero values stay Bone, and the words always say it as well as the colour.
 
 **The Real Columns Rule.** Every number on Command comes from a line in the window or from this process's registry and policies. A column the comp did not draw stays if the data has it; a value the comp invented never ships.
 

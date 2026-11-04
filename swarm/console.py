@@ -2,6 +2,7 @@
 
 import argparse
 import itertools
+import json
 import os
 import secrets
 import threading
@@ -22,14 +23,18 @@ from swarm.attacker import AttackerTrace
 from swarm.console_line import ConsoleLine, attack_line, deploy_line
 from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
+from swarm.intake import IntentIntake
+from swarm.intent import IntentError, PayeeBook
 from swarm.journal_tail import JournalTail
 from swarm.live_attack import live_attacker
+from swarm.meta_client import MetaClient, api_key_from_env
 from swarm.nimbus import NimbusStep, ProdTarget, run_step
 from swarm.redteam import TEMPLATES, AttackKind, AttackPlan, apply_attack
 from swarm.server import build_server
-from swarm.voice import transcriber_from_env
+from swarm.voice import transcribe, transcriber_from_env
 
 CONSOLE_DIST = Path(__file__).resolve().parent.parent / "console" / "dist"
+DEMO_PAYEES = Path(__file__).resolve().parent.parent / "demo" / "payees.json"
 _DEMO_BALANCE_CENTS = 10000000
 _LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 _GRACEFUL_SHUTDOWN_S = 2
@@ -81,16 +86,25 @@ def counted_nonces(prefix: str) -> Callable[[], str]:
 
 
 class AttackRunner:
-    """Applies the pinned template attacks to the desk's bank.
+    """Applies the pinned template attacks to a simulated bank.
+
+    Attacks draw counted nonces, which repeat across restarts, so they never
+    reach a real rail: they run against a simulated bank under the desk's
+    verifier and lock.
 
     Args:
-        desk: Desk whose bank and verifier the attacks run against.
+        desk: Desk whose verifier and lock the attacks run under.
         gate_key: Raw Ed25519 private key the gate signs with.
         hub: Hub that receives the attack lines.
         clock: Current unix time in seconds.
         nonces: Source of unique freshness nonces.
         salts: Source of 32-byte action salts, one per press; None lets the
             gate draw them from the operating system.
+        bank: Simulated bank the attacks move money on; None uses the
+            desk's bank, which must then be simulated.
+
+    Raises:
+        ValueError: If no bank is given and the desk's bank is not simulated.
     """
 
     def __init__(
@@ -101,7 +115,13 @@ class AttackRunner:
         clock: Callable[[], int],
         nonces: Callable[[], str],
         salts: Callable[[], bytes] | None = None,
+        bank: Bank | None = None,
     ) -> None:
+        if bank is None:
+            if not isinstance(desk.bank, Bank):
+                raise ValueError("template attacks need a simulated bank")
+            bank = desk.bank
+        self._bank = bank
         self._desk = desk
         self._gate_key = gate_key
         self._gate_pub = public_key_of(gate_key)
@@ -126,7 +146,7 @@ class AttackRunner:
         return self.apply(TEMPLATES[kind], None)
 
     def apply(self, plan: AttackPlan, trace: AttackerTrace | None) -> ConsoleLine:
-        """Apply one plan to the desk's bank and publish its line.
+        """Apply one plan to the simulated bank and publish its line.
 
         Args:
             plan: The attack to run.
@@ -138,12 +158,12 @@ class AttackRunner:
         now, nonce = self._clock(), self._nonces()
         salt = None if self._salts is None else self._salts()
         outcome = self._desk.guarded(
-            lambda bank, verifier: apply_attack(
+            lambda _rail, verifier: apply_attack(
                 plan,
                 self.legit_call(),
                 _INTENT,
                 self._gate_key,
-                bank,
+                self._bank,
                 verifier,
                 self._desk.source,
                 now,
@@ -227,6 +247,28 @@ def console_server(app: Any, host: str, port: int, hub: EventHub) -> _ConsoleSer
     return _ConsoleServer(config, hub)
 
 
+def _payee_book(path: Path) -> PayeeBook | None:
+    try:
+        return PayeeBook.from_json(json.loads(path.read_text()))
+    except (OSError, ValueError, IntentError):
+        return None
+
+
+def _spark(
+    env: os._Environ[str] | dict[str, str], book: PayeeBook
+) -> tuple[IntentIntake | None, MetaClient | None]:
+    # Without a key, drafting and the agent answer 503 and the holder page says so.
+    try:
+        key = api_key_from_env(env)
+    except KeyError:
+        return None, None
+    meta = MetaClient(key)
+    intake = IntentIntake(
+        meta, book, lambda audio, words: transcribe(key, audio, words)
+    )
+    return intake, meta
+
+
 def cli(argv: list[str] | None = None) -> None:
     """Console entry point for `mandate-console`.
 
@@ -253,6 +295,12 @@ def cli(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--console-dir", type=Path, default=CONSOLE_DIST)
     parser.add_argument(
+        "--payees",
+        type=Path,
+        default=DEMO_PAYEES,
+        help="the holder's payee book, JSON of name to account and open invoices",
+    )
+    parser.add_argument(
         "--public-host",
         action="append",
         default=[],
@@ -268,6 +316,10 @@ def cli(argv: list[str] | None = None) -> None:
     index = args.console_dir / "index.html"
     if not index.is_file():
         parser.exit(2, f"console build missing: {index}\n")
+    book = _payee_book(args.payees)
+    if book is None:
+        parser.exit(2, f"payee book unreadable: {args.payees}\n")
+    intake, agent = _spark(os.environ, book)
     hub = EventHub()
     if args.record is not None:
         hub.record(args.record)
@@ -295,6 +347,8 @@ def cli(argv: list[str] | None = None) -> None:
         live=live_attacker(runner, os.environ, enabled=args.live_attacker),
         voice=transcriber_from_env(os.environ, enabled=args.voice),
         console_dir=args.console_dir,
+        intake=intake,
+        agent=agent,
     ).streamable_http_app()
     if args.journal is not None:
         # A daemon thread: the process ends with the server.

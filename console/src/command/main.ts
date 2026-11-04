@@ -71,6 +71,7 @@ function start(): void {
     fetchLine: forensicFetcher(name !== null),
     loadProvenance: name === null ? loadProvenance : async () => null,
     now: Date.now,
+    later: (run, ms) => void setTimeout(run, ms),
     download,
     schedule: (run) => void requestAnimationFrame(() => run()),
   });

@@ -55,7 +55,7 @@ _SUBJECT_KEYS = {
     "bill": frozenset(("proposal_call_id", "summary", "confirmation", "report_error")),
     "deploy": frozenset(("step", "agent", "summary", "layer", "reason", "blocked")),
 }
-_DESK_STEPS = ("quote", "approve", "confirm")
+_DESK_STEPS = ("intent", "quote", "approve", "confirm")
 _RECORD_KEYS = frozenset(("agent", "tool", "targets", "event", "tool_use_id"))
 _MALFORMED = "console line: malformed"
 _SAFE_INT = 2**53 - 1
@@ -389,7 +389,7 @@ def desk_line(
     """Build the line for one desk step.
 
     Args:
-        step: ``quote``, ``approve`` or ``confirm``.
+        step: ``intent``, ``quote``, ``approve`` or ``confirm``.
         view: The desk's view of the step (``status``, optional ids and reason).
         summary: Payment sentence.
         event: Gate decision event, when the gate decided.

@@ -203,10 +203,10 @@ main {
   padding: 0 var(--gutter) 48px;
 }
 
-/* Eight metric cells divided by hairlines. */
+/* Nine metric cells divided by hairlines. */
 #tiles {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(9, minmax(0, 1fr));
   margin-top: 13px;
   padding-bottom: 2px;
   border-bottom: var(--hairline);
@@ -279,6 +279,7 @@ main {
 }
 
 #tiles [data-metric="breaches"][data-zero="false"] .value,
+#tiles [data-metric="stepsRan"][data-zero="false"] .value,
 #tiles [data-metric="moved"][data-zero="false"] .value {
   color: var(--alert);
 }
@@ -331,11 +332,11 @@ details > .definition {
 }
 
 /* The last cells' text opens leftward so it stays on the page. */
-#tiles article:nth-child(n + 6) details {
+#tiles article:nth-child(n + 7) details {
   position: static;
 }
 
-#tiles article:nth-child(n + 6) details > .definition {
+#tiles article:nth-child(n + 7) details > .definition {
   top: auto;
   right: 0;
   left: auto;
@@ -790,11 +791,11 @@ button.drill:hover {
 
 @media (max-width: 1100px) {
   #tiles {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     row-gap: 16px;
   }
 
-  #tiles article:nth-child(4n + 1) {
+  #tiles article:nth-child(3n + 1) {
     border-left: 0;
   }
 
@@ -811,8 +812,8 @@ button.drill:hover {
     font-size: 14px;
   }
 
-  #tiles article:nth-child(4n) details > .definition,
-  #tiles article:nth-child(4n - 1) details > .definition {
+  #tiles article:nth-child(3n) details > .definition,
+  #tiles article:nth-child(3n - 1) details > .definition {
     right: 0;
     left: auto;
   }

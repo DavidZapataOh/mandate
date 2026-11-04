@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mandate · Holder</title>
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+  </head>
+  <body>
+    <header class="bar">
+      <img class="wordmark" src="/brand/mandate-horizontal-white.svg" alt="Mandate" />
+    </header>
+    <main id="holder">
+      <h1 id="intent-title">State a payment</h1>
+      <p id="pairing" role="status"></p>
+      <form id="intent-form" aria-labelledby="intent-title">
+        <label for="intent-text">What should be paid?</label>
+        <textarea id="intent-text" maxlength="500" placeholder="Pay my Acme Corp bill A-991, 200 USD"></textarea>
+        <button type="submit" id="intent-read">Read it</button>
+        <button type="button" id="intent-record" aria-pressed="false">Record</button>
+        <label for="intent-file">Or use a WAV clip</label>
+        <input id="intent-file" type="file" accept="audio/wav,.wav" />
+      </form>
+      <p id="intent-status" role="status" aria-live="polite"></p>
+      <section id="intent-review" aria-label="Parsed intent" hidden>
+        <dl>
+          <dt>Amount</dt><dd id="review-amount"></dd>
+          <dt>Payee account</dt><dd id="review-recipient"></dd>
+          <dt>Invoice</dt><dd id="review-reference"></dd>
+          <dt>Heard</dt><dd id="review-heard"></dd>
+        </dl>
+        <button type="button" id="intent-sign">Sign intent</button>
+        <button type="button" id="intent-discard">Discard</button>
+      </section>
+      <section id="intent-receipt" aria-label="Intent receipt" hidden>
+        <h2 class="receipt-label">Receipt</h2>
+        <dl>
+          <dt>Intent</dt><dd id="receipt-id"></dd>
+          <dt>Intent hash</dt><dd id="receipt-hash"></dd>
+          <div class="funds"><dt>Funds</dt><dd id="receipt-funds"></dd></div>
+          <dt>Evidence</dt><dd id="receipt-evidence"></dd>
+        </dl>
+        <p id="intent-seam">Funds proof: a statement the simulated bank signs (cooperative). zkTLS is not used for this bank.</p>
+        <button type="button" id="intent-handoff">Hand to Muse Spark</button>
+        <p id="agent-state" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+    <script type="module" src="/src/holder.ts"></script>
+  </body>
+</html>

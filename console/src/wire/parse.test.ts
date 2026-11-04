@@ -15,6 +15,15 @@ describe("parseLine", () => {
     expect(attack.forensic?.cert_claims).toBeNull();
   });
 
+  it("accepts the holder's intent line", () => {
+    const line = parseLine(
+      '{"v":3,"seq":1,"source":"desk","event":null,"meta":null,"subject":{"step":"intent","quote_id":null,' +
+        '"status":"signed","summary":"Pay 200.00 USD to acme-991 (ref A-991) from checking-881",' +
+        '"payment_id":null,"reason":null},"forensic":null}',
+    );
+    expect(line.source === "desk" && [line.subject.step, line.subject.status]).toEqual(["intent", "signed"]);
+  });
+
   const event = JSON.parse(ATTACK).event;
   const forensic = JSON.parse(CONFIRM).forensic;
   it.each([

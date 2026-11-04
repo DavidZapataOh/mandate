@@ -163,3 +163,13 @@ def test_malformed_intent_is_refused(bad):
         sign_intent(priv, bad)
     with pytest.raises(IntentError, match="intent: malformed"):
         confirmed_intent(pub, bad, b"\x00" * 64)
+
+
+def test_payee_book_keywords_bias_recognition():
+    book = PayeeBook.from_json(
+        {
+            "Acme Corp": {"account": "acme-991", "open_invoices": ["A-991"]},
+            "Globex": {"account": "globex-1", "open_invoices": ["G-1", "G-2"]},
+        }
+    )
+    assert book.keywords() == ("acme corp", "globex", "A-991", "G-1", "G-2")

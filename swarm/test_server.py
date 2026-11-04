@@ -22,7 +22,13 @@ from swarm.voice import (
     voice_bytes,
 )
 
-TOOLS = ["confirm_payment", "get_payment_status", "get_receipt", "quote_payment"]
+TOOLS = [
+    "confirm_payment",
+    "get_intent",
+    "get_payment_status",
+    "get_receipt",
+    "quote_payment",
+]
 ARGS = {
     "to_account": "acme-991",
     "amount_cents": 20000,
@@ -73,7 +79,7 @@ async def test_desk_tools_listed(make_desk):
         if tool.annotations is not None and tool.annotations.read_only_hint
     )
     assert sorted(tools) == TOOLS
-    assert read_only == ["get_payment_status", "get_receipt"]
+    assert read_only == ["get_intent", "get_payment_status", "get_receipt"]
     assert CONFIRM_NOTE in tools["confirm_payment"].description
 
 

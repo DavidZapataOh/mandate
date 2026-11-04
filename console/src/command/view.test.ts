@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LineStore } from "../store/store";
 import type { ConsoleLine } from "../wire/types";
 import { SERVER_BODY } from "./__fixtures__/provenance";
-import { attackLine, BREACH, lines, WINDOW } from "./__fixtures__/window";
+import { attackLine, BREACH, DEPLOY_BREACH, lines, WINDOW } from "./__fixtures__/window";
 import { ATTACK_KINDS, DEFINITIONS } from "./posture";
 import { parseProvenance, type ServerProvenance } from "./provenance";
 import { type CommandDeps, mountCommand, provenanceSummary } from "./view";
@@ -16,25 +16,33 @@ const AT = Date.UTC(2026, 10, 3, 17, 0, 0);
 
 type Download = [name: string, mime: string, text: string];
 
-function setup(opts: { server?: ServerProvenance | null; replay?: string | null; window?: readonly ConsoleLine[] } = {}) {
+function setup(opts: { server?: ServerProvenance | null; replay?: string | null; window?: readonly ConsoleLine[]; serve?: () => ServerProvenance | null } = {}) {
   document.body.innerHTML = PAGE.body.innerHTML;
   const store = new LineStore();
   for (const line of opts.window ?? lines(WINDOW)) store.add(line);
   const downloads: Download[] = [];
   const loads = { count: 0 };
+  const clock = { now: AT };
+  const timers: { at: number; run: () => void }[] = [];
   const deps: CommandDeps = {
     replay: opts.replay ?? null,
     fetchLine: async () => null,
     loadProvenance: async () => {
       loads.count += 1;
+      if (opts.serve) return opts.serve();
       return opts.server === undefined ? parseProvenance(SERVER_BODY) : opts.server;
     },
-    now: () => AT,
+    now: () => clock.now,
+    later: (run, ms) => void timers.push({ at: clock.now + ms, run }),
     download: (name, mime, text) => downloads.push([name, mime, text]),
     schedule: (run) => run(),
   };
   const view = mountCommand(document, store, deps);
-  return { store, downloads, loads, view };
+  const advance = (ms: number): void => {
+    clock.now += ms;
+    for (const t of timers.splice(0).filter((x) => x.at <= clock.now || (timers.push(x), false))) t.run();
+  };
+  return { store, downloads, loads, view, clock, timers, advance };
 }
 
 const text = (sel: string) => document.querySelector(sel)?.textContent;
@@ -52,7 +60,7 @@ describe("mountCommand", () => {
     expect(text('[data-metric="moved"] .value')).toBe("0.00");
     expect(text('[data-metric="consent"] .value')).toBe("1 of 2 · 50.0%");
     expect(text('[data-metric="latency"] .value')).toBe("p50 61µs · p95 90µs (5 samples)");
-    for (const key of ["decided", "verified", "denied", "breaches", "moved", "consent", "latency", "attribution"] as const) {
+    for (const key of ["decided", "verified", "denied", "breaches", "stepsRan", "moved", "consent", "latency", "attribution"] as const) {
       expect(text(`[data-metric="${key}"] .definition`)).toBe(DEFINITIONS[key]);
     }
   });
@@ -170,7 +178,7 @@ describe("mountCommand", () => {
     setup();
     expect(text("#disclaimer")).toBe("This report maps Mandate controls to framework provisions. It is not a certification, an audit opinion or a statement of compliance.");
     expect(document.querySelectorAll("#controls tbody tr")).toHaveLength(17);
-    expect(text('[data-control="EU AI Act Article 73(1)"] .evidence')).toBe("0 attacks not blocked");
+    expect(text('[data-control="EU AI Act Article 73(1)"] .evidence')).toBe("0 attacks not blocked · 0 deploy steps ran when they should not");
     const link = document.querySelector<HTMLAnchorElement>('[data-control="EU AI Act Article 73(1)"] a')!;
     expect([link.textContent, link.rel, link.href]).toEqual(["source", "noreferrer", "https://eur-lex.europa.eu/eli/reg/2024/1689/oj"]);
   });
@@ -276,13 +284,77 @@ describe("mountCommand", () => {
     const store = new LineStore();
     const pending: (() => void)[] = [];
     mountCommand(document, store, {
-      replay: "demo-1", fetchLine: async () => null, loadProvenance: async () => null, now: () => AT,
+      replay: "demo-1", fetchLine: async () => null, loadProvenance: async () => null, now: () => AT, later: () => undefined,
       download: () => undefined, schedule: (run) => pending.push(run),
     });
     for (const line of lines(WINDOW)) store.add(line);
     expect(pending).toHaveLength(1);
     pending[0]!();
     expect(text('[data-metric="decided"] .value')).toBe("7");
+  });
+});
+
+const emptyServer = (epoch = "MANDATE_FIXTURE-a1b2c3d4"): ServerProvenance =>
+  parseProvenance(JSON.stringify({ ...JSON.parse(SERVER_BODY), epoch, registry: { root: "ab".repeat(32), leaves: 0 } }));
+
+describe("live provenance", () => {
+  it("shows a registry proof newer than the server's mount-time value without waiting for an export", async () => {
+    const { store } = setup({ server: emptyServer(), window: [] });
+    await vi.waitFor(() => expect(text("#provenance")).toContain("registry empty (server)"));
+    store.add(lines(WINDOW)[2]!);
+    expect(text("#provenance")).toContain("over 1 entry (line #3)");
+    expect(text('[data-control="ISO/IEC 42001:2023 Annex A.6.2.8"] .evidence')).toContain("over 1 entry (line #3)");
+  });
+
+  it("refetches when lines change, at most once a second", async () => {
+    const { store, loads, advance } = setup({ window: [] });
+    await vi.waitFor(() => expect(loads.count).toBe(1));
+    const [a, b, c] = lines(WINDOW).slice(2, 5);
+    store.add(a!);
+    store.add(b!);
+    expect(loads.count).toBe(1);
+    advance(999);
+    expect(loads.count).toBe(1);
+    advance(1);
+    expect(loads.count).toBe(2);
+    store.add(c!);
+    expect(loads.count).toBe(2);
+    advance(1000);
+    expect(loads.count).toBe(3);
+  });
+
+  it("a reset drops the old run's provenance and reads the new one at once", async () => {
+    let epoch = "run-one";
+    const grown = (): ServerProvenance =>
+      parseProvenance(JSON.stringify({ ...JSON.parse(SERVER_BODY), epoch, registry: { root: "ab".repeat(32), leaves: 2 } }));
+    const { store, loads } = setup({ window: lines(WINDOW), serve: grown });
+    await vi.waitFor(() => expect(text("#provenance")).toContain("over 2 entries (server)"));
+    epoch = "run-two";
+    const before = loads.count;
+    store.reset();
+    expect(text("#provenance")).toBe("No lines yet");
+    expect(loads.count).toBe(before + 1);
+  });
+
+  it("a replay never refetches", async () => {
+    const { store, loads, advance } = setup({ replay: "demo-1", window: [] });
+    store.add(lines(WINDOW)[2]!);
+    advance(5000);
+    expect(loads.count).toBe(0);
+  });
+});
+
+describe("a window with attacks blocked and one Nimbus step that ran", () => {
+  it("keeps the two counts apart in the tiles and the evidence", () => {
+    setup({ window: lines([...WINDOW, DEPLOY_BREACH]) });
+    expect(text('[data-metric="breaches"] .value')).toBe("0");
+    expect(text('[data-metric="stepsRan"] .value')).toBe("1");
+    expect(text('[data-metric="stepsRan"] h3')).toBe("Deploy steps that ran when they should not");
+    click('[data-metric="stepsRan"] button.drill');
+    expect(text("#drill-title")).toBe("Deploy steps that ran when they should not · 1 line");
+    expect(text("#attacks tfoot th")).toBe("all 3 attempted kinds blocked");
+    expect(text('[data-control="EU AI Act Article 73(1)"] .evidence')).toBe("0 attacks not blocked · 1 deploy step ran when it should not");
+    expect(text('[data-control="EU AI Act Article 15(5)"] .evidence')).toBe("3 of 3 attacks blocked · 0.00 moved");
   });
 });
 

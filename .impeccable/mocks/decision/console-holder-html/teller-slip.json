@@ -1,0 +1,1 @@
+{"model": "muse-image-1.0", "endpoint": "/v1/images/edits", "request": "1fc6c6e9-f293-4961-8308-61095b959a28", "reference": ".impeccable/mocks/decision/console-holder-html/reference-portrait.png", "prompt_file": "teller-slip.prompt.txt", "approved": false}

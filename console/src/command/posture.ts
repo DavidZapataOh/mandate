@@ -13,7 +13,7 @@ export const ATTACK_KINDS: readonly string[] = [
 ];
 
 /** Deciding layers in display order; others follow in order of first appearance. */
-export const LAYERS: readonly string[] = ["gate", "bank verifier", "broker", "MCP proxy", "holder approval", "desk"];
+export const LAYERS: readonly string[] = ["gate", "bank verifier", "broker", "MCP proxy", "holder approval", "holder intent", "desk"];
 
 export interface Count {
   readonly count: number;
@@ -42,7 +42,10 @@ export interface Posture {
   readonly decided: Count;
   readonly verified: Count;
   readonly denied: Count;
+  /** Attack lines that were not blocked. */
   readonly breaches: Count;
+  /** Nimbus scenario steps that ran when they should have been refused. */
+  readonly stepsRan: Count;
   readonly movedCents: number;
   readonly attacks: readonly AttackRow[];
   readonly layers: readonly LayerRow[];
@@ -60,13 +63,14 @@ export interface Posture {
 }
 
 export type MetricKey =
-  | "decided" | "verified" | "denied" | "breaches" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers";
+  | "decided" | "verified" | "denied" | "breaches" | "stepsRan" | "moved" | "consent" | "latency" | "attribution" | "attacks" | "layers";
 
 export const LABELS: Readonly<Record<MetricKey, string>> = {
   decided: "Actions decided",
   verified: "Verified",
   denied: "Denied before execution",
   breaches: "Attacks not blocked",
+  stepsRan: "Deploy steps that ran when they should not",
   moved: "Moved by attacks",
   consent: "Holder consent on certified payments",
   latency: "Gate decision time",
@@ -77,25 +81,27 @@ export const LABELS: Readonly<Record<MetricKey, string>> = {
 
 export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
   decided:
-    "Lines in this window whose outcome is verified, denied or not blocked. Quotes and approvals waiting for the holder, and bill reads that never reached the gate, are not decisions.",
+    "Lines in this window whose outcome is verified, denied or not blocked. Signed intents, quotes and approvals waiting for the holder, and bill reads that never reached the gate, are not decisions.",
   verified:
     "Desk payments the bank confirmed, Muse Code tool calls the gate allowed, bill payments whose gate verdict is MET, and pinned Nimbus releases the deploy target accepted.",
   denied:
-    "Decisions refused before anything executed: denied or expired desk steps, Muse Code calls and bill payments the gate refused, attacks blocked at their layer with zero cents moved, Nimbus scenario steps refused at the MCP proxy or gate.",
+    "Decisions refused before anything executed: denied or expired desk steps, Muse Code calls and bill payments the gate refused, attacks blocked at their layer with zero cents moved, Nimbus scenario steps refused at the MCP proxy or gate, and holder intents the desk refused.",
   breaches:
-    "Attacks whose layer did not return its expected denial or that moved money, and Nimbus scenario steps that should have been refused but ran. Each one is a failed defense and is never counted as verified.",
+    "Attack lines whose layer did not return its expected denial, or that moved money. Each one is a failed defense and is never counted as verified. Nimbus scenario steps are counted separately.",
+  stepsRan:
+    "Nimbus scenario steps that should have been refused at the MCP proxy or the gate but ran. They are not attacks and are not in the attacks table; each is a failed defense and is never counted as verified.",
   moved:
-    "Sum of moved_cents over every attack line: cents that left the debited account during the attack step, measured from the bank balance before and after it.",
+    "Sum of the size of moved_cents over every attack line, each counted by absolute value so opposite moves never cancel: cents that left or entered the debited account during the attack step, measured from the bank balance before and after it.",
   consent:
-    "Of the payments the gate certified in this window (gate verdict MET on a payments action), the share whose forensic record carries the holder's signed consent, which the gate verified and consumed once.",
+    "Of the payments the gate certified in this window (gate verdict MET on a payments action), the share whose forensic record carries the holder's signed consent, which the gate verified and consumed once. Bill payments run under the holder's signed intent, not a per-payment consent, and count as without consent.",
   latency:
-    "Time the gate spent deciding (lat_us of the decision event, measured inside the gate) over every line with a gate event; nearest-rank p50 and p95. Excludes model, network and bank time.",
+    "Time the deciding component spent on a decision (lat_us of the decision event) over every line with a decision event; nearest-rank p50 and p95. For desk, payment and Nimbus lines it is measured inside the gate; for Muse Code hook lines it is the whole hook run, including the wait for its state lock and its file reads and writes. Excludes model, network and bank time.",
   attribution:
     "Of the decisions in this window, the share whose line names the model call behind it (provider, model, request or response id). Template attacks, pinned Nimbus scenario steps and desk steps carry no model call and count as unattributed.",
   attacks:
     "One row per attack kind; attack lines only (Nimbus scenario steps count in the posture and the layers, not here). Attempts: attack lines of that kind. Blocked: the layer returned its pinned denial and zero cents moved. Stopped at: the layer that refused it.",
   layers:
-    "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, desk).",
+    "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
 };
 
 const ATTACK_LAYERS: Readonly<Record<string, string>> = {
@@ -125,6 +131,8 @@ export function layerOf(line: ConsoleLine): string {
           return "gate";
         case "approve":
           return "holder approval";
+        case "intent":
+          return "holder intent";
         case "quote":
           return "desk";
         default: {
@@ -161,7 +169,7 @@ export function formatCents(cents: number): string {
 
 /** An attack that moved money is a breach even when the line says it was blocked. */
 function outcomeOf(line: ConsoleLine): Outcome {
-  if (line.source === "attack" && line.subject.moved_cents > 0) return "breach";
+  if (line.source === "attack" && line.subject.moved_cents !== 0) return "breach";
   return cueFor(line).outcome;
 }
 
@@ -213,6 +221,7 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
   const verified = bucket();
   const denied = bucket();
   const breaches = bucket();
+  const stepsRan = bucket();
   const certified = bucket();
   const withConsent = bucket();
   const attributed = bucket();
@@ -238,7 +247,7 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
     }
     if (outcome === "pass") push(verified, line.seq);
     if (outcome === "deny") push(denied, line.seq);
-    if (outcome === "breach") push(breaches, line.seq);
+    if (outcome === "breach") push(line.source === "attack" ? breaches : stepsRan, line.seq);
 
     if (line.event) latencies.push({ us: line.event.lat_us, seq: line.seq });
 
@@ -249,7 +258,7 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
     let attackKind: string | null = null;
     if (line.source === "attack") {
       attackKind = line.subject.attack;
-      movedCents += line.subject.moved_cents;
+      movedCents += Math.abs(line.subject.moved_cents);
       let row = attacks.get(attackKind);
       if (!row) {
         row = { kind: attackKind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] };
@@ -257,7 +266,7 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
       }
       row.attempts += 1;
       row.seqs.push(line.seq);
-      row.movedCents += line.subject.moved_cents;
+      row.movedCents += Math.abs(line.subject.moved_cents);
       if (outcome === "breach") {
         row.breaches += 1;
       } else {
@@ -285,6 +294,7 @@ export function computePosture(lines: readonly ConsoleLine[]): Posture {
     verified,
     denied,
     breaches,
+    stepsRan,
     movedCents,
     attacks: [...attacks.values()],
     layers: [...layers.values()],

@@ -47,6 +47,16 @@ describe("provenanceOf", () => {
     ]);
   });
 
+  it("a newer registry proof on the newest line beats an older server value", () => {
+    const stale = parseProvenance(JSON.stringify({ ...body, registry: { root: "ab".repeat(32), leaves: 0 } }));
+    const p = provenanceOf(window, stale, null);
+    expect([p.registry, p.epoch, p.policies?.length]).toEqual([{ root: ROOT, leaves: 1, from: "line #3" }, "MANDATE_FIXTURE-a1b2c3d4", 3]);
+  });
+
+  it("a server value with as many entries as the newest proof stays the server's", () => {
+    expect(provenanceOf(window, parseProvenance(SERVER_BODY), null).registry?.from).toBe("server");
+  });
+
   it("a replay says so and serves no policies", () => {
     const p = provenanceOf(window, null, "demo-1");
     expect([p.source, p.replay, p.registry?.from, p.policies]).toEqual(["replay", "demo-1", "line #3", null]);

@@ -68,7 +68,7 @@ const FORENSIC = shape({
 
 const SUBJECTS: Record<Source, Check> = {
   desk: shape({
-    step: oneOf("quote", "approve", "confirm"),
+    step: oneOf("intent", "quote", "approve", "confirm"),
     quote_id: nullable(str),
     status: str,
     summary: str,

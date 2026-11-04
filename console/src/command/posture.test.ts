@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
-import { computePosture, formatCents, formatShare, layerOf, nearestRank } from "./posture";
+import { attackLine, BREACH, DEPLOY_BREACH, FORGED, HQ, lines, PIPE_KIND, WINDOW } from "./__fixtures__/window";
+import { computePosture, counted, DEFINITIONS, formatCents, formatShare, LAYERS, layerOf, nearestRank } from "./posture";
 
 const none = { count: 0, seqs: [] };
 const quiet = (kind: string) => ({ kind, attempts: 0, blocked: 0, breaches: 0, movedCents: 0, stoppedAt: [], seqs: [] });
@@ -13,6 +13,7 @@ describe("computePosture", () => {
       verified: { count: 3, seqs: [3, 7, 9] },
       denied: { count: 4, seqs: [4, 5, 6, 8] },
       breaches: none,
+      stepsRan: none,
       movedCents: 0,
       attacks: [
         { kind: "payee_swap", attempts: 1, blocked: 1, breaches: 0, movedCents: 0, stoppedAt: ["gate"], seqs: [4] },
@@ -29,6 +30,7 @@ describe("computePosture", () => {
         { layer: "broker", denials: 0, kinds: [], seqs: [] },
         { layer: "MCP proxy", denials: 1, kinds: ["mcp_exfil"], seqs: [5] },
         { layer: "holder approval", denials: 0, kinds: [], seqs: [] },
+        { layer: "holder intent", denials: 0, kinds: [], seqs: [] },
         { layer: "desk", denials: 0, kinds: [], seqs: [] },
       ],
       consent: { certified: { count: 2, seqs: [3, 9] }, withConsent: { count: 1, seqs: [3] } },
@@ -66,17 +68,18 @@ describe("computePosture", () => {
     });
   });
 
-  it("Nimbus steps count in the same taxonomy, never as attacks", () => {
+  it("Nimbus steps and holder intents count in the same taxonomy, never as attacks", () => {
     const p = computePosture(lines(HQ));
     expect([p.decided, p.verified, p.denied, p.breaches]).toEqual([
-      { count: 3, seqs: [12, 13, 14] },
+      { count: 4, seqs: [12, 13, 14, 15] },
       { count: 1, seqs: [12] },
-      { count: 2, seqs: [13, 14] },
+      { count: 3, seqs: [13, 14, 15] },
       none,
     ]);
     expect(p.layers.filter((row) => row.denials > 0)).toEqual([
       { layer: "gate", denials: 1, kinds: [], seqs: [14] },
       { layer: "MCP proxy", denials: 1, kinds: [], seqs: [13] },
+      { layer: "holder intent", denials: 1, kinds: [], seqs: [15] },
     ]);
     expect(p.attacks.map((row) => row.attempts)).toEqual([0, 0, 0, 0, 0, 0, 0]);
     expect([p.consent.certified, p.latency.samples, p.attribution.attributed]).toEqual([none, 3, none]);
@@ -84,7 +87,36 @@ describe("computePosture", () => {
 
   it("a Nimbus step that ran when it should have been refused is a breach", () => {
     const p = computePosture(lines([DEPLOY_BREACH]));
-    expect([p.breaches, p.verified, p.movedCents]).toEqual([{ count: 1, seqs: [17] }, none, 0]);
+    expect([p.breaches, p.stepsRan, p.verified, p.movedCents]).toEqual([none, { count: 1, seqs: [17] }, none, 0]);
+    expect(p.decided).toEqual({ count: 1, seqs: [17] });
+  });
+
+  it("a window of blocked attacks plus one Nimbus step that ran counts the two apart", () => {
+    const p = computePosture(lines([...WINDOW, DEPLOY_BREACH]));
+    expect([p.breaches, p.stepsRan]).toEqual([none, { count: 1, seqs: [17] }]);
+    expect(p.attacks.reduce((n, a) => n + a.breaches, 0)).toBe(0);
+  });
+
+  it("moved cents add up by size per breach, so opposite moves never net to zero", () => {
+    const p = computePosture(lines([
+      attackLine(20, "payee_swap", "model->gate", "ok: executed", null, false, 500),
+      attackLine(21, "payee_swap", "model->gate", "ok: executed", null, false, -500),
+    ]));
+    expect([p.movedCents, p.breaches.count, p.attacks[0]!.movedCents]).toEqual([1000, 2, 1000]);
+  });
+
+  it("a negative move on an attack that says it was blocked is still a breach", () => {
+    const p = computePosture(lines([attackLine(22, "payee_swap", "gate", "payee: differs", null, true, -300)]));
+    expect([p.breaches.count, p.movedCents]).toEqual([1, 300]);
+  });
+
+  it("states what the latency covers for hook lines and how bill payments count for consent", () => {
+    expect(DEFINITIONS.latency).toMatch(/hook/);
+    expect(DEFINITIONS.latency).toMatch(/state lock/);
+    expect(DEFINITIONS.consent).toMatch(/Bill payments run under the holder's signed intent/);
+    expect(DEFINITIONS.consent).toMatch(/count as without consent/);
+    expect(DEFINITIONS.breaches).toMatch(/^Attack lines/);
+    expect(DEFINITIONS.stepsRan).toMatch(/Nimbus/);
   });
 
   it("a kind outside the seven still gets its own row after them", () => {
@@ -119,10 +151,11 @@ describe("layerOf", () => {
   });
 });
 
-describe("layerOf for Nimbus steps", () => {
+describe("layerOf for Nimbus steps and intents", () => {
   it.each([
     [13, "MCP proxy"],
     [14, "gate"],
+    [15, "holder intent"],
   ])("line %i was decided at the %s", (seq, layer) => {
     const line = lines(HQ).find((l) => l.seq === seq);
     expect(line && layerOf(line)).toBe(layer);
@@ -163,5 +196,26 @@ describe("formatting", () => {
     [-150, "-1.50"],
   ])("%i cents reads %s", (cents, want) => {
     expect(formatCents(cents)).toBe(want);
+  });
+});
+
+describe("counted", () => {
+  it("is singular for one", () => {
+    expect([counted(1, "provision", "provisions"), counted(17, "provision", "provisions"), counted(0, "line", "lines")]).toEqual([
+      "1 provision", "17 provisions", "0 lines",
+    ]);
+  });
+});
+
+describe("definitions name holder intents", () => {
+  it("says signed intents are not decisions and refused ones are denials at their own layer", () => {
+    expect(LAYERS).toEqual(["gate", "bank verifier", "broker", "MCP proxy", "holder approval", "holder intent", "desk"]);
+    expect(DEFINITIONS.decided).toMatch(
+      /^Lines in this window whose outcome is verified, denied or not blocked\. Signed intents, quotes and approvals waiting for the holder, and bill reads that never reached the gate, are not decisions\.$/,
+    );
+    expect(DEFINITIONS.denied.endsWith(", Nimbus scenario steps refused at the MCP proxy or gate, and holder intents the desk refused.")).toBe(true);
+    expect(DEFINITIONS.layers).toBe(
+      "Where each denial happened: the layer that refused the action (gate, bank verifier, broker, MCP proxy, holder approval, holder intent, desk).",
+    );
   });
 });

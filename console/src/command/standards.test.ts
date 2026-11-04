@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SERVER_BODY } from "./__fixtures__/provenance";
-import { BREACH, lines, WINDOW } from "./__fixtures__/window";
+import { BREACH, DEPLOY_BREACH, lines, WINDOW } from "./__fixtures__/window";
 import { ATTACK_KINDS, computePosture } from "./posture";
 import { parseProvenance, provenanceOf } from "./provenance";
 import { APPLICABILITY, CONTROLS, DISCLAIMER, evidenceText, type EvidenceKey } from "./standards";
@@ -15,7 +15,7 @@ describe("evidenceText", () => {
     ["decided", "7 actions decided"],
     ["verified", "3 verified"],
     ["denied", "4 denied before execution"],
-    ["breaches", "0 attacks not blocked"],
+    ["breaches", "0 attacks not blocked · 0 deploy steps ran when they should not"],
     ["attacks", "3 of 3 attacks blocked · 0.00 moved"],
     ["consent", "certified payments with holder consent: 1 of 2 · 50.0%"],
     ["attribution", "decisions naming their model call: 4 of 7 · 57.1%"],
@@ -33,6 +33,29 @@ describe("evidenceText", () => {
   it("a breach shows as money moved, never as all blocked", () => {
     const p = computePosture(lines([...WINDOW, BREACH]));
     expect(evidenceText("attacks", p, live)).toBe("3 of 4 attacks blocked · 20000.00 moved");
+  });
+
+  it("an attack window with one Nimbus step that ran reads the same in every cell", () => {
+    const w = lines([...WINDOW, DEPLOY_BREACH]);
+    const p = computePosture(w);
+    const prov = provenanceOf(w, parseProvenance(SERVER_BODY), null);
+    expect(evidenceText("attacks", p, prov)).toBe("3 of 3 attacks blocked · 0.00 moved");
+    expect(evidenceText("breaches", p, prov)).toBe("0 attacks not blocked · 1 deploy step ran when it should not");
+  });
+
+  it("reads in the singular when there is one", () => {
+    const one = lines([WINDOW[3]!]);
+    const p = computePosture(one);
+    const prov = provenanceOf(one, null, null);
+    expect(evidenceText("decided", p, prov)).toBe("1 action decided");
+    expect(evidenceText("attacks", p, prov)).toBe("1 of 1 attack blocked · 0.00 moved");
+    expect(evidenceText("breaches", computePosture(lines([BREACH])), prov)).toBe("1 attack not blocked · 0 deploy steps ran when they should not");
+  });
+
+  it("GOVERN 1.4 names only the policies actually served", () => {
+    const c = CONTROLS.find((x) => x.id === "GOVERN 1.4")!;
+    expect(c.mandate).toContain("the desk, payments and Nimbus rules in force are served with each report");
+    expect(c.mandate).toContain("Muse Code hook lines name their policy id only");
   });
 
   it("an empty window says what is missing", () => {

@@ -1,0 +1,11 @@
+{
+  "body": {
+    "account_id": "sandbox_account_na2yqff81iq1bl6nwetq",
+    "available_balance": 100000,
+    "current_balance": 100000,
+    "loan": null,
+    "type": "balance_lookup"
+  },
+  "replayed": null,
+  "status": 200
+}

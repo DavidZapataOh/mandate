@@ -8,7 +8,13 @@ from swarm.conftest import ARGS, REASONING, message, tool_call
 from swarm.mcp_bridge import DESK_INSTRUCTIONS, mcp_tools, run_agent
 from swarm.server import build_server
 
-TOOLS = ["confirm_payment", "get_payment_status", "get_receipt", "quote_payment"]
+TOOLS = [
+    "confirm_payment",
+    "get_intent",
+    "get_payment_status",
+    "get_receipt",
+    "quote_payment",
+]
 
 
 @pytest.mark.anyio

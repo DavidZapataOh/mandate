@@ -1,0 +1,8 @@
+{
+  "model": "muse-image-1.0",
+  "endpoint": "/v1/images/edits",
+  "request": "a164b29e-44e4-41c4-8b4e-909ed4b2495c",
+  "reference": ".impeccable/mocks/decision/console-holder-html/reference-portrait.png",
+  "prompt_file": "cheque.prompt.txt",
+  "approved": true
+}

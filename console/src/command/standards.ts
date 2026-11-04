@@ -23,6 +23,8 @@ const NIST_MANAGE = "https://airc.nist.gov/airmf-resources/playbook/manage/";
 const ISO = "https://www.iso.org/standard/42001";
 const EU = "https://eur-lex.europa.eu/eli/reg/2024/1689/oj";
 const TEMPLATES = "Seven fixed attack templates are a regression check, not a full adversarial evaluation.";
+const INCIDENTS =
+  "Attacks that were not blocked and Nimbus steps that ran when they should not are counted, and each opens its forensic record.";
 const NO_NOTICE = "Mandate counts and records the incident; it notifies no one.";
 
 export const DISCLAIMER =
@@ -34,7 +36,7 @@ export const CONTROLS: readonly Control[] = [
   {
     framework: "NIST AI RMF 1.0", id: "GOVERN 1.4", source: NIST_GOVERN,
     title: "The risk management process and its outcomes are established through transparent policies, procedures, and other controls based on organizational risk priorities.",
-    mandate: "Declarative, versioned policies decide every governed action before it runs; the rules in force are served with each report.",
+    mandate: "Declarative, versioned policies decide every governed action before it runs; the desk, payments and Nimbus rules in force are served with each report; Muse Code hook lines name their policy id only.",
     evidence: "policies",
     gap: "Mandate enforces the rules an organization writes; it does not set the organization's risk priorities or review them.",
   },
@@ -69,7 +71,7 @@ export const CONTROLS: readonly Control[] = [
   {
     framework: "NIST AI RMF 1.0", id: "MANAGE 4.3", source: NIST_MANAGE,
     title: "Incidents and errors are communicated to relevant AI actors including affected communities. Processes for tracking, responding to, and recovering from incidents and errors are followed and documented.",
-    mandate: "Attacks that were not blocked are counted, and each opens its forensic record.",
+    mandate: INCIDENTS,
     evidence: "breaches",
     gap: NO_NOTICE,
   },
@@ -90,7 +92,7 @@ export const CONTROLS: readonly Control[] = [
   {
     framework: "ISO/IEC 42001:2023", id: "Annex A.8.4", source: ISO,
     title: "Communication of incidents",
-    mandate: "Attacks that were not blocked are counted, and each opens its forensic record.",
+    mandate: INCIDENTS,
     evidence: "breaches",
     gap: NO_NOTICE,
   },
@@ -146,7 +148,7 @@ export const CONTROLS: readonly Control[] = [
   {
     framework: "EU AI Act", id: "Article 73(1)", source: EU,
     title: "Reporting of serious incidents by providers to the market surveillance authorities.",
-    mandate: "Attacks that were not blocked are counted, and each opens its forensic record.",
+    mandate: INCIDENTS,
     evidence: "breaches",
     gap: "Mandate does not report to any authority.",
   },
@@ -162,17 +164,17 @@ export function registryText(r: NonNullable<Provenance["registry"]>): string {
 export function evidenceText(key: EvidenceKey, p: Posture, prov: Provenance): string {
   switch (key) {
     case "decided":
-      return `${p.decided.count} actions decided`;
+      return `${counted(p.decided.count, "action", "actions")} decided`;
     case "verified":
       return `${p.verified.count} verified`;
     case "denied":
       return `${p.denied.count} denied before execution`;
     case "breaches":
-      return `${p.breaches.count} attacks not blocked`;
+      return `${counted(p.breaches.count, "attack", "attacks")} not blocked · ${counted(p.stepsRan.count, "deploy step ran when it should not", "deploy steps ran when they should not")}`;
     case "attacks": {
       const attempts = p.attacks.reduce((n, a) => n + a.attempts, 0);
       const blocked = p.attacks.reduce((n, a) => n + a.blocked, 0);
-      return `${blocked} of ${attempts} attacks blocked · ${formatCents(p.movedCents)} moved`;
+      return `${blocked} of ${counted(attempts, "attack", "attacks")} blocked · ${formatCents(p.movedCents)} moved`;
     }
     case "consent":
       return `certified payments with holder consent: ${formatShare(p.consent.withConsent.count, p.consent.certified.count)}`;

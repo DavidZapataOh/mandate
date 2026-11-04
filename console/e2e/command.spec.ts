@@ -117,3 +117,9 @@ test("the register fades at its foot until it is scrolled to its end", async ({ 
   await register.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
   await expect(register).toHaveAttribute("data-at-end", "true");
 });
+
+test("attacks not blocked and deploy steps that ran are separate tiles", async ({ page }) => {
+  await expect(page.locator("#tiles article")).toHaveCount(9);
+  await expect(page.locator('[data-metric="breaches"] h3')).toHaveText("Attacks not blocked");
+  await expect(page.locator('[data-metric="stepsRan"] h3')).toHaveText("Deploy steps that ran when they should not");
+});

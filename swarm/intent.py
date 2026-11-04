@@ -91,6 +91,11 @@ class PayeeBook:
             entries[key] = (account, tuple(invoices))
         return cls(MappingProxyType(entries))
 
+    def keywords(self) -> tuple[str, ...]:
+        """Words worth biasing recognition toward: payees, then open invoices."""
+        invoices = (i for _, open_ones in self.entries.values() for i in open_ones)
+        return (*self.entries, *invoices)
+
     def resolve(self, payee_name: str, reference: str) -> tuple[str, str]:
         """Resolve a spoken payee and reference.
 

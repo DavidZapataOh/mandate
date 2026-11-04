@@ -3,6 +3,14 @@
 from dataclasses import dataclass
 
 
+class ReplayError(Exception):
+    """The bank already holds a payment under this idempotency key."""
+
+
+class RailError(Exception):
+    """The bank rail failed; the message is the pinned denial reason."""
+
+
 @dataclass(frozen=True)
 class PaymentRequest:
     """A request to move funds between two accounts.
@@ -44,6 +52,10 @@ class Payment:
         currency: Currency code.
         ref: Caller-supplied reference.
         action_hash: Hash of the authorized action this payment settles.
+        rail: Label of the rail that moved the money.
+        provider: Bank that holds the transfer; None for the simulated ledger.
+        status: Transfer status the rail reported.
+        idempotency_key: Key the payment was requested under, if any.
     """
 
     payment_id: str
@@ -53,6 +65,10 @@ class Payment:
     currency: str
     ref: str
     action_hash: str
+    rail: str = "simulated"
+    provider: str | None = None
+    status: str = "complete"
+    idempotency_key: str | None = None
 
 
 class Bank:
@@ -71,21 +87,37 @@ class Bank:
                 raise ValueError("initial balance must be >= 0")
         self._balances = dict(initial)
         self._payments: dict[str, Payment] = {}
+        self._keys: set[str] = set()
         self._seq = 0
 
-    def execute(self, request: PaymentRequest, action_hash: str) -> Payment:
+    @property
+    def rail(self) -> str:
+        """Label of this rail: the in-memory ledger is always simulated."""
+        return "simulated"
+
+    def execute(
+        self,
+        request: PaymentRequest,
+        action_hash: str,
+        idempotency_key: str | None = None,
+    ) -> Payment:
         """Execute a payment, debiting the source and crediting the destination.
 
         Args:
             request: The payment to execute.
             action_hash: Hash of the authorized action this payment settles.
+            idempotency_key: Key that makes the payment move at most once;
+                None leaves the call unkeyed.
 
         Returns:
             The recorded payment.
 
         Raises:
+            ReplayError: If a payment already moved under the key.
             ValueError: If either account is unknown or funds are insufficient.
         """
+        if idempotency_key is not None and idempotency_key in self._keys:
+            raise ReplayError(idempotency_key)
         if request.from_acct not in self._balances:
             raise ValueError(f"unknown account: {request.from_acct}")
         if request.to_acct not in self._balances:
@@ -101,7 +133,10 @@ class Bank:
             currency=request.currency,
             ref=request.ref,
             action_hash=action_hash,
+            idempotency_key=idempotency_key,
         )
+        if idempotency_key is not None:
+            self._keys.add(idempotency_key)
         self._balances[request.from_acct] -= request.amount_cents
         self._balances[request.to_acct] += request.amount_cents
         self._payments[payment.payment_id] = payment

@@ -9,7 +9,8 @@ from typing import Any
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from bank.api import Bank, Payment, PaymentRequest
+from bank.api import Payment, PaymentRequest, RailError, ReplayError
+from bank.rail import BankRail, idempotency_key
 
 _EVENT_TYPE = "urn:mandate:secevent:cert:v1"
 _SALT_LEN = 32
@@ -216,12 +217,18 @@ class Verifier:
         return (payload, None)
 
     def verify_and_execute(
-        self, bank: Bank, token: str, action: ProposedAction, now: int, salt: bytes
+        self,
+        bank: BankRail,
+        token: str,
+        action: ProposedAction,
+        now: int,
+        salt: bytes,
     ) -> PaymentResult:
         """Verify the certificate and execute the matching payment.
 
         Args:
-            bank: Ledger to execute against.
+            bank: Rail that moves the money, called at most once, last, under
+                the key derived from the certificate id.
             token: Compact JWS certificate.
             action: The proposed action to execute.
             now: Current time in unix seconds.
@@ -249,6 +256,10 @@ class Verifier:
         except (KeyError, TypeError):
             return PaymentResult(False, "malformed: token undecodable", None)
         if not isinstance(jti, str):
+            return PaymentResult(False, "malformed: token undecodable", None)
+        try:
+            key = idempotency_key(jti)
+        except ValueError:
             return PaymentResult(False, "malformed: token undecodable", None)
         if not isinstance(index, int) or not 0 <= index < self._bits:
             return PaymentResult(
@@ -289,7 +300,12 @@ class Verifier:
                     ref=ref,
                 ),
                 digest,
+                key,
             )
+        except ReplayError:
+            return PaymentResult(False, "replay: bank idempotency key", None)
+        except RailError as exc:
+            return PaymentResult(False, str(exc), None)
         except ValueError as exc:
             message = str(exc)
             if message.startswith("unknown account"):

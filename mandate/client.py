@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from bank.api import Bank, Payment
+from bank.rail import BankRail
 from bank.verifier import Freshness as BankFreshness
 from bank.verifier import ProposedAction, Verifier
 from gate.cava import CavaAction
@@ -78,12 +79,12 @@ class RunResult:
     salt: bytes | None = field(default=None, repr=False)
 
 
-def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResult:
+def run_governed(request: RunRequest, bank: BankRail, verifier: Verifier) -> RunResult:
     """Decide on the call, then verify and execute the payment when allowed.
 
     Args:
         request: All inputs for the governed run.
-        bank: Ledger to execute against.
+        bank: Rail that moves the money.
         verifier: Certificate verifier bound to the issuer's public key.
 
     Returns:

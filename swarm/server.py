@@ -11,12 +11,15 @@ import re
 import secrets
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any, Protocol
 
 import anyio
 import uvicorn
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 from pydantic import Field
@@ -32,9 +35,13 @@ from bank.api import Bank
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from gate.consent import HolderApproval
+from gate.policy import Intent
+from swarm.agent import Responder
 from swarm.console_line import ConsoleLine, console_line_json
 from swarm.desk import PaymentDesk
+from swarm.handoff import AgentHandoff
 from swarm.hub import EventHub
+from swarm.intake import IntentIntake
 from swarm.live_attack import (
     ATTACKER_OFF,
     AttackerBusyError,
@@ -42,6 +49,7 @@ from swarm.live_attack import (
     LiveAttacker,
     NoPlanError,
 )
+from swarm.meta_client import MetaAPIError
 from swarm.nimbus import NimbusStep
 from swarm.provenance import provenance
 from swarm.receipt import present
@@ -58,6 +66,12 @@ from swarm.voice import (
 )
 
 _MAX_BODY = 4096
+_MAX_TEXT = 500
+_DEVICE_SIG_HEADER = "x-mandate-device-sig"
+_DRAFT_DOMAIN = "mandate/intent-draft/v1"
+_VOICE_DOMAIN = "mandate/intent-voice/v1"
+_AGENT_DOMAIN = "mandate/agent-start/v1"
+_INTENT_KEYS = frozenset({"amount_cents", "currency", "recipient", "reference"})
 _WEBAPP = Path(__file__).resolve().parent.parent / "webapp"
 _BAD_REQUEST = {"error": "bad request"}
 _APPROVAL = ("signature", "consent_key", "key_signature")
@@ -149,6 +163,10 @@ async def _fields(request: Request, *names: str) -> dict[str, Any] | None:
     raw = await request.body()
     if len(raw) > _MAX_BODY:
         return None
+    return _parse_fields(raw, names)
+
+
+def _parse_fields(raw: bytes, names: tuple[str, ...]) -> dict[str, Any] | None:
     try:
         body = json.loads(raw)
     except ValueError:
@@ -180,6 +198,75 @@ async def _capped_body(request: Request, limit: int) -> bytes | None:
         if len(body) > limit:
             return None
     return bytes(body)
+
+
+def _intent_of(raw: Any) -> Intent | None:
+    """The intent a request carries: exactly four keys of the right types."""
+    if not isinstance(raw, dict) or raw.keys() != _INTENT_KEYS:
+        return None
+    amount, currency, recipient, reference = (raw[k] for k in sorted(_INTENT_KEYS))
+    texts = (currency, recipient, reference)
+    if type(amount) is not int or not all(isinstance(t, str) for t in texts):
+        return None
+    return Intent(amount, currency, recipient, reference)
+
+
+@contextmanager
+def _one_at_a_time(flags: dict[str, bool], name: str) -> Iterator[bool]:
+    """Claim a route's single slot before its body is read.
+
+    The loop is single-threaded and nothing awaits between the check and the
+    claim, so parallel uploads cannot each buffer a full body.
+    """
+    if flags[name]:
+        yield False
+        return
+    flags[name] = True
+    try:
+        yield True
+    finally:
+        flags[name] = False
+
+
+def _draft_busy() -> JSONResponse:
+    return JSONResponse({"error": "draft busy"}, status_code=409)
+
+
+def _device_proved(
+    request: Request, domain: str, body: bytes, desk: PaymentDesk
+) -> bool:
+    """True when a paired holder key signed the exact body received.
+
+    The signature authenticates the uploading device before any model call.
+    Its domain differs per route and from consent and voice signatures.
+    """
+    offered = request.headers.get(_DEVICE_SIG_HEADER)
+    if offered is None or not _VOICE_SIG.fullmatch(offered):
+        return False
+    signature = base64.urlsafe_b64decode(offered + "==")
+    digest = hashlib.sha256(body).hexdigest()
+    message = f"{domain}\n{digest}".encode()
+    for key in desk.holder_keys:
+        try:
+            Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
+        except (InvalidSignature, ValueError):
+            continue
+        return True
+    return False
+
+
+def _model_off() -> JSONResponse:
+    return JSONResponse({"error": "model unavailable"}, status_code=503)
+
+
+async def _draft(draft: Callable[[Any], dict[str, Any]], words: Any) -> Response:
+    # A worker thread keeps the loop serving while the model call blocks.
+    try:
+        return JSONResponse(await anyio.to_thread.run_sync(draft, words))
+    except ValueError as err:
+        return JSONResponse({"error": str(err)}, status_code=400)
+    except (MetaAPIError, VoiceAPIError):
+        return JSONResponse({"error": "model error"}, status_code=502)
 
 
 def _voice_signature(request: Request) -> bytes | None:
@@ -274,6 +361,8 @@ def build_server(
     deploys: DeploySource | None = None,
     live: LiveAttacker | None = None,
     voice: Transcriber | None = None,
+    intake: IntentIntake | None = None,
+    agent: Responder | None = None,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
@@ -296,6 +385,12 @@ def build_server(
             `POST /api/attack/model`; None reports it as off.
         voice: Transcriber behind `POST /api/voice`, which answers only the
             words of a clip the paired device signed; None reports it as off.
+        intake: When given, drafts intents from typed or spoken words behind
+            `POST /api/intent/draft` and `/api/intent/voice`; None reports
+            drafting as unavailable.
+        agent: When given, Muse Spark pays a signed intent handed to it behind
+            `POST /api/agent/start` and `GET /api/agent`; None reports both as
+            unavailable.
 
     Returns:
         An MCP server named `mandate`.
@@ -309,13 +404,21 @@ def build_server(
         amount_cents: Annotated[int, Field(strict=True)],
         currency: str,
         reference: str,
+        intent_id: str | None = None,
     ) -> dict[str, Any]:
         """Create a quote for a payment. This only creates a quote and moves no money.
 
         The account holder must approve the quote on their own device before
-        confirm_payment can execute it.
+        confirm_payment can execute it. Name the holder's signed intent_id when \
+there is one: the gate then pays only a quote that matches it exactly.
         """
-        return desk.quote(to_account, amount_cents, currency, reference)
+        return desk.quote(to_account, amount_cents, currency, reference, intent_id)
+
+    @srv.tool(annotations=ToolAnnotations(read_only_hint=True))
+    def get_intent(intent_id: str) -> dict[str, Any]:
+        """Return the payment the account holder signed: amount, currency, payee \
+account, invoice reference, and its hash and evidence reference."""
+        return desk.intent_receipt(intent_id)
 
     @srv.tool(annotations=ToolAnnotations(read_only_hint=True))
     def get_payment_status(quote_id: str) -> dict[str, Any]:
@@ -343,6 +446,77 @@ state is returned."""
         if body is None or approval is None:
             return _bad_request()
         return JSONResponse(desk.approve(body["quote_id"], approval))
+
+    async def sign_intent(request: Request) -> Response:
+        body = await _fields(request, "signature")
+        intent = _intent_of(body.get("intent")) if body else None
+        signature = _decode(body["signature"]) if body else None
+        if intent is None or signature is None:
+            return _bad_request()
+        return JSONResponse(desk.record_intent(intent, signature))
+
+    handoff = None if agent is None else AgentHandoff(agent, srv, desk)
+
+    async def agent_start(request: Request) -> Response:
+        if handoff is None:
+            return _model_off()
+        if not _same_site(request, "application/json"):
+            return _bad_request()
+        raw = await _capped_body(request, _MAX_BODY)
+        if raw is None:
+            return _bad_request()
+        # The run spends model calls, so the paired device must ask for it.
+        if not _device_proved(request, _AGENT_DOMAIN, raw, desk):
+            return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
+        body = _parse_fields(raw, ("intent_id",))
+        if body is None:
+            return _bad_request()
+        started = handoff.start(body["intent_id"])
+        if started.get("error") == "busy":
+            return JSONResponse(started, status_code=409)
+        if "error" in started:
+            return JSONResponse(started, status_code=404)
+        return JSONResponse(started, status_code=202)
+
+    async def agent_status(request: Request) -> Response:
+        if handoff is None:
+            return _model_off()
+        return JSONResponse(handoff.status())
+
+    drafting = {"draft": False, "voice": False}
+
+    async def draft_text(request: Request) -> Response:
+        if not _same_site(request, "application/json"):
+            return _bad_request()
+        if intake is None:
+            return _model_off()
+        with _one_at_a_time(drafting, "draft") as free:
+            if not free:
+                return _draft_busy()
+            raw = await _capped_body(request, _MAX_BODY)
+            if raw is None:
+                return _bad_request()
+            if not _device_proved(request, _DRAFT_DOMAIN, raw, desk):
+                return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
+            body = _parse_fields(raw, ("text",))
+            if body is None or not 1 <= len(body["text"]) <= _MAX_TEXT:
+                return _bad_request()
+            return await _draft(intake.from_text, body["text"])
+
+    async def draft_voice(request: Request) -> Response:
+        if not _same_site(request, "audio/wav"):
+            return _bad_request()
+        if intake is None:
+            return _model_off()
+        with _one_at_a_time(drafting, "voice") as free:
+            if not free:
+                return _draft_busy()
+            audio = await _capped_body(request, MAX_WAV_BYTES)
+            if audio is None:
+                return JSONResponse({"error": "audio too large"}, status_code=413)
+            if not _device_proved(request, _VOICE_DOMAIN, audio, desk):
+                return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
+            return await _draft(intake.from_voice, audio)
 
     async def holder(request: Request) -> Response:
         body = await _fields(request, "public_key", "pairing")
@@ -557,6 +731,11 @@ state is returned."""
         ("/api/registry", "GET", registry),
         ("/api/receipt/{payment_id}", "GET", receipt),
         ("/api/voice", "POST", voice_text),
+        ("/api/intent", "POST", sign_intent),
+        ("/api/intent/draft", "POST", draft_text),
+        ("/api/intent/voice", "POST", draft_voice),
+        ("/api/agent/start", "POST", agent_start),
+        ("/api/agent", "GET", agent_status),
     ):
         _route(srv, path, method, _host_guard(handler, allowed_hosts))
     return srv

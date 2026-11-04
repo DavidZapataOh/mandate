@@ -102,17 +102,17 @@ export function provenanceOf(
   const first = lines.length > 0 ? lines[0]!.seq : null;
   const last = lines.length > 0 ? lines[lines.length - 1]!.seq : null;
   let registry: Provenance["registry"] = null;
-  if (server !== null) {
-    registry = { root: server.registry.root, leaves: server.registry.leaves, from: "server" };
-  } else {
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i]!;
-      const proof = line.forensic?.registry;
-      if (proof) {
-        registry = { root: proof.root, leaves: proof.leaves, from: `line #${line.seq}` };
-        break;
-      }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    const proof = line.forensic?.registry;
+    if (proof) {
+      registry = { root: proof.root, leaves: proof.leaves, from: `line #${line.seq}` };
+      break;
     }
+  }
+  // The server's read may predate the newest proof; the registry only grows, so the larger one is newer.
+  if (server !== null && (registry === null || server.registry.leaves >= registry.leaves)) {
+    registry = { root: server.registry.root, leaves: server.registry.leaves, from: "server" };
   }
   return {
     source: replay === null ? "live" : "replay",

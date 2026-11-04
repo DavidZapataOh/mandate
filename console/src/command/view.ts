@@ -13,9 +13,13 @@ export interface CommandDeps {
   fetchLine(seq: number): Promise<ConsoleLine | null>;
   loadProvenance(): Promise<ServerProvenance | null>;
   now(): number;
+  later(run: () => void, ms: number): void;
   download(name: string, mime: string, text: string): void;
   schedule(run: () => void): void;
 }
+
+/** The server is asked again at most this often while lines arrive. */
+const REFRESH_MS = 1000;
 
 type Tile = (typeof TILES)[number];
 
@@ -47,6 +51,7 @@ function metricSeqs(key: Tile, p: Posture): readonly number[] {
     case "verified": return p.verified.seqs;
     case "denied": return p.denied.seqs;
     case "breaches": return p.breaches.seqs;
+    case "stepsRan": return p.stepsRan.seqs;
     // The sum runs over every attack line, so every attack line is behind it.
     case "moved": return p.attacks.flatMap((a) => a.seqs).sort((a, b) => a - b);
     // A share is drilled to its whole, so the lines lacking the part are visible too.
@@ -353,13 +358,36 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
 
   // Only the newest read may land: an older answer would roll the registry root back.
   let reads = 0;
+  let lastRead = Number.NEGATIVE_INFINITY;
+  let waiting = false;
   const refresh = async (): Promise<void> => {
     if (deps.replay !== null) return;
     const id = ++reads;
+    lastRead = deps.now();
     const next = await deps.loadProvenance();
     if (id !== reads) return;
     server = next;
     request();
+  };
+
+  // The registry grows with every payment, so lines changing means the server's value may be stale.
+  const sync = (lines: readonly ConsoleLine[]): void => {
+    if (deps.replay !== null) return;
+    if (lines.length === 0) {
+      // A new run: the old run's registry and policies no longer describe anything.
+      server = null;
+      reads += 1;
+      void refresh();
+      return;
+    }
+    if (waiting) return;
+    const wait = lastRead + REFRESH_MS - deps.now();
+    if (wait <= 0) return void refresh();
+    waiting = true;
+    deps.later(() => {
+      waiting = false;
+      void refresh();
+    }, wait);
   };
 
   must("#export-md").addEventListener("click", () => void exportReport("md"));
@@ -373,7 +401,10 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
     deps.download(reportFileName(report, ext), mime, text);
   }
 
-  store.subscribe(request);
+  store.subscribe((lines) => {
+    sync(lines);
+    request();
+  });
   render();
   void refresh();
   return { exportReport };

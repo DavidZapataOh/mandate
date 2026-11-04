@@ -10,11 +10,15 @@ from evidence.seams import (
     FIXTURE_ENDPOINT,
     ZKTLS_KIND,
     evidence_ref,
+    opaque_cooperative_ref,
+    opaque_intent_ref,
     select_best,
     select_cooperative,
     select_zktls,
 )
 from gate.certs import generate_keypair
+from gate.policy import Intent
+from swarm.intent import intent_hash, sign_intent
 
 TS = 1800000000
 NOW = 1800000100
@@ -97,3 +101,22 @@ def test_fallback_path(keypair):
     assert select_best(None, b"presentation-bytes").startswith("ev:zktls-attestation:")
     with pytest.raises(ValueError, match="no evidence available"):
         select_best(None, None)
+
+
+def test_opaque_ref_changes_when_only_the_signature_changes():
+    state = _state(bytes([7]) * 32)
+    forged = dataclasses.replace(state, signature=bytes(64))
+    assert opaque_cooperative_ref(state).startswith("ev:cooperative-signed:")
+    assert opaque_cooperative_ref(state) != opaque_cooperative_ref(forged)
+    assert select_cooperative(state) == select_cooperative(forged)
+
+
+ACME_INTENT = Intent(20000, "USD", "acme-991", "A-991")
+INTENT_REF = "ev:holder-intent:f72f9907d8ea7ed0df42df9598a981ac"
+
+
+def test_intent_ref_hashes_the_holder_signature_in():
+    signature = sign_intent(bytes([7]) * 32, ACME_INTENT)
+    assert opaque_intent_ref(ACME_INTENT, signature) == INTENT_REF
+    assert opaque_intent_ref(ACME_INTENT, bytes(64)) != INTENT_REF
+    assert intent_hash(ACME_INTENT)[:32] not in INTENT_REF

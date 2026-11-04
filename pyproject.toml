@@ -5,13 +5,14 @@ description = "Independent authorization and verification layer between AI agent
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16", "mcp==2.3.0", "uvicorn==0.54.0", "starlette==1.10.0"]
+dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16", "mcp==2.3.0", "uvicorn==0.54.0", "starlette==1.10.0", "increase==0.555.0"]
 
 [project.scripts]
 mandate = "mandate.cli:main"
 mandate-hook = "swarm.hook:cli"
 mandate-desk = "swarm.server:cli"
 mandate-console = "swarm.console:cli"
+mandate-bank-setup = "bank.increase:setup_cli"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -37,6 +38,9 @@ show_error_codes = true
 
 [[tool.mypy.overrides]]
 module = [
+    "bank.test_credentials",
+    "bank.test_increase",
+    "bank.test_rail",
     "bank.test_verifier",
     "bench.test_report",
     "bench.test_runner",
@@ -44,6 +48,7 @@ module = [
     "e2e.test_agent_live",
     "e2e.test_anchor_live",
     "e2e.test_flow_a",
+    "e2e.test_increase_live",
     "e2e.test_mcp_live",
     "e2e.test_redteam_live",
     "e2e.test_swarm_live",
@@ -90,6 +95,8 @@ module = [
     "swarm.test_receipt",
     "swarm.test_redteam",
     "swarm.test_server",
+    "swarm.test_handoff",
+    "swarm.test_server_intent",
     "swarm.test_server_events",
     "swarm.test_server_proofs",
     "swarm.test_state",

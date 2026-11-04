@@ -3,7 +3,7 @@
 from dataclasses import asdict
 from typing import Any
 
-from bank.api import Bank
+from bank.rail import BankRail
 from bank.verifier import Verifier
 from gate.policy import Policy
 from swarm.desk import DESK_POLICY, PaymentDesk
@@ -33,7 +33,7 @@ def provenance(hub: EventHub, desk: PaymentDesk) -> dict[str, Any]:
         A JSON-ready mapping.
     """
 
-    def registry(_bank: Bank, _verifier: Verifier) -> dict[str, Any]:
+    def registry(_bank: BankRail, _verifier: Verifier) -> dict[str, Any]:
         return {"root": desk.registry.root(), "leaves": desk.registry.size()}
 
     retained = hub.since(0)

@@ -1,3 +1,4 @@
+import base64
 import itertools
 import json
 import re
@@ -10,9 +11,11 @@ import pytest
 import uvicorn
 
 from bank.api import Bank
+from bank.conftest import RecordingRail
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from swarm import console
+from swarm.conftest import message
 from swarm.console import AttackRunner, DeployRunner
 from swarm.console_line import ConsoleLine, console_line_json, read_console_line
 from swarm.desk import PaymentDesk
@@ -23,6 +26,7 @@ from swarm.redteam import PINNED, AttackKind
 from swarm.server import build_server
 from swarm.test_console_line import RECORD
 from swarm.test_server import FOREIGN, PAIR, _asgi
+from swarm.test_server_intent import _text
 from swarm.test_voice import CLIP
 from swarm.voice import NO_VOICE_KEY
 
@@ -439,3 +443,96 @@ def test_public_host_help_says_the_console_routes_publish_payments(monkeypatch, 
         "payment's amount, payee, reference and debit account in clear to anyone "
         "who reaches that name: use a public host for demo data only"
     ) in text
+
+
+@pytest.mark.anyio
+async def test_cli_without_a_key_has_no_spark(monkeypatch, capsys, dist):
+    monkeypatch.delenv("MODEL_API_KEY", raising=False)
+    monkeypatch.delenv("META_API_KEY", raising=False)
+    seen, _ = _run_cli(monkeypatch, capsys, "--console-dir", str(dist))
+    async with _asgi(seen["app"]) as http:
+        draft = await http.post("/api/intent/draft", json={"text": "Pay Acme."})
+        agent = await http.get("/api/agent")
+    assert draft.status_code == agent.status_code == 503
+
+
+@pytest.mark.anyio
+async def test_cli_drafts_with_the_meta_key(monkeypatch, capsys, dist, fake_meta):
+    monkeypatch.setenv("MODEL_API_KEY", "mk-test")
+    made = []
+    draft = {
+        "payee_name": "Acme Corp",
+        "amount_cents": 20000,
+        "currency": "USD",
+        "reference": "A991",
+    }
+
+    def client(key):
+        made.append(key)
+        return fake_meta([message(json.dumps(draft))])
+
+    monkeypatch.setattr(console, "MetaClient", client)
+    seen, out = _run_cli(monkeypatch, capsys, "--console-dir", str(dist))
+    token = out[0].rsplit("#pair=", 1)[1]
+    device_priv, device_pub = generate_keypair()
+    async with _asgi(seen["app"]) as http:
+        await http.post(
+            "/api/holder",
+            json={
+                "public_key": base64.b64encode(device_pub).decode(),
+                "pairing": token,
+            },
+        )
+        resp = await http.post(
+            "/api/intent/draft", **_text("Pay Acme A991.", device_priv)
+        )
+        start = await http.post("/api/agent/start", json={"intent_id": "i:000001"})
+    assert made == ["mk-test"]
+    assert (start.status_code, start.json()) == (
+        401,
+        {"error": "not the paired device"},
+    )
+    assert resp.json()["intent"] == {
+        "amount_cents": 20000,
+        "currency": "USD",
+        "recipient": "acme-991",
+        "reference": "A-991",
+    }
+
+
+def test_cli_refuses_a_bad_payee_book(monkeypatch, capsys, dist, tmp_path):
+    book = tmp_path / "payees.json"
+    book.write_text("[]")
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--payees", str(book))
+    assert stopped.value.code == 2
+    assert f"payee book unreadable: {book}" in capsys.readouterr().err
+
+
+def test_attacks_need_a_simulated_bank_beside_a_sandbox_desk():
+    gate_priv, gate_pub = generate_keypair()
+    rail = RecordingRail()
+    desk = PaymentDesk(
+        source="checking-881",
+        bank=rail,
+        verifier=Verifier(gate_pub),
+        gate_key=gate_priv,
+        clock=lambda: NOW,
+        nonces=lambda: "d" * 32,
+    )
+    with pytest.raises(ValueError, match="template attacks need a simulated bank"):
+        AttackRunner(desk, gate_priv, EventHub(), lambda: NOW, lambda: "a" * 32)
+    counter = itertools.count(1)
+    sim = Bank({"checking-881": 10_000_000, "acme-991": 0})
+    runner = AttackRunner(
+        desk,
+        gate_priv,
+        EventHub(),
+        lambda: NOW,
+        lambda: f"atk{next(counter):029d}",
+        bank=sim,
+    )
+    line = runner.run(AttackKind.REPLAY)
+    assert line.subject["blocked"] is True
+    assert sim.get_balance("acme-991") == 20000
+    assert rail.calls == []
