@@ -64,7 +64,7 @@ body {
 
 #pairing {
   margin: 8px 0 0;
-  font: 400 13px / 18px var(--mono);
+  font: 400 14px / 18px var(--mono);
   color: var(--muted);
 }
 
@@ -163,7 +163,7 @@ label[for="intent-file"] {
   border-radius: 4px;
   background: none;
   color: var(--bone);
-  font: 700 13px / 1.2 var(--mono);
+  font: 700 14px / 1.2 var(--mono);
   letter-spacing: -0.02em;
   text-align: center;
   white-space: nowrap;
@@ -285,18 +285,13 @@ label[for="intent-file"]:has(+ #intent-file:disabled) {
 
 #intent-receipt #receipt-hash,
 #intent-receipt #receipt-evidence {
-  font-size: 10.5px;
-  line-height: 14px;
+  font-size: 14px;
+  line-height: 18px;
   word-break: break-all;
 }
 
 #intent-receipt #receipt-evidence {
   margin-bottom: 0;
-}
-
-/* The full hash wraps to two legible lines rather than shrinking to fit one. */
-#intent-receipt #receipt-hash {
-  font-size: 10.5px;
 }
 
 /* Funds: an Ink stamp on the stub, so Verify keeps its contrast on paper. */
@@ -308,7 +303,7 @@ label[for="intent-file"]:has(+ #intent-file:disabled) {
   border-radius: 3px;
   background: var(--ink);
   color: var(--bone);
-  font: 400 11px / 15px var(--mono);
+  font: 400 14px / 18px var(--mono);
 }
 
 #intent-receipt .funds dt,
@@ -348,7 +343,7 @@ label[for="intent-file"]:has(+ #intent-file:disabled) {
 
 #intent-seam {
   margin: 7px -14px 0 0;
-  font: 400 10.5px / 15px var(--mono);
+  font: 400 14px / 20px var(--mono);
   color: var(--muted);
 }
 

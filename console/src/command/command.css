@@ -157,7 +157,7 @@ p {
   justify-content: flex-end;
   padding: 0 12px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   letter-spacing: 0.02em;
 }
 
@@ -165,7 +165,7 @@ p {
   grid-area: nav;
   justify-content: flex-end;
   padding: 0 10px 0 0;
-  font: 400 13px/1 var(--mono);
+  font: 400 14px/1 var(--mono);
 }
 
 .bar nav a {
@@ -226,7 +226,7 @@ main {
 
 /* Both percentiles hold one line in a 1280–1600 cell; the count sits under them. */
 #tiles [data-metric="latency"] .value {
-  font-size: clamp(11px, 0.85vw, 14px);
+  font-size: 14px;
   letter-spacing: -0.03em;
 }
 
@@ -238,7 +238,7 @@ main {
   display: block;
   margin-top: 4px;
   color: var(--muted);
-  font: 400 12px/1.2 var(--mono);
+  font: 400 14px/1.2 var(--mono);
   letter-spacing: 0;
 }
 
@@ -342,7 +342,8 @@ button.drill {
   border: 0;
   background: none;
   color: var(--muted);
-  font: 400 12px/1.4 var(--mono);
+  font: 400 14px/1.4 var(--mono);
+  text-align: left;
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -381,14 +382,14 @@ button.drill:hover {
   grid-area: count;
   align-self: start;
   color: var(--muted);
-  font: 400 12px/16px var(--mono);
+  font: 400 14px/18px var(--mono);
 }
 
 #disclaimer,
 #applicability {
   justify-self: end;
   color: var(--muted);
-  font: 400 13px/16px var(--sans);
+  font: 400 14px/18px var(--sans);
   text-align: right;
 }
 
@@ -431,8 +432,8 @@ button.drill:hover {
   height: 37px;
   padding: 0 10px;
   background: var(--register-band);
-  font: 700 12.5px/1.1 var(--sans);
-  white-space: nowrap;
+  font: 700 14px/1.1 var(--sans);
+  white-space: normal;
   text-align: left;
   text-transform: uppercase;
 }
@@ -452,7 +453,7 @@ button.drill:hover {
 .register tbody td,
 .register tbody th {
   padding: 6px 10px;
-  font: 400 12px/1.28 var(--sans);
+  font: 400 14px/1.28 var(--sans);
   text-align: left;
   vertical-align: top;
 }
@@ -478,12 +479,12 @@ button.drill:hover {
 }
 
 .register .evidence {
-  font: 700 12px/1.28 var(--mono);
+  font: 700 14px/1.28 var(--mono);
   font-variant-numeric: tabular-nums;
 }
 
 .register td:last-child {
-  font: 400 12px/1.28 var(--mono);
+  font: 400 14px/1.28 var(--mono);
 }
 
 /* Attacks and layers side by side, split by a hairline. */
@@ -543,11 +544,11 @@ button.drill:hover {
   position: relative;
   padding: 0 4px 3px;
   color: var(--muted);
-  font: 400 10.5px/1.2 var(--mono);
+  font: 400 14px/1.2 var(--mono);
   text-align: right;
   text-transform: uppercase;
   vertical-align: bottom;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .scroll thead th:first-child {
@@ -579,9 +580,10 @@ button.drill:hover {
 #attacks tbody td:nth-child(6),
 #layers tbody td:nth-child(3) {
   color: color-mix(in srgb, var(--bone) 80%, transparent);
-  font: 400 12.5px/1.2 var(--sans);
+  font: 400 14px/1.2 var(--sans);
 }
 
+#attacks tbody th,
 #layers tbody td:nth-child(3) {
   white-space: normal;
 }
@@ -594,7 +596,8 @@ button.drill:hover {
 .scroll button.drill {
   min-height: 24px;
   margin: 0;
-  font-size: 11px;
+  font-size: 14px;
+  white-space: normal;
 }
 
 #attacks tfoot tr {
@@ -613,7 +616,7 @@ button.drill:hover {
 
 #attacks tfoot th {
   padding-left: 10px;
-  font: 700 13px/1.2 var(--sans);
+  font: 700 14px/1.2 var(--sans);
   text-align: left;
 }
 
@@ -691,7 +694,7 @@ button.drill:hover {
 
 #drill .row {
   color: var(--muted);
-  font: 400 13px/1.4 var(--mono);
+  font: 400 14px/1.4 var(--mono);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }

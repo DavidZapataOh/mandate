@@ -50,8 +50,8 @@ test("a verdict with withheld fields is never green", async ({ page }) => {
   await page.getByRole("button", { name: "Verify" }).click();
   await expect(page.locator("#verdict .label")).toHaveText("VERIFIED, FIELDS WITHHELD");
   expect(await color(page, "#verdict .label")).toBe("rgb(246, 244, 238)");
-  expect(await fill(page, '#steps li[data-status="withheld"] .mark')).toBe("rgb(138, 143, 152)");
-  expect(await color(page, '#steps li[data-status="withheld"] .mark')).toBe(INK);
+  expect(await fill(page, '#steps li[data-status="withheld"] .mark')).toBe(INK);
+  expect(await color(page, '#steps li[data-status="withheld"] .mark')).toBe("rgb(138, 143, 152)");
 });
 
 test("hashes and keys are set in JetBrains Mono, prose in Inter", async ({ page }) => {
