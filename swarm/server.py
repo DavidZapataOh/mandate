@@ -343,26 +343,28 @@ def _approval(body: dict[str, Any]) -> HolderApproval | None:
     return HolderApproval(signature, consent_key, key_signature)
 
 
-class _Pairing:
-    """One-time token that lets exactly one device register as the holder."""
+class _Pairings:
+    """One-time tokens, each of which lets exactly one device pair as a holder."""
 
-    def __init__(self, token: str) -> None:
-        self._token: str | None = token
+    def __init__(self, tokens: tuple[str, ...]) -> None:
+        self._tokens = [token.encode() for token in tokens]
         self._lock = threading.Lock()
 
     def spend(self, offered: str) -> bool:
+        given = offered.encode()
         with self._lock:
-            if self._token is None or not hmac.compare_digest(
-                offered.encode(), self._token.encode()
-            ):
+            # Compare against every token, so timing says nothing about which
+            # one, or how much of one, matched.
+            hits = [hmac.compare_digest(given, t) for t in self._tokens]
+            if not any(hits):
                 return False
-            self._token = None
+            del self._tokens[hits.index(True)]
             return True
 
 
 def build_server(
     desk: PaymentDesk,
-    pairing_token: str,
+    pairing_token: str | tuple[str, ...],
     allowed_hosts: tuple[str, ...] = _LOCAL_HOSTS,
     hub: EventHub | None = None,
     attacks: AttackSource | None = None,
@@ -377,12 +379,13 @@ def build_server(
 
     The tools never approve: only a holder approval posted to `/api/approve`
     does.
-    The holder key is registered once, by the device that presents the
-    pairing token; the token is spent on first use.
+    Each holder key is registered once, by the device that presents a
+    pairing token; each token is spent on first use.
 
     Args:
         desk: Desk the tools and routes operate on.
-        pairing_token: One-time secret the holder device posts to `/api/holder`.
+        pairing_token: One-time secret, or one per holder device, that a
+            device posts to /api/holder to pair; each is spent on first use.
         allowed_hosts: Host header names the `/api` and `/app` routes accept.
         hub: When given, also serves its lines on `/api/events` (SSE),
             `/api/lines` and `/api/forensic/{seq}`.
@@ -405,7 +408,9 @@ def build_server(
         An MCP server named `mandate`.
     """
     srv = MCPServer("mandate")
-    pairing = _Pairing(pairing_token)
+    pairing = _Pairings(
+        (pairing_token,) if isinstance(pairing_token, str) else pairing_token
+    )
 
     @srv.tool()
     def quote_payment(
@@ -574,15 +579,25 @@ state is returned."""
         holder_id = await anyio.to_thread.run_sync(desk.register_holder, key)
         return JSONResponse({"registered": holder_id is not None})
 
-    async def keys(request: Request) -> Response:
-        """Publish the gate key and the paired holder keys.
+    async def unpair(request: Request) -> Response:
+        body = await _fields(request, "public_key", "signature")
+        key = _decode(body["public_key"]) if body else None
+        signature = _decode(body["signature"]) if body else None
+        if key is None or signature is None or len(key) != _KEY_LEN:
+            return _bad_request()
+        unpaired = await anyio.to_thread.run_sync(desk.unpair_device, key, signature)
+        return JSONResponse({"unpaired": unpaired})
 
-        Holder keys are published so a holder can check their own disclosure.
+    async def keys(request: Request) -> Response:
+        """Publish the gate key and every holder key that ever paired.
+
+        Holder keys are published so a holder can check their own disclosure;
+        retired keys stay so receipts they approved keep verifying.
         """
         return JSONResponse(
             {
                 "gate_key": _b64(desk.gate_public_key),
-                "holder_keys": [_b64(key) for key in desk.holder_keys],
+                "holder_keys": [_b64(key) for key in desk.all_holder_keys],
             }
         )
 
@@ -606,12 +621,10 @@ state is returned."""
         return JSONResponse(found if everything else present(found, frozenset()))
 
     async def device(request: Request) -> Response:
-        keys = desk.holder_keys
-        fingerprint = hashlib.sha256(keys[0]).hexdigest()[:16] if keys else None
+        # A count only: naming a device would link payments to a holder.
         return JSONResponse(
             {
-                "paired": bool(keys),
-                "fingerprint": fingerprint,
+                "holders": len(desk.holder_keys),
                 # Read-only, so the holder page offers the microphone only when
                 # the desk would answer.
                 "voice": voice is not None and voice.available,
@@ -796,6 +809,7 @@ state is returned."""
         ("/api/pending", "GET", pending),
         ("/api/approve", "POST", approve),
         ("/api/holder", "POST", holder),
+        ("/api/holder/unpair", "POST", unpair),
         ("/api/device", "GET", device),
         ("/api/keys", "GET", keys),
         ("/api/registry", "GET", registry),

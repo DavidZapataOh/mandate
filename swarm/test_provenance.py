@@ -1,5 +1,6 @@
 import pytest
 
+from gate.certs import public_key_of
 from gate.registry import EMPTY_ROOT
 from swarm.hub import EventHub
 from swarm.provenance import provenance
@@ -86,6 +87,7 @@ def test_provenance_of_an_empty_console(make_desk):
         "registry": {"root": EMPTY_ROOT, "leaves": 0},
         "policies": POLICIES,
         "bank": None,
+        "holders": 1,
     }
 
 
@@ -122,6 +124,7 @@ async def test_provenance_route(make_desk, sign_quote):
         "registry": {"root": ROOT1, "leaves": 1},
         "policies": POLICIES,
         "bank": None,
+        "holders": 1,
     }
     assert (foreign.status_code, foreign.json()) == (400, {"error": "bad request"})
 
@@ -142,3 +145,12 @@ async def test_provenance_carries_the_latest_reconciliation(make_desk, state_sto
     async with _asgi(build_server(desk, PAIR, hub=hub).streamable_http_app()) as http:
         body = (await http.get("/api/provenance")).json()
     assert (body["bank"]["rail"], body["bank"]["transfers"]) == ("simulated", 0)
+
+
+def test_provenance_counts_paired_holders(make_desk):
+    desk, _ = make_desk()
+    hub = EventHub()
+    holder_id = desk.register_holder(public_key_of(b"\x03" * 32))
+    assert provenance(hub, desk)["holders"] == 2
+    desk.unpair_holder(holder_id)
+    assert provenance(hub, desk)["holders"] == 1

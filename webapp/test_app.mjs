@@ -472,7 +472,7 @@ test("voiceReason hides voice when the desk has it off", () => {
 });
 
 test("httpApi reads whether the desk has voice on", async () => {
-  const body = { paired: true, fingerprint: null, voice: true };
+  const body = { holders: 1, voice: true };
   const api = httpApi("http://desk", async () => ({ ok: true, json: async () => body }));
   assert.equal(await api.voiceOn(), true);
   const bad = httpApi("http://desk", async () => ({ ok: false, status: 500 }));

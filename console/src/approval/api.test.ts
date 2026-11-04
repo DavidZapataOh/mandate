@@ -44,28 +44,26 @@ describe("httpDesk", () => {
     await expect(desk.pending()).rejects.toThrow("approval: desk answered 400");
   });
 
-  it.each([
-    [{ paired: false, fingerprint: null }],
-    [{ paired: true, fingerprint: "630dcd2966c43366" }],
-  ])("reads the device state %j", async (body) => {
-    expect(await httpDesk(answering(200, body)).device()).toEqual(body);
-  });
+  it.each([[{ holders: 0 }], [{ holders: 3 }], [{ holders: 16 }]])(
+    "reads the device state %j",
+    async (body) => {
+      expect(await httpDesk(answering(200, body)).device()).toEqual(body);
+    },
+  );
 
   it("reads the device state and ignores the holder page's voice flag", async () => {
-    const body = { paired: true, fingerprint: "630dcd2966c43366", voice: true };
-    expect(await httpDesk(answering(200, body)).device()).toEqual({
-      paired: true,
-      fingerprint: "630dcd2966c43366",
-    });
+    const body = { holders: 1, voice: true };
+    expect(await httpDesk(answering(200, body)).device()).toEqual({ holders: 1 });
   });
 
   it.each([
-    [{ paired: true, fingerprint: null }],
-    [{ paired: false, fingerprint: null, voice: "yes" }],
-    [{ paired: false, fingerprint: "630dcd2966c43366" }],
-    [{ paired: true, fingerprint: "630DCD2966C43366" }],
-    [{ paired: "yes", fingerprint: null }],
-    [{ paired: false, fingerprint: null, key: "x" }],
+    [{ paired: true, fingerprint: "630dcd2966c43366" }],
+    [{ holders: -1 }],
+    [{ holders: 17 }],
+    [{ holders: 1.5 }],
+    [{ holders: "2" }],
+    [{ holders: 0, voice: "yes" }],
+    [{ holders: 1, key: "x" }],
   ])("refuses the device state %j", async (body) => {
     await expect(httpDesk(answering(200, body)).device()).rejects.toThrow(
       "approval: malformed device state",

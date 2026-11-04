@@ -99,9 +99,8 @@ function reasonText(phase: Phase, reason: string | null, fields: ConsentFields |
 function deviceText(replay: boolean, device: DeviceState | null): string {
   if (replay) return "Holder device not shown in replay";
   if (device === null) return "Holder device state unavailable";
-  return device.paired
-    ? `Holder device ${device.fingerprint ?? ""}`.trimEnd()
-    : "No holder device paired yet";
+  if (device.holders === 0) return "No holder device paired yet";
+  return device.holders === 1 ? "1 holder device paired" : `${device.holders} holder devices paired`;
 }
 
 function maxDeskSeq(lines: readonly ConsoleLine[]): number {
@@ -210,13 +209,14 @@ export function mountApproval(
   }
 
   async function readDevice(): Promise<void> {
-    if (api === null || deviceState?.paired === true) return;
+    if (api === null) return;
     try {
       deviceState = await api.device();
     } catch {
       deviceState = null;
     }
-    if (deviceState?.paired !== true && !pollScheduled) {
+    // Keep polling: holders can pair and unpair while the console runs.
+    if (!pollScheduled) {
       pollScheduled = true;
       schedule(() => {
         pollScheduled = false;

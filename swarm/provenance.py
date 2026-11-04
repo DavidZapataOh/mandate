@@ -1,4 +1,4 @@
-"""What a report must cite beyond console lines: window, registry, policies, bank."""
+"""What a report must cite beyond console lines: registry, policies, bank, holders."""
 
 from dataclasses import asdict
 from typing import Any
@@ -23,12 +23,12 @@ def _policy(policy: Policy) -> dict[str, Any]:
 
 
 def provenance(hub: EventHub, desk: PaymentDesk) -> dict[str, Any]:
-    """Facts no console line carries: epoch, window, registry, policies, bank.
+    """Facts no console line carries: epoch, window, registry, policies, bank, holders.
 
     Args:
         hub: The hub whose retained lines the report covers.
-        desk: The desk whose registry, policies and latest reconciliation
-            with the bank the report cites.
+        desk: The desk whose registry, policies, latest reconciliation
+            with the bank and paired holder count the report cites.
 
     Returns:
         A JSON-ready mapping.
@@ -48,4 +48,7 @@ def provenance(hub: EventHub, desk: PaymentDesk) -> dict[str, Any]:
         "registry": desk.guarded(registry),
         "policies": [_policy(policy) for policy in SERVED_POLICIES],
         "bank": desk.latest_reconciliation(),
+        # Outside `guarded`: holder_keys takes the desk lock, which is not
+        # re-entrant.
+        "holders": len(desk.holder_keys),
     }

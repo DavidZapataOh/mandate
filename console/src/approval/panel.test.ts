@@ -4,7 +4,7 @@ import type { DeskApi, DeviceState, PendingQuote } from "./api";
 import { checked, desk, FIELDS, FIELDS_HASH, SUMMARY } from "./__fixtures__/desk";
 import { DEVICE_POLL_MS, KNOWN_MAX, mountApproval } from "./panel";
 
-const PAIRED: DeviceState = { paired: true, fingerprint: "630dcd2966c43366" };
+const PAIRED: DeviceState = { holders: 1 };
 const BEFORE_EXPIRY = 1800001000 * 1000;
 const HOSTILE = "<img/src=x/onerror=window.pwned=1>";
 
@@ -103,23 +103,22 @@ describe("mountApproval", () => {
     expect((window as unknown as { pwned?: number }).pwned).toBeUndefined();
   });
 
-  it("names the paired holder device", async () => {
+  it("counts the paired holder devices", async () => {
     store.add(desk(1, "quote", "quoted"));
     await mount().refresh();
-    expect(text(".device")).toBe("Holder device 630dcd2966c43366");
-    expect(scheduled).toHaveLength(0);
+    expect(text(".device")).toBe("1 holder device paired");
   });
 
-  it("polls the device state until a holder pairs, then stops", async () => {
-    api.state = { paired: false, fingerprint: null };
+  it("keeps counting holder devices while mounted", async () => {
+    api.state = { holders: 0 };
     store.add(desk(1, "quote", "quoted"));
     await mount().refresh();
     expect(text(".device")).toBe("No holder device paired yet");
     expect(scheduled).toHaveLength(1);
-    api.state = PAIRED;
+    api.state = { holders: 3 };
     scheduled.shift()?.();
-    await expect.poll(() => text(".device")).toBe("Holder device 630dcd2966c43366");
-    expect(scheduled).toHaveLength(0);
+    await expect.poll(() => text(".device")).toBe("3 holder devices paired");
+    expect(scheduled).toHaveLength(1);
     expect(api.deviceCalls).toBe(2);
   });
 

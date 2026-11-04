@@ -185,6 +185,7 @@ async def test_holder_route_needs_the_pairing_token(make_desk, extra):
     ("method", "path"),
     [
         ("POST", "/api/holder"),
+        ("POST", "/api/holder/unpair"),
         ("POST", "/api/approve"),
         ("GET", "/api/pending"),
         ("GET", "/api/device"),
@@ -321,22 +322,6 @@ async def test_web_app_served_and_nothing_else(make_desk):
     assert script.headers["content-type"].startswith("text/javascript")
     assert "registerTool" in script.text
     assert suite.status_code == 404
-
-
-@pytest.mark.anyio
-async def test_device_route_reports_the_paired_holder(make_desk):
-    desk, _ = make_desk(register=False)
-    key = {"public_key": _b64(bytes(range(32))), "pairing": PAIR}
-    async with _http(desk) as http:
-        before = await http.get("/api/device")
-        await http.post("/api/holder", json=key)
-        after = await http.get("/api/device")
-    assert before.json() == {"paired": False, "fingerprint": None, "voice": False}
-    assert after.json() == {
-        "paired": True,
-        "fingerprint": "630dcd2966c43366",
-        "voice": False,
-    }
 
 
 @pytest.mark.anyio

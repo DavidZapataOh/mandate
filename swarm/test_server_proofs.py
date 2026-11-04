@@ -4,6 +4,7 @@ import json
 import httpx2
 import pytest
 
+from gate.certs import public_key_of
 from swarm.server import build_server
 from swarm.test_receipt import AUDITOR, GATE, GOLDEN, HOLDER
 from swarm.test_server import FOREIGN, PAIR, _http
@@ -215,3 +216,17 @@ async def test_receipt_route_answers_not_found_when_the_receipt_failed(
     async with _http(desk) as http:
         resp = await http.get("/api/receipt/pay:000001")
     assert (resp.status_code, resp.json()) == (404, {"error": "not found"})
+
+
+@pytest.mark.anyio
+async def test_keys_route_publishes_every_key_that_ever_paired(make_desk, sign_quote):
+    desk = _paid(make_desk, sign_quote)
+    holder_id = desk.register_holder(public_key_of(b"\x03" * 32))
+    desk.unpair_holder(holder_id)
+    async with _http(desk) as http:
+        keys = (await http.get("/api/keys")).json()
+    assert keys["holder_keys"] == [
+        "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=",
+        "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E=",
+    ]
+    assert desk.holder_keys == (public_key_of(HOLDER),)

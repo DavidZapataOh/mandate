@@ -6,8 +6,8 @@ import { CONFIRM, patch } from "../src/wire/__fixtures__/lines";
 const REVIEW = "../.impeccable/review/sections";
 const BEFORE_EXPIRY = (FIELDS.expires_at - 600) * 1000;
 const AFTER_EXPIRY = (FIELDS.expires_at + 1) * 1000;
-const PAIRED = { paired: true, fingerprint: "630dcd2966c43366" };
-const UNPAIRED = { paired: false, fingerprint: null };
+const PAIRED = { holders: 1 };
+const UNPAIRED = { holders: 0 };
 const EVIL: ConsentFields = { ...FIELDS, recipient: "evil-666" };
 
 test.skip(!process.env.CAPTURE, "review captures run on demand with CAPTURE=1");

@@ -1,13 +1,16 @@
 import { ApprovalError, readConsent, type ConsentFields } from "./consent";
 
+/** The most holder devices one desk pairs. */
+const MAX_HOLDERS = 16;
+
 export interface PendingQuote {
   quote_id: string;
   consent: ConsentFields;
 }
 
+/** How many holder devices are paired; the desk never names one. */
 export interface DeviceState {
-  paired: boolean;
-  fingerprint: string | null;
+  holders: number;
 }
 
 export interface DeskApi {
@@ -44,20 +47,19 @@ function readPending(body: unknown): PendingQuote[] {
 function readDevice(body: unknown): DeviceState {
   const state = record(body);
   // `voice` belongs to the holder page; the console reads and ignores it.
-  const keys = state === null ? [] : Object.keys(state).filter((k) => k !== "voice").sort();
+  const keys = state === null ? [] : Object.keys(state).filter((k) => k !== "voice");
   const voiceOk = state === null || !("voice" in state) || typeof state.voice === "boolean";
-  const shapeOk =
-    voiceOk && keys.length === 2 && keys[0] === "fingerprint" && keys[1] === "paired";
-  if (state !== null && shapeOk) {
-    const { paired, fingerprint } = state;
-    if (paired === false && fingerprint === null) return { paired, fingerprint };
-    if (
-      paired === true &&
-      typeof fingerprint === "string" &&
-      /^[0-9a-f]{16}$/.test(fingerprint)
-    ) {
-      return { paired, fingerprint };
-    }
+  const holders = state?.holders;
+  if (
+    voiceOk &&
+    keys.length === 1 &&
+    keys[0] === "holders" &&
+    typeof holders === "number" &&
+    Number.isSafeInteger(holders) &&
+    holders >= 0 &&
+    holders <= MAX_HOLDERS
+  ) {
+    return { holders };
   }
   throw new ApprovalError("approval: malformed device state");
 }

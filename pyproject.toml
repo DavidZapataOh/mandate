@@ -116,6 +116,7 @@ module = [
     "swarm.test_server_intent",
     "swarm.test_server_events",
     "swarm.test_server_proofs",
+    "swarm.test_server_holders",
     "swarm.test_state",
     "swarm.test_meta_client",
     "swarm.test_voice",

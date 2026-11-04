@@ -38,7 +38,7 @@ test("the holder approves on their own device and the console follows it to the 
   await expect(approval.locator(".payee")).toHaveText("to acme-991");
   const seen = ((await device.locator("#device").textContent()) ?? "").replace("This device ", "");
   expect(seen).toMatch(/^[0-9a-f]{16}$/);
-  await expect(approval.locator(".device")).toHaveText(`Holder device ${seen}`);
+  await expect(approval.locator(".device")).toHaveText("1 holder device paired");
   await device.getByRole("button", { name: "Review" }).click();
   await expect(device.locator("#hash")).toHaveText(/^Consent hash ([0-9a-f]{8} ){7}[0-9a-f]{8}$/);
   const onDevice = ((await device.locator("#hash").textContent()) ?? "").replace("Consent hash ", "");
@@ -91,7 +91,7 @@ test("an approval signed over altered fields is refused and the console says why
   expect(agent(desk, "confirm", "q:000001").status).toBe("quoted");
 });
 
-test("the console says when no holder device is paired, then names it", async ({
+test("the console says when no holder device is paired, then counts it", async ({
   browser,
   page,
 }) => {
@@ -99,9 +99,8 @@ test("the console says when no holder device is paired, then names it", async ({
   agent(desk, "quote", "acme-991", "20000", "USD", "A-991");
   const approval = page.locator("#approval");
   await expect(approval.locator(".device")).toHaveText("No holder device paired yet");
-  const device = await pairHolder(browser, desk);
-  const seen = ((await device.locator("#device").textContent()) ?? "").replace("This device ", "");
-  await expect(approval.locator(".device")).toHaveText(`Holder device ${seen}`, {
+  await pairHolder(browser, desk);
+  await expect(approval.locator(".device")).toHaveText("1 holder device paired", {
     timeout: 5_000,
   });
 });
