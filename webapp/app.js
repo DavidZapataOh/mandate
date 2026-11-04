@@ -9,6 +9,7 @@ const FIELDS = [
 ];
 const TEXT_FIELDS = ["currency", "nonce", "recipient", "reference", "source"];
 const PRINTABLE = /^[\x21-\x7e]+$/;
+const ED25519 = { name: "Ed25519" };
 const VOICE_DOMAIN = "mandate/voice/v1";
 export const VOICE_RATE = 24000;
 export const VOICE_MAX_S = 15;
@@ -293,6 +294,8 @@ export function httpApi(base, fetchFn = fetch) {
       call("/api/approve", { quote_id: quoteId, ...approval }),
     registerHolder: (publicKey, pairing) =>
       call("/api/holder", { public_key: publicKey, pairing }),
+    unpair: (publicKey, signature) =>
+      call("/api/holder/unpair", { public_key: publicKey, signature }),
   };
 }
 
@@ -306,8 +309,26 @@ export async function pair(api, publicKey, hash) {
   const { registered } = await api.registerHolder(publicKey, token);
   return registered
     ? "Paired with the desk."
-    : "Another holder is already paired; " +
-        "approvals from this device will be refused.";
+    : "Not paired: this device's key paired with the desk before, " +
+        "or every holder slot is taken.";
+}
+
+/** Bytes the device key signs to retire itself; must match the desk's twin. */
+export function unpairBytes(rawKey) {
+  return new TextEncoder().encode(`holder-unpair/v1:${toBase64(rawKey)}`);
+}
+
+/**
+ * Asks the desk to stop trusting this device's key, then drops the key, which
+ * the desk will never pair again.
+ */
+export async function unpairDevice(api, keys, store) {
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey));
+  const signature = await crypto.subtle.sign(ED25519, keys.privateKey, unpairBytes(raw));
+  const { unpaired } = await api.unpair(toBase64(raw), toBase64(signature));
+  if (!unpaired) return "This device is not paired with the desk.";
+  await store.forget();
+  return "Unpaired. This device's key is retired; open a new pairing link to pair again.";
 }
 
 export async function holderKey(store) {
@@ -320,8 +341,6 @@ export async function holderKey(store) {
   await store.save(pair);
   return pair;
 }
-
-const ED25519 = { name: "Ed25519" };
 
 /**
  * Signs the consent with a key drawn for it alone and certifies that key with
@@ -458,12 +477,16 @@ async function indexedDbStore() {
     save: async (pair) => {
       await idbRequest(objects("readwrite").put(pair, SLOT));
     },
+    forget: async () => {
+      await idbRequest(objects("readwrite").delete(SLOT));
+    },
   };
 }
 
 async function boot() {
   const $ = (id) => document.getElementById(id);
-  const keys = await holderKey(await indexedDbStore());
+  const store = await indexedDbStore();
+  const keys = await holderKey(store);
   const api = httpApi(location.origin);
   let ticket = 0;
   const support = voiceReason(
@@ -566,7 +589,9 @@ async function boot() {
     $("status").textContent = error.message;
   };
 
+  let retired = false;
   async function refresh() {
+    if (retired) return;
     const quotes = await api.pending();
     if (approver.forget(quotes.map((q) => q.quote_id))) {
       $("shown").textContent = "";
@@ -592,7 +617,7 @@ async function boot() {
   }
 
   $("approve").addEventListener("click", async (event) => {
-    if (!event.isTrusted) return;
+    if (!event.isTrusted || retired) return;
     $("approve").disabled = true;
     try {
       await approver.approve();
@@ -603,6 +628,33 @@ async function boot() {
     } catch (error) {
       fail(error);
       if (approver.shownId) $("approve").disabled = false;
+    }
+  });
+
+  $("unpair").addEventListener("click", async (event) => {
+    if (!event.isTrusted) return;
+    $("unpair").disabled = true;
+    try {
+      $("pairing").textContent = await unpairDevice(api, keys, store);
+      if ((await store.load()) !== null) {
+        $("unpair").disabled = false;
+        return;
+      }
+      // The key is gone: offer no approvals or voice from this page any more.
+      retired = true;
+      clearHash();
+      clearVoice();
+      $("shown").textContent = "";
+      $("quotes").replaceChildren();
+      $("approve").disabled = true;
+      $("speak").disabled = true;
+      $("speak").hidden = true;
+      $("unpair").hidden = true;
+      $("device").textContent = "";
+      $("status").textContent = "";
+    } catch (error) {
+      $("pairing").textContent = `Unpair refused: ${error.message}`;
+      $("unpair").disabled = false;
     }
   });
 

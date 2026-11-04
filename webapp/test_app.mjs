@@ -20,6 +20,8 @@ import {
   pair,
   registerTools,
   signVoice,
+  unpairBytes,
+  unpairDevice,
   voiceBytes,
   voiceReason,
   voiceSupport,
@@ -53,7 +55,29 @@ function memoryStore() {
     save: async (pair) => {
       saved = pair;
     },
+    forget: async () => {
+      saved = null;
+    },
   };
+}
+
+// PKCS#8 wrapper of the Ed25519 seed 0x02 * 32 (the gate tests' holder seed).
+const HOLDER_PKCS8 = Buffer.concat([
+  Buffer.from("302e020100300506032b657004220420", "hex"),
+  Buffer.alloc(32, 2),
+]);
+const HOLDER_KEY = "gTl3Dqh9F19Wo1Rmw0x+zMuNipG07jeiXfYPW4/Js5Q=";
+const UNPAIR_SIGNATURE =
+  "funkeiu1a6bTgwfybxQ+sD+Tvsvj6VueGAKqTooc1JBkljz9IoPavw+Eu/IMakx/TR9A18oGGuhY/eYM" +
+  "gdzZBA==";
+
+async function seededKeys() {
+  const privateKey = await crypto.subtle.importKey("pkcs8", HOLDER_PKCS8, ED, false, [
+    "sign",
+  ]);
+  const raw = Buffer.from(HOLDER_KEY, "base64");
+  const publicKey = await crypto.subtle.importKey("raw", raw, ED, true, ["verify"]);
+  return { privateKey, publicKey };
 }
 
 function fakeApi(pending) {
@@ -420,10 +444,60 @@ test("pair registers only with a token from the fragment", async () => {
   assert.equal(await pair(api, "KEY", ""), null);
   assert.equal(await pair(api, "KEY", "#other=1"), null);
   assert.match(await pair(api, "KEY", "#pair=tok-1"), /^Paired/);
-  assert.match(await pair(api, "KEY", "#pair=tok-2"), /already paired/);
+  assert.equal(
+    await pair(api, "KEY", "#pair=tok-2"),
+    "Not paired: this device's key paired with the desk before, " +
+      "or every holder slot is taken.",
+  );
   assert.deepEqual(calls, [
     ["KEY", "tok-1"],
     ["KEY", "tok-2"],
+  ]);
+});
+
+test("unpair bytes and signature match the gate golden", async () => {
+  const raw = new Uint8Array(Buffer.from(HOLDER_KEY, "base64"));
+  assert.equal(
+    new TextDecoder().decode(unpairBytes(raw)),
+    `holder-unpair/v1:${HOLDER_KEY}`,
+  );
+  const sent = [];
+  const api = {
+    unpair: async (publicKey, signature) => {
+      sent.push([publicKey, signature]);
+      return { unpaired: true };
+    },
+  };
+  await unpairDevice(api, await seededKeys(), memoryStore());
+  assert.deepEqual(sent, [[HOLDER_KEY, UNPAIR_SIGNATURE]]);
+});
+
+test("an unpaired device forgets its key; a refused one keeps it", async () => {
+  for (const [unpaired, note, kept] of [
+    [
+      true,
+      "Unpaired. This device's key is retired; open a new pairing link to pair again.",
+      false,
+    ],
+    [false, "This device is not paired with the desk.", true],
+  ]) {
+    const store = memoryStore();
+    const keys = await holderKey(store);
+    const api = { unpair: async () => ({ unpaired }) };
+    assert.equal(await unpairDevice(api, keys, store), note);
+    assert.equal((await store.load()) === keys, kept);
+  }
+});
+
+test("unpair posts the device key and its signature", async () => {
+  const sent = [];
+  const fetchFn = async (url, init) => {
+    sent.push([url, JSON.parse(init.body)]);
+    return { ok: true, json: async () => ({ unpaired: true }) };
+  };
+  await httpApi("http://desk", fetchFn).unpair("KEY", "SIG");
+  assert.deepEqual(sent, [
+    ["http://desk/api/holder/unpair", { public_key: "KEY", signature: "SIG" }],
   ]);
 });
 

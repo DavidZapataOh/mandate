@@ -25,7 +25,7 @@ describe("pairing", () => {
     };
     expect(await pairHolder("PUB", "#pair=tok-1", register)).toBe("Paired with the desk.");
     expect(await pairHolder("PUB", "#pair=tok-1", register)).toBe(
-      "Another holder is already paired; intents from this device will be refused.",
+      "Not paired: this device's key paired with the desk before, or every holder slot is taken.",
     );
     expect(await pairHolder("PUB", "", register)).toBeNull();
     expect(sent).toEqual([["PUB", "tok-1"], ["PUB", "tok-1"]]);

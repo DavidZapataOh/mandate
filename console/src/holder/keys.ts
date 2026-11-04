@@ -53,5 +53,5 @@ export async function pairHolder(
   const { registered } = await register(publicKey, token);
   return registered
     ? "Paired with the desk."
-    : "Another holder is already paired; intents from this device will be refused.";
+    : "Not paired: this device's key paired with the desk before, or every holder slot is taken.";
 }
