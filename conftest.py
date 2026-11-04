@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from gate.cava import CavaAction, Freshness
 from gate.certs import CertClaims, generate_keypair, public_key_of
 from gate.consent import Consent, HolderApproval, sign_approval
 from gate.policy import Intent, Policy, Rule, Verdict
+from gate.state import StateStore
 from swarm.console_line import ConsoleLine
 from swarm.desk import PaymentDesk
 from swarm.intent import sign_intent
@@ -160,6 +162,13 @@ def sign_quote() -> Callable[[bytes, dict[str, Any]], HolderApproval]:
         return sign_approval(holder_priv, unsigned, seed)
 
     return sign
+
+
+@pytest.fixture
+def state_store(tmp_path: Path) -> Iterator[StateStore]:
+    store = StateStore(tmp_path / "state" / "state.db")
+    yield store
+    store.close()
 
 
 @pytest.fixture

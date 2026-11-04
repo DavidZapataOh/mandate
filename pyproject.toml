@@ -76,6 +76,7 @@ module = [
     "gate.test_registry",
     "gate.test_sdjwt",
     "gate.test_shim",
+    "gate.test_state",
     "gate.test_vault",
     "demo.test_make_bill",
     "swarm.conftest",
