@@ -22,6 +22,7 @@ CLOCK_SKEW_S = 30
 VERIFY_TIMEOUT_S = 30.0
 
 _REQUEST = re.compile(r"GET /accounts/([A-Za-z0-9_]+)/balance HTTP/1\.1\r\n")
+_HEADER_END = re.compile(r"\r\n\x00*\r\n")
 _ACCOUNT = re.compile(r'"account_id"\s*:\s*"([A-Za-z0-9_]+)"')
 _BALANCE = re.compile(r'"available_balance"\s*:\s*(-?[0-9]{1,18})(?=[\s,}\x00])')
 
@@ -155,7 +156,8 @@ def check_balance(
     recv = disclosed.recv
     if not recv.startswith("HTTP/1.1 200 OK\r\n"):
         raise _refuse("bank did not answer 200")
-    body = recv.partition("\r\n\r\n")[2]
+    # Hidden header bytes are NUL, so the blank line may be split by a run of them.
+    body = _HEADER_END.split(recv, maxsplit=1)[-1] if _HEADER_END.search(recv) else ""
     accounts = _ACCOUNT.findall(body)
     if len(accounts) != 1 or body.count('"account_id"') != 1:
         raise _refuse("account not disclosed")

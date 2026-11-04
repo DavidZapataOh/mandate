@@ -32,7 +32,8 @@ def increase_disclosed(
     )
     recv = (
         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
-        f"{H * 40}\r\ncontent-length: 120\r\n\r\n{body}"
+        f"{H * 60}content-length: 139\r\n{H * 17}date: Wed, 04 Nov 2026 GMT\r\n"
+        f"{H * 51}\r\n{H * 25}{body}"
     )
     return Disclosed("sandbox.increase.com", time, NOTARY, sent, recv)
 
