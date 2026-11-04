@@ -1,11 +1,14 @@
 import itertools
 import json
 
+import pytest
+
 from bench.runner import run_bench
-from gate.cava import action_hash
+from gate.cava import action_commitment
 from gate.certs import (
     BitstringRevocation,
     SingleUseStore,
+    read_claims,
     verify_certificate,
 )
 from gate.policy import Verdict
@@ -29,7 +32,9 @@ def _bank_call() -> RawCall:
     )
 
 
-def _decide(call, policy, intent, private_key, mode, nonce, kill_switch=False):
+def _decide(
+    call, policy, intent, private_key, mode, nonce, kill_switch=False, salt=None
+):
     return decide(
         call,
         policy,
@@ -43,6 +48,7 @@ def _decide(call, policy, intent, private_key, mode, nonce, kill_switch=False):
         reasoning_commitment="c" * 64,
         revocation_index=9,
         kill_switch=kill_switch,
+        salt=salt,
     )
 
 
@@ -76,7 +82,7 @@ def test_allow_path(sample_policy, sample_intent, keypair):
     assert d.verdict is Verdict.MET
     assert d.shadow_allowed is False
     assert d.certificate is not None
-    assert d.event.action_hash == action_hash(action)
+    assert d.event.action_hash == action_commitment(action, d.salt)
     ok, _ = verify_certificate(
         d.certificate,
         public_key,
@@ -176,3 +182,57 @@ def test_decide_bench_measures_real_path(sample_policy, sample_intent, keypair):
     assert (r.name, r.samples) == ("gate.shim.decide", 50)
     assert r.counters == {"decisions": 50}
     assert r.p50_us >= 0.0
+
+
+SHIM_SALT = b"\x07" * 32
+SHIM_COMMITMENT = "4e67c3dc59ac7550dcc34ed63a56611e3ff6d6284310b649e9faaaedc3607499"
+
+
+def test_the_certificate_binds_the_salted_action_hash(
+    sample_policy, sample_intent, keypair
+):
+    private_key, public_key = keypair
+    d = _decide(
+        _bank_call(),
+        sample_policy,
+        sample_intent,
+        private_key,
+        Mode.ENFORCE,
+        "n" * 32,
+        salt=SHIM_SALT,
+    )
+    claims, _ = read_claims(d.certificate, public_key)
+    assert d.salt == SHIM_SALT
+    assert d.event.action_hash == claims["action_hash"] == SHIM_COMMITMENT
+
+
+def test_each_decision_draws_its_own_salt(sample_policy, sample_intent, keypair):
+    private_key, _ = keypair
+    first, second = (
+        _decide(
+            _bank_call(),
+            sample_policy,
+            sample_intent,
+            private_key,
+            Mode.ENFORCE,
+            "n" * 32,
+        )
+        for _ in range(2)
+    )
+    assert (len(first.salt), len(second.salt)) == (32, 32)
+    assert first.salt != second.salt
+    assert first.event.action_hash != second.event.action_hash
+
+
+def test_a_short_salt_issues_nothing(sample_policy, sample_intent, keypair):
+    private_key, _ = keypair
+    with pytest.raises(ValueError, match="action salt must be 32 bytes"):
+        _decide(
+            _bank_call(),
+            sample_policy,
+            sample_intent,
+            private_key,
+            Mode.ENFORCE,
+            "n" * 32,
+            salt=b"\x07" * 31,
+        )

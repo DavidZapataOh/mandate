@@ -32,6 +32,8 @@ Each row maps a Meta model to its role, provider, source file and the command th
 | Intent drafting | `muse-spark-1.3` | Meta Model API | `swarm/intent.py` | `pytest -m live e2e/test_voice_live.py` |
 | Console world plates and frames | `muse-image-1.0` | Meta Model API (images) | `console/tools/muse_image.ts`, `console/tools/assets.json` | `cd console && npx vitest run tools/muse_image.test.ts` (request shape, offline); every plate's request id is in `console/tools/assets.json` and embedded in its PNG |
 
+Once the holder copy of the receipt exists (the proof explorer will serve it and will carry the salt; it is not built yet), recompute the certified hash with `printf '%s' '<canonical action JSON>' | openssl dgst -sha256 -mac HMAC -macopt hexkey:<action salt hex>`; the digest must equal the certificate's `action_hash`.
+
 Live tests are opt-in and need `MODEL_API_KEY` or `META_API_KEY`, plus `BASETEN_API_KEY` for the attacker row and a logged-in `muse` CLI for the swarm row.
 
 The Mandate desk (`mandate-desk`) serves quote, status, confirm and receipt tools over MCP. Spark reaches it through an app-side bridge (`swarm/mcp_bridge.py`) because the Meta Responses API has no remote-MCP tool; Muse Code connects directly through `mcpServers`. Confirming a payment needs the holder's signed consent, which the gate verifies and consumes once. WebMCP runs on the glasses only in Developer Mode or rollout, and the glasses assistant can list and show a payment but cannot approve it: only the holder's tap on Approve signs.

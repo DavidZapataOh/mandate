@@ -4,8 +4,8 @@ import { parseLine } from "../wire/parse";
 import { APPROVAL_DENIED, CLAIMS, CONSENT_DENIED, DENIALS, denial, FORGED_CONSENT, HOOK_DENIED, NIMBUS_POISONED, NIMBUS_STALE } from "./__fixtures__/denials";
 import { killSteps, killedAt } from "./steps";
 
-const SWAP_HASH = "cbf0720db7ba86b01d120cb7902c5dabb6a1c753e160127e911d3081292556b2";
-const LEGIT_HASH = "a168aea0b9fad8b2bf3ced8a6c61c58c310f5c294f03ef8db24216e40be0037d";
+const SWAP_HASH = "89f0357807b9d6e90a1c66d00e2a058ad97a5370349978a0ddceb67c50653f9a";
+const LEGIT_HASH = "20fa07c63133f7b15e26cebafeecff3f7bbdd4c61ee311b81ec8aa42e1dc8868";
 const UNREACHED = (id: string, title: string) => ({ id, title, status: "unreached", detail: "Not reached", evidence: null });
 const AFTER_GATE_FAIL = [
   UNREACHED("consent", "Holder consent"),
@@ -35,7 +35,7 @@ const certifiedSteps = (reason: string) => [
     id: "certificate",
     title: "Certificate",
     status: "passed",
-    detail: "MET over a168aea0b9fa · revocation index 0",
+    detail: "MET over 20fa07c63133 · revocation index 0",
     evidence: JSON.stringify(CLAIMS),
   },
   { id: "bank", title: "Bank verifier", status: "failed", detail: reason, evidence: null },
@@ -55,7 +55,7 @@ test.each([
     "amount_inflate",
     [
       canon("acme-991", "2000000"),
-      hash("aad68f808700afba483392ba99f94feb5458587104f65ff4f9fa51f45a02c87d"),
+      hash("b7df0f538186d50487f61c22718995525d0e69e18dae56694359292f9b43a471"),
       { id: "policy", title: "Policy rule", status: "failed", detail: "amount differs from intent", evidence: "rule pay-intent · NOT_MET" },
       ...AFTER_GATE_FAIL,
     ],
@@ -86,7 +86,7 @@ test("a consent refusal passes the policy and fails at the holder's consent", ()
   const steps = killSteps(parseLine(CONSENT_DENIED))!;
   expect(steps.map((s) => [s.id, s.status, s.detail])).toEqual([
     ["canonicalize", "passed", "bank.pay transfer · 4 targets"],
-    ["hash", "passed", "3a531d410be21c6560924338e72dee619d7117ad3e733d3087f903f8aa974d29"],
+    ["hash", "passed", "52e9b189b7db1f410229e8bb9a3a4a99d34e30523c3507480821839a3845069b"],
     ["policy", "passed", "rule pay-with-consent satisfied"],
     ["consent", "failed", "consent: expired"],
     ["certificate", "unreached", "Not reached"],
@@ -155,7 +155,7 @@ test("the Nimbus poisoned tool dies at the MCP proxy after it hashed the call", 
 test("a forged approval passes the policy and dies at the holder's consent, showing what was signed", () => {
   expect(killSteps(denial("forged_approval"))).toEqual([
     { ...canon("evil-666", "20000"), evidence: canon("evil-666", "20000").evidence.replace('"runtime":"muse"', '"runtime":"mcp"') },
-    hash("35a733ef534b387b92fa689ff980b2dbe2780b22801e179d89827dd4501cfbd7"),
+    hash("083d5271bec37350a77e45db957a3e65a0fe00d7413fa4f2dc2999502ee8fd8d"),
     { id: "policy", title: "Policy rule", status: "passed", detail: "rule pay-with-consent satisfied", evidence: null },
     { id: "consent", title: "Holder consent", status: "failed", detail: "consent: bad signature", evidence: JSON.stringify(FORGED_CONSENT) },
     ...AFTER_GATE_FAIL.slice(1),
@@ -167,7 +167,7 @@ test("the Nimbus stale migration matches no rule and never reaches the deploy ta
   const steps = killSteps(parseLine(NIMBUS_STALE))!;
   expect(steps.map((s) => [s.id, s.status, s.detail, s.evidence])).toEqual([
     ["canonicalize", "passed", "nimbus migrate · 2 targets", expect.any(String)],
-    ["hash", "passed", "623622b7c65a659a9de9d79aa291e0c3a108108df13ca5c6a811c669a50d03ee", null],
+    ["hash", "passed", "f960d447b69f99f31b0f80708cede65fb4a9dfe2c78f1f45281acf1235095762", null],
     ["policy", "failed", "no rule matches", "policy nimbus · NOT_MET"],
     ["consent", "unreached", "Not reached", null],
     ["certificate", "unreached", "Not reached", null],

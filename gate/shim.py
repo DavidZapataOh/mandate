@@ -1,10 +1,11 @@
 """Execution shim: intercept, canonize, decide."""
 
+import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
-from gate.cava import CavaAction, Freshness, action_hash
+from gate.cava import ACTION_SALT_LEN, CavaAction, Freshness, action_commitment
 from gate.certs import DEFAULT_TTL_S, CertClaims, issue_certificate
 from gate.consent import Consent, ConsentLedger, check_consent
 from gate.events import DecisionEvent
@@ -33,12 +34,22 @@ class RawCall:
 
 @dataclass(frozen=True)
 class Decision:
-    """Outcome of one gated call."""
+    """Outcome of one gated call.
+
+    Attributes:
+        verdict: Policy verdict for the call.
+        certificate: Issued certificate, or None when denied or shadowed.
+        event: Decision event record.
+        shadow_allowed: True when shadow mode let the call through.
+        salt: Salt of the action hash the certificate and the event carry;
+            whoever executes the action needs it to recompute that hash.
+    """
 
     verdict: Verdict
     certificate: str | None
     event: DecisionEvent
     shadow_allowed: bool
+    salt: bytes = field(repr=False)
 
 
 def canonize(call: RawCall, nonce: str, timestamp: int) -> CavaAction:
@@ -85,11 +96,22 @@ def decide(
     consent: Consent | None = None,
     holder_keys: tuple[bytes, ...] = (),
     consents: ConsentLedger | None = None,
+    salt: bytes | None = None,
 ) -> Decision:
-    """Canonize, evaluate, issue-or-deny; shadow never blocks."""
+    """Canonize, evaluate, issue-or-deny; shadow never blocks.
+
+    The certificate and the event carry the salted action hash, so nobody
+    without the salt can confirm a guessed action against them. A salt is
+    drawn from the operating system when none is given.
+
+    Raises:
+        ValueError: If the salt is not 32 bytes; nothing is issued.
+    """
     start = time.perf_counter()
     action = canonize(call, nonce, timestamp)
-    digest = action_hash(action)
+    if salt is None:
+        salt = os.urandom(ACTION_SALT_LEN)
+    digest = action_commitment(action, salt)
     verdict: Verdict
     reasons: tuple[str, ...]
     if kill_switch:
@@ -140,4 +162,5 @@ def decide(
         certificate=certificate,
         event=event,
         shadow_allowed=(mode is Mode.SHADOW),
+        salt=salt,
     )

@@ -382,3 +382,48 @@ async def test_cli_wires_voice_when_asked(monkeypatch, capsys, dist):
             headers={"content-type": "audio/wav"},
         )
     assert resp.json() == {"error": "voice unavailable", "reason": NO_VOICE_KEY}
+
+
+ATTACK_HASH = "89f0357807b9d6e90a1c66d00e2a058ad97a5370349978a0ddceb67c50653f9a"
+
+
+def _runner(salts=None):
+    gate_priv, gate_pub = generate_keypair()
+    hub = EventHub()
+    desk = PaymentDesk(
+        source="checking-881",
+        bank=Bank({"checking-881": 50000, "acme-991": 0}),
+        verifier=Verifier(gate_pub),
+        gate_key=gate_priv,
+        clock=lambda: NOW,
+        nonces=lambda: "0" * 32,
+        publish=hub.publish,
+    )
+    nonce = "atk00000000000000000000000000003"
+    return AttackRunner(desk, gate_priv, hub, lambda: NOW, lambda: nonce, salts)
+
+
+def test_counted_salts_reproduce_the_golden_attack_hash():
+    line = _runner(lambda: b"\xa3" * 32).run(AttackKind.PAYEE_SWAP)
+    assert line.event["action"] == line.forensic["action_hash"] == ATTACK_HASH
+
+
+def test_presses_without_given_salts_never_repeat_a_hash():
+    runner = _runner()
+    first, second = (runner.run(AttackKind.PAYEE_SWAP) for _ in range(2))
+    assert first.forensic["cava"] == second.forensic["cava"]
+    assert first.event["action"] != second.event["action"]
+
+
+DEPLOY_HASH = "1be9ccd395f38aeb073d15560b4bdc8bc07326b8457578c8d5db799b92ccaa01"
+
+
+def test_counted_salts_reproduce_the_golden_deploy_hash():
+    gate_priv, _ = generate_keypair()
+    nonce = "dep00000000000000000000000000009"
+    runner = DeployRunner(
+        gate_priv, EventHub(), lambda: NOW, lambda: nonce, lambda: b"\xd9" * 32
+    )
+    line = runner.run(NimbusStep.RELEASE)
+    assert line.event["action"] == line.forensic["action_hash"] == DEPLOY_HASH
+    assert line.forensic["cert_claims"]["action_hash"] == DEPLOY_HASH

@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import os
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any, TypeVar
 
 from bank.api import Bank
 from bank.verifier import Verifier
+from gate.cava import ACTION_SALT_LEN
 from gate.certs import public_key_of
 from gate.consent import Consent, ConsentLedger, consent_bytes, verify_signature
 from gate.events import DecisionEvent
@@ -41,6 +43,11 @@ class _Quote:
     result: dict[str, Any] | None = None
 
 
+# The debit account stays out of the certificate: the salted action hash
+# binds it, and the bank verifier checks it inside the exact action.
+PAY_SCOPE = "mcp:bank.pay:transfer"
+
+
 class PaymentDesk:
     """Holds quotes until the holder signs, then pays once through the gate.
 
@@ -54,6 +61,8 @@ class PaymentDesk:
         quote_ttl_s: Seconds a quote stays approvable.
         publish: Receives one console line per desk step, under the desk lock,
             so line order is the desk's order.
+        action_salts: Source of 32-byte action salts, one per confirm; None
+            draws them from the operating system.
     """
 
     def __init__(
@@ -66,6 +75,7 @@ class PaymentDesk:
         nonces: Callable[[], str],
         quote_ttl_s: int = 600,
         publish: Callable[[ConsoleLine], object] | None = None,
+        action_salts: Callable[[], bytes] | None = None,
     ) -> None:
         self.bank = bank
         self.registry = Registry()
@@ -76,11 +86,15 @@ class PaymentDesk:
         self._nonces = nonces
         self._ttl = quote_ttl_s
         self._publish = publish
+        self._action_salts = action_salts or (lambda: os.urandom(ACTION_SALT_LEN))
         self._gate_pub = public_key_of(gate_key)
         self._ledger = ConsentLedger()
         self._holders: tuple[bytes, ...] = ()
         self._quotes: dict[str, _Quote] = {}
         self._receipts: dict[str, dict[str, Any]] = {}
+        # Private to the desk: each payment's action salt, kept for the
+        # holder's copy of the receipt and never published.
+        self._payment_salts: dict[str, bytes] = {}
         self._seq = 0
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
@@ -282,7 +296,8 @@ class PaymentDesk:
             now=now,
             nonce=self._nonces(),
             timestamp=now,
-            scope=f"mcp:bank.pay:transfer:{self._source}",
+            scope=PAY_SCOPE,
+            salt=self._action_salts(),
             reasoning_commitment=reasoning_commitment(()),
             revocation_index=record.number % _REVOCATION_BITS,
             consent=c,
@@ -302,6 +317,8 @@ class PaymentDesk:
         record.result = result
         if payment_id is not None:
             self._receipts[payment_id] = result
+            if outcome.salt is not None:
+                self._payment_salts[payment_id] = outcome.salt
         body = json.dumps(
             {k: result[k] for k in ("payment_id", "quote_id", "reason", "status")},
             sort_keys=True,
@@ -317,6 +334,7 @@ class PaymentDesk:
                 self._gate_pub,
                 consent=c,
                 proof=self.registry.prove(seq),
+                salt=outcome.salt,
             )
         self._emit("confirm", result, c, outcome.event, forensic)
         return dict(result)

@@ -1,3 +1,4 @@
+import itertools
 import json
 import threading
 
@@ -20,7 +21,11 @@ from swarm.test_console import _run_cli
 from swarm.test_server import FOREIGN, PAIR, _asgi
 
 NOW = 1800001000
-SWAP_AT_ONE = "e8d96996226189ea2885c3b4e6f8ffa2f1ea9400e5fff767f6ad0a84710a8a69"
+# HMAC-SHA256 under the runner's first counted salt bytes([1]) * 32 over the
+# canonical bytes of muse:bank.pay transfer with targets amount:USD:20000,
+# from:checking-881, ref:A-991, to:evil-666, nonce atk00000000000000000000000000001,
+# timestamp 1800001000; derived with gate.shim.canonize and openssl outside the runner.
+SWAP_AT_ONE = "e088fe11cd96c1bafd255a2273196c7139ffde5d837601203d55777b9e9f6a45"
 OFF = "Live attacker off: start mandate-console with --live-attacker"
 NO_KEY = "No attacker key: set BASETEN_API_KEY or a Meta key"
 MENU = [
@@ -71,7 +76,15 @@ def _world(clock=lambda: NOW):
         nonces=lambda: "0" * 32,
         publish=hub.publish,
     )
-    runner = AttackRunner(desk, gate_priv, hub, clock, counted_nonces("atk"))
+    salt = itertools.count(1)
+    runner = AttackRunner(
+        desk,
+        gate_priv,
+        hub,
+        clock,
+        counted_nonces("atk"),
+        lambda: bytes([next(salt)]) * 32,
+    )
     return desk, hub, runner
 
 

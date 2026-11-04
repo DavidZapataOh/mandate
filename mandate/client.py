@@ -1,7 +1,7 @@
 """Governed run: decide on a raw call, then execute against the bank."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from bank.api import Bank, Payment
@@ -34,6 +34,7 @@ class RunRequest:
         consent: Holder consent presented for consent-required rules.
         holder_keys: Raw Ed25519 public keys trusted to sign consents.
         consents: Ledger of consumed consents; a fresh one when None.
+        salt: 32-byte action salt; the gate draws a fresh one when None.
     """
 
     call: RawCall
@@ -51,6 +52,7 @@ class RunRequest:
     consent: Consent | None = None
     holder_keys: tuple[bytes, ...] = ()
     consents: ConsentLedger | None = None
+    salt: bytes | None = None
 
 
 @dataclass(frozen=True)
@@ -64,6 +66,7 @@ class RunResult:
         event: Decision event record.
         payment: Recorded payment, or None when nothing executed.
         action: The canonical action the gate decided on.
+        salt: Salt of the action hash the gate certified.
     """
 
     verdict: Verdict
@@ -72,6 +75,7 @@ class RunResult:
     event: DecisionEvent
     payment: Payment | None
     action: CavaAction | None = None
+    salt: bytes | None = field(default=None, repr=False)
 
 
 def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResult:
@@ -101,14 +105,21 @@ def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResu
         consent=request.consent,
         holder_keys=request.holder_keys,
         consents=request.consents,
+        salt=request.salt,
     )
     action = canonize(request.call, request.nonce, request.timestamp)
     if decision.certificate is None:
         return RunResult(
-            decision.verdict, decision.event.reason, None, decision.event, None, action
+            decision.verdict,
+            decision.event.reason,
+            None,
+            decision.event,
+            None,
+            action,
+            decision.salt,
         )
     bank_result = verifier.verify_and_execute(
-        bank, decision.certificate, to_proposed(action), request.now
+        bank, decision.certificate, to_proposed(action), request.now, decision.salt
     )
     return RunResult(
         decision.verdict,
@@ -117,6 +128,7 @@ def run_governed(request: RunRequest, bank: Bank, verifier: Verifier) -> RunResu
         decision.event,
         bank_result.payment,
         action,
+        decision.salt,
     )
 
 

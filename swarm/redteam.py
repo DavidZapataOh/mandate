@@ -10,7 +10,8 @@ consent rule with a holder key the gate trusts.
 
 import json
 import re
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -236,6 +237,7 @@ class AttackOutcome:
         certificate: Certificate issued for that action, if any.
         consent: Holder consent presented to the gate, if any.
         policy: Policy the gate evaluated.
+        salt: Salt of the gate's hash of that action, if the gate decided it.
     """
 
     kind: AttackKind
@@ -248,10 +250,16 @@ class AttackOutcome:
     certificate: str | None = None
     consent: Consent | None = None
     policy: Policy = PAYMENTS_POLICY
+    salt: bytes | None = field(default=None, repr=False)
 
 
 def _request(
-    call: RawCall, intent: Intent, key: bytes, now: int, nonce: str
+    call: RawCall,
+    intent: Intent,
+    key: bytes,
+    now: int,
+    nonce: str,
+    salt: bytes | None = None,
 ) -> RunRequest:
     return RunRequest(
         call=call,
@@ -265,6 +273,7 @@ def _request(
         scope="redteam",
         reasoning_commitment="00" * 32,
         revocation_index=0,
+        salt=salt,
     )
 
 
@@ -283,6 +292,7 @@ def _forged_run(
     verifier: Verifier,
     now: int,
     nonce: str,
+    salt: bytes | None,
 ) -> tuple[RunResult, Consent]:
     holder = generate_keypair()[0] if holder_key is None else holder_key
     args = dict(legit.args)
@@ -297,7 +307,7 @@ def _forged_run(
         signed = sign_consent(holder, replace(consent, recipient=args["to"]))
         consent = replace(signed, recipient=to)
     request = replace(
-        _request(call, Intent(amount, currency, to, ref), gate_key, now, nonce),
+        _request(call, Intent(amount, currency, to, ref), gate_key, now, nonce, salt),
         policy=DESK_POLICY,
         consent=consent,
         holder_keys=(public_key_of(holder),),
@@ -334,7 +344,8 @@ def _mutated_cert_reason(
     target: str,
     now: int,
     nonce: str,
-) -> tuple[str, CavaAction | None, str | None]:
+    salt: bytes | None,
+) -> tuple[str, CavaAction | None, str | None, bytes]:
     decision = decide(
         legit,
         PAYMENTS_POLICY,
@@ -347,15 +358,16 @@ def _mutated_cert_reason(
         scope="redteam",
         reasoning_commitment="00" * 32,
         revocation_index=0,
+        salt=salt,
     )
     if decision.certificate is None:
-        return decision.event.reason, None, None
+        return decision.event.reason, None, None, decision.salt
     action = canonize(legit, nonce, now)
     mutated = replace(action, targets=(*action.targets, target))
     reason = verifier.verify_and_execute(
-        bank, decision.certificate, to_proposed(mutated), now
+        bank, decision.certificate, to_proposed(mutated), now, decision.salt
     ).reason
-    return reason, action, decision.certificate
+    return reason, action, decision.certificate, decision.salt
 
 
 def _replay_reason(
@@ -368,10 +380,14 @@ def _replay_reason(
 ) -> str:
     if first is None:
         return "replay: no first run"
-    if first.certificate is None:
+    if first.certificate is None or first.salt is None:
         return first.reason
     return verifier.verify_and_execute(
-        bank, first.certificate, to_proposed(canonize(legit, nonce, now)), now
+        bank,
+        first.certificate,
+        to_proposed(canonize(legit, nonce, now)),
+        now,
+        first.salt,
     ).reason
 
 
@@ -397,6 +413,7 @@ def apply_attack(
     nonce: str,
     prior: RunResult | None = None,
     holder_key: bytes | None = None,
+    salt: bytes | None = None,
 ) -> AttackOutcome:
     """Apply one attack at its real layer and report whether it was blocked.
 
@@ -415,6 +432,8 @@ def apply_attack(
         holder_key: Raw Ed25519 private key of the paired holder the gate
             trusts for consents; a fresh one is minted when None, as the
             scope-escalation delegation is.
+        salt: 32-byte action salt for the one gate decision of this step;
+            the gate draws a fresh one when None.
 
     Returns:
         The outcome; blocked only with the pinned reason and zero cents moved.
@@ -426,13 +445,14 @@ def apply_attack(
         first, replay_nonce = prior, _LEGIT_NONCE
     elif kind is AttackKind.REPLAY:
         first = run_governed(
-            _request(legit, intent, gate_key, now, nonce), bank, verifier
+            _request(legit, intent, gate_key, now, nonce, salt), bank, verifier
         )
     before = bank.get_balance(source)
     event: DecisionEvent | None = None
     action: CavaAction | None = None
     certificate: str | None = None
     consent: Consent | None = None
+    used: bytes | None = None
     policy = PAYMENTS_POLICY
     match kind:
         case AttackKind.PAYEE_SWAP | AttackKind.AMOUNT_INFLATE:
@@ -442,16 +462,18 @@ def apply_attack(
                 else ("amount", str(params["amount_cents"]))
             )
             call = _with_arg(legit, key, value)
-            request = _request(call, intent, gate_key, now, nonce)
+            request = _request(call, intent, gate_key, now, nonce, salt)
             result = run_governed(request, bank, verifier)
             reason = result.reason
             event, action, certificate = result.event, result.action, result.certificate
+            used = result.salt
         case AttackKind.REPLAY:
             reason = _replay_reason(first, legit, bank, verifier, replay_nonce, now)
             if first is not None:
                 action, certificate = first.action, first.certificate
+                used = first.salt
         case AttackKind.POST_CERT_MUTATION:
-            reason, action, certificate = _mutated_cert_reason(
+            reason, action, certificate, used = _mutated_cert_reason(
                 legit,
                 intent,
                 gate_key,
@@ -460,6 +482,7 @@ def apply_attack(
                 str(params["target"]),
                 now,
                 nonce,
+                salt,
             )
         case AttackKind.SCOPE_ESCALATION:
             reason = _scope_escalation(str(params["target"]), nonce, now)
@@ -476,8 +499,10 @@ def apply_attack(
                 verifier,
                 now,
                 nonce,
+                salt,
             )
             reason, event, action = forged.reason, forged.event, forged.action
+            used = forged.salt
             policy = DESK_POLICY
     moved = before - bank.get_balance(source)
     layer, pinned = PINNED[kind]
@@ -492,6 +517,7 @@ def apply_attack(
         certificate=certificate,
         consent=consent,
         policy=policy,
+        salt=used,
     )
 
 
@@ -504,6 +530,7 @@ def run_campaign(
     verifier: Verifier,
     source: str,
     now: int,
+    salts: Callable[[], bytes] | None = None,
 ) -> tuple[list[AttackOutcome], RunResult]:
     """Run the legitimate call first, then apply every plan against it.
 
@@ -517,12 +544,18 @@ def run_campaign(
         verifier: Certificate verifier bound to the gate's public key.
         source: Account whose balance is measured per attack.
         now: Current time in unix seconds.
+        salts: Source of 32-byte action salts, one for the legitimate run and
+            one per plan; None lets the gate draw them.
 
     Returns:
         Per-plan outcomes and the result of the legitimate run.
     """
+
+    def draw() -> bytes | None:
+        return None if salts is None else salts()
+
     final = run_governed(
-        _request(legit, intent, gate_key, now, _LEGIT_NONCE), bank, verifier
+        _request(legit, intent, gate_key, now, _LEGIT_NONCE, draw()), bank, verifier
     )
     outcomes = [
         apply_attack(
@@ -536,6 +569,7 @@ def run_campaign(
             now,
             f"atk{i:029d}",
             prior=final,
+            salt=draw(),
         )
         for i, (plan, _) in enumerate(steps)
     ]

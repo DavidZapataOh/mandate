@@ -6,10 +6,11 @@ no rule. Every step runs the real gate code on pinned inputs, calls no model,
 and prod-eu is a simulated target.
 """
 
-from dataclasses import dataclass
+import hmac
+from dataclasses import dataclass, field
 from enum import StrEnum
 
-from gate.cava import CavaAction, action_hash
+from gate.cava import CavaAction, action_commitment
 from gate.certs import (
     BitstringRevocation,
     SingleUseStore,
@@ -95,6 +96,9 @@ class StepOutcome:
     action: CavaAction
     policy: Policy
     certificate: str | None
+    # Salt of the gate's action hash; None for the MCP proxy step, which
+    # hashes the action unsalted.
+    salt: bytes | None = field(default=None, repr=False)
 
 
 class ProdTarget:
@@ -107,17 +111,25 @@ class ProdTarget:
         self.releases: list[str] = []
 
     def deploy(
-        self, certificate: str, action: CavaAction, now: int
+        self, certificate: str, action: CavaAction, now: int, salt: bytes
     ) -> tuple[bool, str]:
-        """Verify the certificate, then bind it to the action being deployed."""
+        """Verify the certificate, then bind it to the action being deployed.
+
+        The certificate is consumed before the salt is read, so a probe with
+        a wrong salt burns it.
+        """
         ok, reason = verify_certificate(
             certificate, self._pub, now, self._store, self._revoked
         )
         if not ok:
             return (False, reason)
         claims, _ = read_claims(certificate, self._pub)
-        digest = action_hash(action)
-        if claims is None or claims["action_hash"] != digest:
+        try:
+            digest = action_commitment(action, salt)
+        except ValueError:
+            return (False, "malformed: action salt")
+        approved = None if claims is None else claims["action_hash"]
+        if not isinstance(approved, str) or not hmac.compare_digest(digest, approved):
             return (False, "mismatch: action hash differs")
         self.releases.append(digest)
         return (True, "ok: released")
@@ -136,7 +148,9 @@ def nimbus_call(operation: str, artifact: str) -> RawCall:
     )
 
 
-def certify(call: RawCall, gate_key: bytes, now: int, nonce: str) -> Decision:
+def certify(
+    call: RawCall, gate_key: bytes, now: int, nonce: str, salt: bytes | None = None
+) -> Decision:
     """Run the call through the real gate under the Nimbus policy."""
     return decide(
         call,
@@ -150,11 +164,17 @@ def certify(call: RawCall, gate_key: bytes, now: int, nonce: str) -> Decision:
         scope=f"nimbus:{ENV}",
         reasoning_commitment="00" * 32,
         revocation_index=0,
+        salt=salt,
     )
 
 
 def run_step(
-    step: NimbusStep, gate_key: bytes, target: ProdTarget, now: int, nonce: str
+    step: NimbusStep,
+    gate_key: bytes,
+    target: ProdTarget,
+    now: int,
+    nonce: str,
+    salt: bytes | None = None,
 ) -> StepOutcome:
     """Run one pinned step through the layer that decides it."""
     if step is NimbusStep.POISONED_TOOL:
@@ -173,17 +193,20 @@ def run_step(
             action=result.action,
             policy=Policy(result.event.policy_id, NIMBUS_MCP.v, ()),
             certificate=None,
+            salt=None,
         )
     if step is NimbusStep.RELEASE:
         call = nimbus_call("deploy", "api-v2")
     else:
         call = nimbus_call("migrate", "migration-0017")
-    decision = certify(call, gate_key, now, nonce)
+    decision = certify(call, gate_key, now, nonce, salt)
     action = canonize(call, nonce, now)
     if decision.certificate is None:
         deployed, reason = False, decision.event.reason
     else:
-        deployed, reason = target.deploy(decision.certificate, action, now)
+        deployed, reason = target.deploy(
+            decision.certificate, action, now, decision.salt
+        )
     return StepOutcome(
         step=step,
         layer="gate",
@@ -193,4 +216,5 @@ def run_step(
         action=action,
         policy=NIMBUS_POLICY,
         certificate=decision.certificate,
+        salt=decision.salt,
     )

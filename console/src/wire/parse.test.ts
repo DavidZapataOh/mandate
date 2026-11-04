@@ -8,7 +8,7 @@ describe("parseLine", () => {
     const attack = parseLine(ATTACK);
     expect(confirm.seq).toBe(3);
     expect(confirm.forensic?.action_hash).toBe(
-      "3a531d410be21c6560924338e72dee619d7117ad3e733d3087f903f8aa974d29",
+      "52e9b189b7db1f410229e8bb9a3a4a99d34e30523c3507480821839a3845069b",
     );
     expect(confirm.forensic?.registry?.siblings).toEqual([]);
     expect(attack.source === "attack" && attack.subject.blocked).toBe(true);

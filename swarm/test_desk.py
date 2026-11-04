@@ -1,5 +1,10 @@
+import hashlib
+import hmac
+import json
+
 from gate.certs import generate_keypair
 from gate.registry import InclusionProof, Registry, verify_inclusion
+from swarm.console_line import console_line_json
 
 NOW = 1800001000
 SUMMARY = "Pay 200.00 USD to acme-991 (ref A-991) from checking-881"
@@ -226,9 +231,9 @@ def test_confirm_line_carries_the_gate_run(make_desk, sign_quote):
     }
     forensic = line.forensic
     assert line.event["verdict"] == "MET"
-    assert forensic["action_hash"] == line.event["action"]
-    assert forensic["cert_claims"]["action_hash"] == line.event["action"]
-    assert forensic["cert_claims"]["scope"] == "mcp:bank.pay:transfer:checking-881"
+    assert forensic["action_hash"] == line.event["action"] == CONFIRM_HASH
+    assert forensic["cert_claims"]["action_hash"] == CONFIRM_HASH
+    assert forensic["cert_claims"]["scope"] == "mcp:bank.pay:transfer"
     assert forensic["cava"]["targets"] == [
         "amount:USD:20000",
         "from:checking-881",
@@ -279,3 +284,68 @@ def test_malformed_quote_line(make_desk):
         "payment_id": None,
         "reason": "consent: malformed",
     }
+
+
+CONFIRM_HASH = "52e9b189b7db1f410229e8bb9a3a4a99d34e30523c3507480821839a3845069b"
+CONFIRM_SHA256 = "3a531d410be21c6560924338e72dee619d7117ad3e733d3087f903f8aa974d29"
+
+
+def test_the_certificate_names_no_debit_account(make_desk, sign_quote):
+    desk, holder, lines = _published(make_desk)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    claims = lines[-1].forensic["cert_claims"]
+    assert "checking-881" not in json.dumps(claims)
+    assert desk.bank.get_balance("checking-881") == 30000
+
+
+def test_a_full_guess_cannot_be_confirmed_from_the_certificate(make_desk, sign_quote):
+    desk, holder, lines = _published(make_desk)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    forensic = lines[-1].forensic
+    guess = {**forensic["cava"], "targets": [
+        "amount:USD:20000", "from:checking-881", "ref:A-991", "to:acme-991"
+    ]}  # fmt: skip
+    text = json.dumps(guess, sort_keys=True, separators=(",", ":"))
+    assert hashlib.sha256(text.encode("ascii")).hexdigest() == CONFIRM_SHA256
+    assert forensic["cert_claims"]["action_hash"] != CONFIRM_SHA256
+    keyed = hmac.new(b"\x01" * 32, text.encode("ascii"), hashlib.sha256)
+    assert keyed.hexdigest() == forensic["cert_claims"]["action_hash"]
+    # Whole public surface, not only the claims: the unsalted digest of the
+    # full guess appears in no console line and no registry body.
+    for line in lines:
+        assert CONFIRM_SHA256 not in console_line_json(line)
+    for entry in desk.registry._entries:
+        assert CONFIRM_SHA256 not in entry.body
+
+
+def test_the_desk_keeps_the_action_salt_privately(make_desk, sign_quote):
+    desk, holder, lines = _published(make_desk)
+    q = _quote(desk)
+    desk.approve("q:000001", sign_quote(holder, q))
+    result = desk.confirm("q:000001")
+    pid = result["payment_id"]
+    salt = b"\x01" * 32
+    assert desk._payment_salts[pid] == salt
+    hexed = salt.hex()
+    assert hexed not in json.dumps(desk.receipt(pid))
+    assert hexed not in json.dumps(result)
+    assert hexed not in repr(result)
+    for line in lines:
+        assert hexed not in console_line_json(line)
+    for entry in desk.registry._entries:
+        assert hexed not in entry.body
+
+
+def test_salt_fields_stay_out_of_repr():
+    from gate.shim import Decision
+    from mandate.client import RunResult
+    from swarm.nimbus import StepOutcome
+    from swarm.redteam import AttackOutcome
+
+    for cls in (Decision, RunResult, StepOutcome, AttackOutcome):
+        salt_field = cls.__dataclass_fields__["salt"]
+        assert salt_field.repr is False

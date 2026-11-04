@@ -63,6 +63,7 @@ def run_bill(
     revocation_index: int,
     *,
     source: str,
+    salt: bytes | None = None,
 ) -> BillRun:
     """Propose a payment from a bill, govern it, execute it, and report back.
 
@@ -82,6 +83,7 @@ def run_bill(
         nonce: Unique freshness nonce for this run.
         revocation_index: Revocation bit index bound into the certificate.
         source: Debited account, fixed by the human and not by the model.
+        salt: 32-byte action salt; the gate draws a fresh one when None.
 
     Returns:
         The proposal, the governed result, and the model's confirmation or
@@ -103,9 +105,10 @@ def run_bill(
             now=now,
             nonce=nonce,
             timestamp=now,
-            scope=f"muse:bank.pay:transfer:{source}",
+            scope="muse:bank.pay:transfer",
             reasoning_commitment=proposal.reasoning_commitment,
             revocation_index=revocation_index,
+            salt=salt,
         ),
         bank,
         verifier,

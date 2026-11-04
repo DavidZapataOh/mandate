@@ -17,7 +17,8 @@ FLOW_TS = 1800001000
 FLOW_NOW = 1800001100
 ANCHOR_TS = 1800001200
 EREF = "ev:cooperative-signed:d91ab6d7bda00f57a1598f374dac37b7"
-FLOW_ACTION = "d4dbeda70e9b8e596e36a78c21d64dc4faed5431c4b0a2f4598b9afa67430838"
+FLOW_SALT = b"\x0f" * 32
+FLOW_ACTION = "f76301d0aad22b0a25a17f5f68d5e64c6198b8006f09333b5a8a7bfa053484e3"
 
 
 def _flow_call(eref: str) -> RawCall:
@@ -79,6 +80,7 @@ def _governed(gate_priv: bytes, bank: Bank, verifier: Verifier) -> RunResult:
             scope="flow-a",
             reasoning_commitment="aa" * 32,
             revocation_index=0,
+            salt=FLOW_SALT,
         ),
         bank,
         verifier,

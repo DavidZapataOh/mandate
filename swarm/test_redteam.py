@@ -272,3 +272,50 @@ def test_approval_edited_after_the_holder_signed_dies_at_the_consent():
     assert outcome.consent.recipient == "evil-666"
     signed = dataclasses.replace(outcome.consent, recipient="acme-991")
     assert verify_signature(signed, (holder_pub,)) is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "salted"),
+    [
+        (AttackKind.PAYEE_SWAP, True),
+        (AttackKind.AMOUNT_INFLATE, True),
+        (AttackKind.REPLAY, True),
+        (AttackKind.POST_CERT_MUTATION, True),
+        (AttackKind.SCOPE_ESCALATION, False),
+        (AttackKind.MCP_EXFIL, False),
+        (AttackKind.FORGED_APPROVAL, True),
+    ],
+)
+def test_outcome_keeps_the_salt_the_gate_hashed_with(kind, salted):
+    priv, bank, verifier = _world()
+    outcome = apply_attack(
+        TEMPLATES[kind],
+        LEGIT,
+        INTENT,
+        priv,
+        bank,
+        verifier,
+        "checking-881",
+        NOW,
+        "a" * 32,
+        salt=b"\xa1" * 32,
+    )
+    assert outcome.salt == (b"\xa1" * 32 if salted else None)
+
+
+def test_a_campaign_replays_with_the_legitimate_runs_salt():
+    priv, bank, verifier = _world()
+    salts = iter([b"\x01" * 32, b"\x02" * 32])
+    outcomes, final = run_campaign(
+        [(TEMPLATES[AttackKind.REPLAY], None)],
+        LEGIT,
+        INTENT,
+        priv,
+        bank,
+        verifier,
+        "checking-881",
+        NOW,
+        salts=lambda: next(salts),
+    )
+    assert (final.salt, outcomes[0].salt) == (b"\x01" * 32, b"\x01" * 32)
+    assert outcomes[0].reason == "replay: jti consumed"

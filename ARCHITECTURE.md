@@ -11,6 +11,17 @@ TODO: record each architectural decision with date and rationale.
 5. Everything verifiable by third parties without exposing secrets.
 6. Zero honeypot: store receipts and hashes only — never statements, sessions, or secrets.
 
+## What a certificate binds
+The action hash is HMAC-SHA256 (RFC 2104) over the canonical action bytes, keyed by a fresh 32-byte random salt the gate draws for each decision. The certificate, the decision event, the console line, the bank's payment record and a deploy release all carry this one value. The certificate binds this salted hash, so a certificate cannot be used to confirm a guessed amount, payee, reference or account. The salt goes to the bank verifier (in process, beside the action it must pay). The desk keeps it with the payment's private record and never publishes it: it is in no console line, event, registry entry, MCP tool result or `receipt()` output. It is meant to be disclosed only in the holder's copy of the receipt. That copy will be served by the proof explorer, which is not built yet, so today no one outside the process can recompute a certificate's action hash.
+
+The certificate's scope names the operation only (`mcp:bank.pay:transfer`). The debit account is bound through the `from:` target inside the hash, the holder's consent and the bank's exact-action check.
+
+The hook journal, the MCP proxy and the frozen-approval payload keep an unsalted SHA-256 because their records carry the action in clear and issue no certificate.
+
+What stays visible: payment ids are sequential; one holder's receipts share its public key and can be linked, and an issuer and a verifier that collude can recognise a receipt (RFC 9901 section 10.1).
+
+Console lines and `--record` files show the action in clear. They are operator-only material, never auditor material.
+
 ## Threat model
 TODO: principals, trust boundaries, and out-of-scope threats.
 

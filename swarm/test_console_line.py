@@ -1,5 +1,7 @@
 import dataclasses
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -72,7 +74,7 @@ RECORD = {
     "tool_use_id": "call_7",
     "event": {"v": 2, "event": EVENT, "meta": HOOK_META},
 }
-BILL_HASH = "e8b9b21dca4b9036e0be9670ed7570e2b705537fcbeb364aa2eb91320d86b2e7"
+BILL_HASH = "7be939b82f874115ed893c48ce2d1e8c53e54d737511915020cc10406073e0bc"
 ANCHOR = "ecdf64cc119eedfb70667704cdb4f24c8c26cdfee47d2f628fd095dc2ab139f6"
 
 
@@ -196,6 +198,7 @@ def _bill(meta, payee="acme-991"):
         "ab" * 16,
         3,
         source="checking-881",
+        salt=b"\xb1" * 32,
     )
     return bill_line(run, PAYMENTS_POLICY, pub)
 
@@ -225,7 +228,7 @@ def test_bill_line_carries_the_real_run(fake_meta):
         "policy_version": 1,
         "verdict": "MET",
         "freshness_nonce": "ab" * 16,
-        "scope": "muse:bank.pay:transfer:checking-881",
+        "scope": "muse:bank.pay:transfer",
         "reasoning_commitment": ANCHOR,
         "evidence_refs": [],
         "revocation_index": 3,
@@ -245,58 +248,56 @@ def test_bill_line_denied_has_no_claims(fake_meta):
 
 
 GOLDEN_CONFIRM = (
-    '{"v":3,"seq":3,"source":"desk","event":{"v":1,"id":"evt:0000'
-    '0000000000000000000000000002","ts":1800001000,"mode":"ENFORC'
-    'E","verdict":"MET","action":"3a531d410be21c6560924338e72dee6'
-    '19d7117ad3e733d3087f903f8aa974d29","policy":"desk","cert":"0'
-    '0000000000000000000000000000002","reason":"rule pay-with-con'
-    'sent satisfied","lat_us":61.0},"meta":null,"subject":{"step"'
-    ':"confirm","quote_id":"q:000001","status":"confirmed","summa'
-    'ry":"MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) '
-    'from checking-881","payment_id":"pay:000001","reason":"ok: e'
-    'xecuted"},"forensic":{"cava":{"category":"payments","evidenc'
-    'e_refs":["q:000001"],"executable":"bank.pay","freshness":{"n'
-    'once":"00000000000000000000000000000002","timestamp":1800001'
-    '000},"operation":"transfer","reversible":false,"runtime":"mc'
-    'p","targets":["amount:USD:20000","from:checking-881","ref:A-'
-    '991","to:acme-991"],"version":"cava/1"},"action_hash":"3a531'
-    'd410be21c6560924338e72dee619d7117ad3e733d3087f903f8aa974d29"'
-    ',"policy":{"policy_id":"desk","rule_id":"pay-with-consent"},'
-    '"cert_claims":{"action_hash":"3a531d410be21c6560924338e72dee'
-    '619d7117ad3e733d3087f903f8aa974d29","policy_id":"desk","poli'
-    'cy_version":1,"verdict":"MET","freshness_nonce":"00000000000'
-    '000000000000000000002","scope":"mcp:bank.pay:transfer:checki'
-    'ng-881","reasoning_commitment":"6b1ae26a9ea91c2c54b03e36e874'
-    'e2add2be9910e3bc8ed184a70fea39cf6b24","evidence_refs":["q:00'
-    '0001"],"revocation_index":1},"consent":{"amount_cents":20000'
-    ',"currency":"USD","recipient":"acme-991","reference":"A-991"'
-    ',"source":"checking-881","nonce":"00000000000000000000000000'
-    '000001","expires_at":1800001600},"registry":{"seq":1,"root":'
-    '"70566024e09c9a9e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0'
-    'bde87","leaves":1,"leaf":"70566024e09c9a9e301eab2459d8c10dd2'
-    '1d4a8b28d98cb0010cc3a8be0bde87","siblings":[]},"anchor":null'
-    "}}"
+    '{"v":3,"seq":3,"source":"desk","event":{"v":1,"id":"evt:00000'
+    '000000000000000000000000002","ts":1800001000,"mode":"ENFORCE"'
+    ',"verdict":"MET","action":"52e9b189b7db1f410229e8bb9a3a4a99d3'
+    '4e30523c3507480821839a3845069b","policy":"desk","cert":"00000'
+    '000000000000000000000000002","reason":"rule pay-with-consent '
+    'satisfied","lat_us":61.0},"meta":null,"subject":{"step":"conf'
+    'irm","quote_id":"q:000001","status":"confirmed","summary":"MA'
+    "NDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from che"
+    'cking-881","payment_id":"pay:000001","reason":"ok: executed"}'
+    ',"forensic":{"cava":{"category":"payments","evidence_refs":["'
+    'q:000001"],"executable":"bank.pay","freshness":{"nonce":"0000'
+    '0000000000000000000000000002","timestamp":1800001000},"operat'
+    'ion":"transfer","reversible":false,"runtime":"mcp","targets":'
+    '["amount:USD:20000","from:checking-881","ref:A-991","to:acme-'
+    '991"],"version":"cava/1"},"action_hash":"52e9b189b7db1f410229'
+    'e8bb9a3a4a99d34e30523c3507480821839a3845069b","policy":{"poli'
+    'cy_id":"desk","rule_id":"pay-with-consent"},"cert_claims":{"a'
+    'ction_hash":"52e9b189b7db1f410229e8bb9a3a4a99d34e30523c350748'
+    '0821839a3845069b","policy_id":"desk","policy_version":1,"verd'
+    'ict":"MET","freshness_nonce":"0000000000000000000000000000000'
+    '2","scope":"mcp:bank.pay:transfer","reasoning_commitment":"6b'
+    "1ae26a9ea91c2c54b03e36e874e2add2be9910e3bc8ed184a70fea39cf6b2"
+    '4","evidence_refs":["q:000001"],"revocation_index":1},"consen'
+    't":{"amount_cents":20000,"currency":"USD","recipient":"acme-9'
+    '91","reference":"A-991","source":"checking-881","nonce":"0000'
+    '0000000000000000000000000001","expires_at":1800001600},"regis'
+    'try":{"seq":1,"root":"70566024e09c9a9e301eab2459d8c10dd21d4a8'
+    'b28d98cb0010cc3a8be0bde87","leaves":1,"leaf":"70566024e09c9a9'
+    'e301eab2459d8c10dd21d4a8b28d98cb0010cc3a8be0bde87","siblings"'
+    ':[]},"anchor":null}}'
 )
 GOLDEN_ATTACK = (
-    '{"v":3,"seq":4,"source":"attack","event":{"v":1,"id":"evt:at'
-    'k00000000000000000000000000003","ts":1800001000,"mode":"ENFO'
-    'RCE","verdict":"NOT_MET","action":"cbf0720db7ba86b01d120cb79'
-    '02c5dabb6a1c753e160127e911d3081292556b2","policy":"payments"'
-    ',"cert":null,"reason":"recipient differs from intent","lat_u'
-    's":61.0},"meta":null,"subject":{"attack":"payee_swap","layer'
-    '":"model->gate","reason":"recipient differs from intent","bl'
-    'ocked":true,"moved_cents":0,"narrative":"MANDATE_FIXTURE Swa'
-    'p the payee of the approved 200.00 USD bill to evil-666.","o'
-    'rigin":"template"},"forensic":{"cava":{"category":"payments"'
-    ',"evidence_refs":[],"executable":"bank.pay","freshness":{"no'
-    'nce":"atk00000000000000000000000000003","timestamp":18000010'
-    '00},"operation":"transfer","reversible":false,"runtime":"mus'
-    'e","targets":["amount:USD:20000","from:checking-881","ref:A-'
-    '991","to:evil-666"],"version":"cava/1"},"action_hash":"cbf07'
-    '20db7ba86b01d120cb7902c5dabb6a1c753e160127e911d3081292556b2"'
-    ',"policy":{"policy_id":"payments","rule_id":"pay-intent"},"c'
-    'ert_claims":null,"consent":null,"registry":null,"anchor":nul'
-    "l}}"
+    '{"v":3,"seq":4,"source":"attack","event":{"v":1,"id":"evt:atk'
+    '00000000000000000000000000003","ts":1800001000,"mode":"ENFORC'
+    'E","verdict":"NOT_MET","action":"89f0357807b9d6e90a1c66d00e2a'
+    '058ad97a5370349978a0ddceb67c50653f9a","policy":"payments","ce'
+    'rt":null,"reason":"recipient differs from intent","lat_us":61'
+    '.0},"meta":null,"subject":{"attack":"payee_swap","layer":"mod'
+    'el->gate","reason":"recipient differs from intent","blocked":'
+    'true,"moved_cents":0,"narrative":"MANDATE_FIXTURE Swap the pa'
+    'yee of the approved 200.00 USD bill to evil-666.","origin":"t'
+    'emplate"},"forensic":{"cava":{"category":"payments","evidence'
+    '_refs":[],"executable":"bank.pay","freshness":{"nonce":"atk00'
+    '000000000000000000000000003","timestamp":1800001000},"operati'
+    'on":"transfer","reversible":false,"runtime":"muse","targets":'
+    '["amount:USD:20000","from:checking-881","ref:A-991","to:evil-'
+    '666"],"version":"cava/1"},"action_hash":"89f0357807b9d6e90a1c'
+    '66d00e2a058ad97a5370349978a0ddceb67c50653f9a","policy":{"poli'
+    'cy_id":"payments","rule_id":"pay-intent"},"cert_claims":null,'
+    '"consent":null,"registry":null,"anchor":null}}'
 )
 
 
@@ -305,7 +306,7 @@ def test_golden_lines_round_trip(text):
     assert console_line_json(read_console_line(text)) == text
 
 
-LEGIT_HASH = "59d56124b4db16283066a8f98110b17e904ae513df293c2e6bcb3c9201e60226"
+LEGIT_HASH = "0029231b1a340273bad82f0db02af52eeba8b86380680d4ab9fedbd818719905"
 TRACE = AttackerTrace("baseten", "meta-models/muse-spark-open-1026", "rq-1", 812.0)
 
 
@@ -322,6 +323,7 @@ def _attack(kind):
         "checking-881",
         1800000000,
         "a" * 32,
+        salt=b"\xa1" * 32,
     )
     return outcome, pub
 
@@ -401,29 +403,28 @@ def test_campaign_lines_pair_each_plan_with_its_call():
 
 
 GOLDEN_DEPLOY = (
-    '{"v":3,"seq":9,"source":"deploy","event":{"v":1,"id":"evt:de'
-    'p00000000000000000000000000009","ts":1800001000,"mode":"ENFO'
-    'RCE","verdict":"MET","action":"21f9b6b240cdb1f064acb22110e4e'
-    '5ed10bdf2df78749bac240da57fcfd092a7","policy":"nimbus","cert'
-    '":"dep00000000000000000000000000009","reason":"rule release-'
-    'api-v2 satisfied","lat_us":18.0},"meta":null,"subject":{"ste'
-    'p":"release","agent":"nimbus-deploy","summary":"MANDATE_FIXT'
-    'URE Deploy api-v2 to prod-eu","layer":"gate","reason":"ok: r'
-    'eleased","blocked":false},"forensic":{"cava":{"category":"de'
-    'ploy","evidence_refs":[],"executable":"nimbus","freshness":{'
-    '"nonce":"dep00000000000000000000000000009","timestamp":18000'
-    '01000},"operation":"deploy","reversible":false,"runtime":"mu'
-    'se-code","targets":["artifact:api-v2","env:prod-eu"],"versio'
-    'n":"cava/1"},"action_hash":"21f9b6b240cdb1f064acb22110e4e5ed'
-    '10bdf2df78749bac240da57fcfd092a7","policy":{"policy_id":"nim'
-    'bus","rule_id":"release-api-v2"},"cert_claims":{"action_hash'
-    '":"21f9b6b240cdb1f064acb22110e4e5ed10bdf2df78749bac240da57fc'
-    'fd092a7","policy_id":"nimbus","policy_version":1,"verdict":"'
-    'MET","freshness_nonce":"dep00000000000000000000000000009","s'
-    'cope":"nimbus:prod-eu","reasoning_commitment":"0000000000000'
-    '000000000000000000000000000000000000000000000000000","eviden'
-    'ce_refs":[],"revocation_index":0},"consent":null,"registry":'
-    'null,"anchor":null}}'
+    '{"v":3,"seq":9,"source":"deploy","event":{"v":1,"id":"evt:dep'
+    '00000000000000000000000000009","ts":1800001000,"mode":"ENFORC'
+    'E","verdict":"MET","action":"1be9ccd395f38aeb073d15560b4bdc8b'
+    'c07326b8457578c8d5db799b92ccaa01","policy":"nimbus","cert":"d'
+    'ep00000000000000000000000000009","reason":"rule release-api-v'
+    '2 satisfied","lat_us":18.0},"meta":null,"subject":{"step":"re'
+    'lease","agent":"nimbus-deploy","summary":"MANDATE_FIXTURE Dep'
+    'loy api-v2 to prod-eu","layer":"gate","reason":"ok: released"'
+    ',"blocked":false},"forensic":{"cava":{"category":"deploy","ev'
+    'idence_refs":[],"executable":"nimbus","freshness":{"nonce":"d'
+    'ep00000000000000000000000000009","timestamp":1800001000},"ope'
+    'ration":"deploy","reversible":false,"runtime":"muse-code","ta'
+    'rgets":["artifact:api-v2","env:prod-eu"],"version":"cava/1"},'
+    '"action_hash":"1be9ccd395f38aeb073d15560b4bdc8bc07326b8457578'
+    'c8d5db799b92ccaa01","policy":{"policy_id":"nimbus","rule_id":'
+    '"release-api-v2"},"cert_claims":{"action_hash":"1be9ccd395f38'
+    'aeb073d15560b4bdc8bc07326b8457578c8d5db799b92ccaa01","policy_'
+    'id":"nimbus","policy_version":1,"verdict":"MET","freshness_no'
+    'nce":"dep00000000000000000000000000009","scope":"nimbus:prod-'
+    'eu","reasoning_commitment":"000000000000000000000000000000000'
+    '0000000000000000000000000000000","evidence_refs":[],"revocati'
+    'on_index":0},"consent":null,"registry":null,"anchor":null}}'
 )
 
 
@@ -505,3 +506,21 @@ def test_attack_line_forged_approval_shows_the_consent_it_refused():
         "expires_at": 1800000300,
     }
     assert line.forensic["cert_claims"] is None
+
+
+FIXTURES = Path(__file__).resolve().parent.parent / "console/src/wire/__fixtures__"
+
+
+@pytest.mark.parametrize(
+    ("name", "golden"),
+    [
+        ("CONFIRM", GOLDEN_CONFIRM),
+        ("ATTACK", GOLDEN_ATTACK),
+        ("DEPLOY", GOLDEN_DEPLOY),
+    ],
+)
+def test_console_fixtures_are_the_python_goldens(name, golden):
+    source = (FIXTURES / "lines.ts").read_text()
+    found = re.search(rf"export const {name} =\n  '([^']*)';\n", source)
+    assert found is not None
+    assert found.group(1) == golden

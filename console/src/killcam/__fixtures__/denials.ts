@@ -5,9 +5,10 @@ import type { ConsoleLine } from "../../wire/types";
 
 const SWAP = JSON.parse(ATTACK);
 const NONCE = "atk00000000000000000000000000003";
-const LEGIT_HASH = "a168aea0b9fad8b2bf3ced8a6c61c58c310f5c294f03ef8db24216e40be0037d";
-const INFLATE_HASH = "aad68f808700afba483392ba99f94feb5458587104f65ff4f9fa51f45a02c87d";
-const FORGED_HASH = "35a733ef534b387b92fa689ff980b2dbe2780b22801e179d89827dd4501cfbd7";
+// The hashes are the gate's salted action hashes (HMAC-SHA256 under the press salt bytes([0xa3]) * 32 for nonce atk00000000000000000000000000003, the forged approval included, and bytes([0xdb]) * 32 for the Nimbus stale migration at dep00000000000000000000000000011; the poisoned tool keeps the MCP proxy's unsalted SHA-256).
+const LEGIT_HASH = "20fa07c63133f7b15e26cebafeecff3f7bbdd4c61ee311b81ec8aa42e1dc8868";
+const INFLATE_HASH = "b7df0f538186d50487f61c22718995525d0e69e18dae56694359292f9b43a471";
+const FORGED_HASH = "083d5271bec37350a77e45db957a3e65a0fe00d7413fa4f2dc2999502ee8fd8d";
 const targets = (amount: string, to: string) => [`amount:USD:${amount}`, "from:checking-881", "ref:A-991", `to:${to}`];
 const cava = (amount: string, to: string) => ({ ...SWAP.forensic.cava, targets: targets(amount, to) });
 
@@ -108,7 +109,7 @@ export const HOOK_DENIED = patch(ATTACK, {
 
 const RELEASE = JSON.parse(DEPLOY);
 const POISON_HASH = "511282b863031996cfca1ab4878bda998ea9cbe253b8731e89e8cd659414243e";
-const STALE_HASH = "623622b7c65a659a9de9d79aa291e0c3a108108df13ca5c6a811c669a50d03ee";
+const STALE_HASH = "f960d447b69f99f31b0f80708cede65fb4a9dfe2c78f1f45281acf1235095762";
 
 /** The Nimbus poisoned tool as the server publishes it: decided by the MCP proxy, which canonized and hashed the call. */
 export const NIMBUS_POISONED = patch(

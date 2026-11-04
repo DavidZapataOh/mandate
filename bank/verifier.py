@@ -1,6 +1,7 @@
 """Bank-side certificate checks over proposed payment actions."""
 
 import hashlib
+import hmac
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from bank.api import Bank, Payment, PaymentRequest
 
 _EVENT_TYPE = "urn:mandate:secevent:cert:v1"
+_SALT_LEN = 32
 
 
 @dataclass(frozen=True)
@@ -68,15 +70,21 @@ class ProposedAction:
             raise ValueError("freshness timestamp must be >= 0")
 
 
-def action_hash(action: ProposedAction) -> str:
-    """Hex SHA-256 over the canonical JSON of the action.
+def action_commitment(action: ProposedAction, salt: bytes) -> str:
+    """Hex HMAC-SHA256 over the canonical JSON of the action, keyed by the salt.
 
     Args:
-        action: The proposed action to hash.
+        action: The proposed action to commit to.
+        salt: Exactly 32 random bytes, as type bytes.
 
     Returns:
         Lowercase hex digest.
+
+    Raises:
+        ValueError: If the salt is not 32 bytes.
     """
+    if type(salt) is not bytes or len(salt) != _SALT_LEN:
+        raise ValueError("action salt must be 32 bytes")
     payload = {
         "version": action.version,
         "runtime": action.runtime,
@@ -94,7 +102,7 @@ def action_hash(action: ProposedAction) -> str:
     raw = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
     ).encode("ascii")
-    return hashlib.sha256(raw).hexdigest()
+    return hmac.new(salt, raw, hashlib.sha256).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -208,7 +216,7 @@ class Verifier:
         return (payload, None)
 
     def verify_and_execute(
-        self, bank: Bank, token: str, action: ProposedAction, now: int
+        self, bank: Bank, token: str, action: ProposedAction, now: int, salt: bytes
     ) -> PaymentResult:
         """Verify the certificate and execute the matching payment.
 
@@ -217,6 +225,8 @@ class Verifier:
             token: Compact JWS certificate.
             action: The proposed action to execute.
             now: Current time in unix seconds.
+            salt: The action salt the gate drew; the certificate binds the
+                action only through it.
 
         Returns:
             The payment result; denied results carry a None payment.
@@ -255,8 +265,11 @@ class Verifier:
             approved = payload["events"][_EVENT_TYPE]["action_hash"]
         except (KeyError, TypeError):
             return PaymentResult(False, "malformed: token undecodable", None)
-        digest = action_hash(action)
-        if digest != approved:
+        try:
+            digest = action_commitment(action, salt)
+        except ValueError:
+            return PaymentResult(False, "malformed: action salt", None)
+        if not isinstance(approved, str) or not hmac.compare_digest(digest, approved):
             return PaymentResult(False, "mismatch: action hash differs", None)
         if _ambiguous(action.targets):
             return PaymentResult(False, "denied: ambiguous payment fields", None)

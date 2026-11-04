@@ -1,6 +1,7 @@
 """Perf gate: real decide-path measurements against locked budgets."""
 
 import itertools
+import os
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -9,7 +10,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from bench.runner import check_budgets, run_bench
 from gate.approval import freeze_proposal, verify_approval
-from gate.cava import action_hash
+from gate.cava import action_commitment, action_hash
 from gate.certs import (
     BitstringRevocation,
     SingleUseStore,
@@ -49,6 +50,10 @@ def test_perf_within_budgets(
         action_hash(action)
         return {"ops": 1}
 
+    def _commit():
+        action_commitment(action, os.urandom(32))
+        return {"ops": 1}
+
     def _policy():
         evaluate(action, policy, intent)
         return {"ops": 1}
@@ -81,6 +86,7 @@ def test_perf_within_budgets(
 
     results = [
         run_bench("gate.cava.hash", _cava, n=2000, warmup=200),
+        run_bench("gate.cava.commit", _commit, n=2000, warmup=200),
         run_bench("gate.policy.evaluate", _policy, n=2000, warmup=200),
         run_bench("gate.certs.verify", _certs, n=2000, warmup=200),
         run_bench("gate.shim.decide", _shim, n=2000, warmup=200),

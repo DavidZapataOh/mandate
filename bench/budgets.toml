@@ -6,6 +6,11 @@ p50_us = 28.0
 p95_us = 46.0
 min_decisions_per_s = 32000.0
 
+[paths."gate.cava.commit"]
+p50_us = 43.0
+p95_us = 58.0
+min_decisions_per_s = 21800.0
+
 [paths."gate.policy.evaluate"]
 p50_us = 7.0
 p95_us = 17.0

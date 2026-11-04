@@ -81,7 +81,7 @@ describe("gameText", () => {
 describe("forensicText", () => {
   it("shows seq, source, verdict, hash prefix and reason", () => {
     expect(forensicText(parseLine(ATTACK))).toBe(
-      "#4 attack NOT_MET cbf0720db7ba recipient differs from intent",
+      "#4 attack NOT_MET 89f0357807b9 recipient differs from intent",
     );
     expect(forensicText(parseLine(patch(ATTACK, { event: null, forensic: null })))).toBe(
       "#4 attack - - recipient differs from intent",

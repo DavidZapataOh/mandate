@@ -34,7 +34,7 @@ describe("deploy lines in the ledger", () => {
 
   it("shows the deploy source and the deciding reason in forensic mode", () => {
     expect(forensicText(refused("stale_migration", "gate", "no rule matches"))).toBe(
-      "#10 deploy NOT_MET 21f9b6b240cd no rule matches",
+      "#10 deploy NOT_MET 1be9ccd395f3 no rule matches",
     );
   });
 
@@ -74,11 +74,11 @@ describe("deploy rows", () => {
 
   it("a released row carries the SCENARIO badge and the seal", () => {
     store.add(released());
-    expect(row(9)).toEqual(["SCENARIO", "nimbus scenario", "21F9B6", false, "VERIFIED", "pass", "false"]);
+    expect(row(9)).toEqual(["SCENARIO", "nimbus scenario", "1BE9CC", false, "VERIFIED", "pass", "false"]);
   });
 
   it("a refused row strikes the action it refused", () => {
     store.add(refused("poisoned_tool", "mcp", "denied: tool undeclared"));
-    expect(row(10)).toEqual(["SCENARIO", "nimbus scenario", "21F9B6", true, "DENIED", "deny", "true"]);
+    expect(row(10)).toEqual(["SCENARIO", "nimbus scenario", "1BE9CC", true, "DENIED", "deny", "true"]);
   });
 });

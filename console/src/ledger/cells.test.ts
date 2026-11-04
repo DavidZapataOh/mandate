@@ -29,18 +29,18 @@ const cells = (seq: number) => {
 
 test("a denied row strikes the action hash it refused and says DENIED with the stamp glyph", () => {
   store.add(parseLine(ATTACK));
-  expect(cells(4)).toEqual({ t: "08:16:40", who: "template attack", hash: "CBF072", struck: true, verdict: "DENIED", icon: "#i-denied", outcome: "deny" });
+  expect(cells(4)).toEqual({ t: "08:16:40", who: "template attack", hash: "89F035", struck: true, verdict: "DENIED", icon: "#i-denied", outcome: "deny" });
 });
 
 test("a verified row carries the seal glyph and nothing is struck", () => {
   store.add(parseLine(CONFIRM));
-  expect(cells(3)).toEqual({ t: "08:16:40", who: "agent", hash: "3A531D", struck: false, verdict: "VERIFIED", icon: "#i-verified", outcome: "pass" });
+  expect(cells(3)).toEqual({ t: "08:16:40", who: "agent", hash: "52E9B1", struck: false, verdict: "VERIFIED", icon: "#i-verified", outcome: "pass" });
 });
 
 test("a refusal outside the gate is timed by its canonical action, or shows no time when nothing reached the gate", () => {
   store.add(parseLine(patch(ATTACK, { event: null }, { attack: "replay", layer: "bank", reason: "replay: jti consumed" })));
   store.add(parseLine(HOSTILE));
-  expect([cells(4).t, cells(4).hash]).toEqual(["08:16:40", "CBF072"]);
+  expect([cells(4).t, cells(4).hash]).toEqual(["08:16:40", "89F035"]);
   expect([cells(7).t, cells(7).who, cells(7).hash]).toEqual(["--:--:--", "open-weights attacker", "------"]);
 });
 
@@ -53,6 +53,6 @@ test("each row names itself in words without relying on stylesheet spacing", () 
   store.add(parseLine(CONFIRM));
   store.add(parseLine(ATTACK));
   const name = (seq: number) => list.querySelector(`button[data-seq="${seq}"]`)?.getAttribute("aria-label");
-  expect(name(4)).toBe("TEMPLATE · 08:16:40 · template attack · Blocked payee swap at model->gate: recipient differs from intent · hash CBF072 struck · DENIED");
-  expect(name(3)).toBe("08:16:40 · agent · Paid ✓ MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881 in 61µs · hash 3A531D · VERIFIED");
+  expect(name(4)).toBe("TEMPLATE · 08:16:40 · template attack · Blocked payee swap at model->gate: recipient differs from intent · hash 89F035 struck · DENIED");
+  expect(name(3)).toBe("08:16:40 · agent · Paid ✓ MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881 in 61µs · hash 52E9B1 · VERIFIED");
 });

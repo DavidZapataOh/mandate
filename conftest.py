@@ -88,7 +88,7 @@ def cert_claims() -> CertClaims:
         freshness_nonce="deadbeef00112233445566778899aabbcc",
         issued_at=1800000000,
         expires_at=1800000300,
-        scope="mcp:bank.pay:transfer:checking-881",
+        scope="mcp:bank.pay:transfer",
         reasoning_commitment="b5" * 32,
         evidence_refs=("ev:funds-proof-7f3a",),
         revocation_index=7,
@@ -107,6 +107,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
     ) -> tuple[PaymentDesk, bytes | None]:
         gate_priv, gate_pub = generate_keypair()
         counter = itertools.count(1)
+        salt = itertools.count(1)
         desk = PaymentDesk(
             source="checking-881",
             bank=Bank({"checking-881": 50000, "acme-991": 0}),
@@ -115,6 +116,7 @@ def make_desk() -> Callable[..., tuple[PaymentDesk, bytes | None]]:
             clock=clock or (lambda: DESK_NOW),
             nonces=lambda: f"{next(counter):032x}",
             publish=publish,
+            action_salts=lambda: bytes([next(salt)]) * 32,
         )
         if not register:
             return desk, None

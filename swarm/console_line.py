@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
 from typing import TYPE_CHECKING, Any, cast
 
-from gate.cava import CavaAction, action_hash, canonical_bytes
+from gate.cava import CavaAction, action_commitment, action_hash, canonical_bytes
 from gate.certs import read_claims
 from gate.policy import matched_rule
 from swarm.attribution import from_attacker
@@ -295,6 +295,8 @@ def forensic_of(
     consent: Consent | None = None,
     proof: InclusionProof | None = None,
     anchor: str | None = None,
+    *,
+    salt: bytes | None,
 ) -> dict[str, Any]:
     """Build the forensic block for one decided action.
 
@@ -306,6 +308,8 @@ def forensic_of(
         consent: Holder consent presented, or None.
         proof: Registry inclusion proof for the certificate, or None.
         anchor: Anchored evidence digest, or None.
+        salt: Salt of the gate's action hash; None for a layer that hashes
+            the action unsalted (the MCP proxy).
 
     Returns:
         The forensic object in wire key order.
@@ -314,7 +318,9 @@ def forensic_of(
     claims = None if certificate is None else read_claims(certificate, gate_pub)[0]
     return {
         "cava": json.loads(canonical_bytes(action)),
-        "action_hash": action_hash(action),
+        "action_hash": (
+            action_hash(action) if salt is None else action_commitment(action, salt)
+        ),
         "policy": {
             "policy_id": policy.policy_id,
             "rule_id": None if rule is None else rule.rule_id,
@@ -432,6 +438,7 @@ def bill_line(run: BillRun, policy: Policy, gate_pub: bytes) -> ConsoleLine:
             result.certificate,
             gate_pub,
             anchor=run.attribution.anchor,
+            salt=result.salt,
         )
     )
     subject = {
@@ -483,6 +490,7 @@ def attack_line(
             outcome.certificate,
             gate_pub,
             consent=outcome.consent,
+            salt=outcome.salt,
         )
     )
     subject = {
@@ -544,7 +552,11 @@ def deploy_line(outcome: StepOutcome, gate_pub: bytes) -> ConsoleLine:
         "blocked": outcome.blocked,
     }
     forensic = forensic_of(
-        outcome.action, outcome.policy, outcome.certificate, gate_pub
+        outcome.action,
+        outcome.policy,
+        outcome.certificate,
+        gate_pub,
+        salt=outcome.salt,
     )
     event = json.loads(outcome.event.to_json())
     return ConsoleLine(0, "deploy", event, None, subject, forensic)

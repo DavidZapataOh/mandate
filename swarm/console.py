@@ -89,6 +89,8 @@ class AttackRunner:
         hub: Hub that receives the attack lines.
         clock: Current unix time in seconds.
         nonces: Source of unique freshness nonces.
+        salts: Source of 32-byte action salts, one per press; None lets the
+            gate draw them from the operating system.
     """
 
     def __init__(
@@ -98,6 +100,7 @@ class AttackRunner:
         hub: EventHub,
         clock: Callable[[], int],
         nonces: Callable[[], str],
+        salts: Callable[[], bytes] | None = None,
     ) -> None:
         self._desk = desk
         self._gate_key = gate_key
@@ -105,6 +108,7 @@ class AttackRunner:
         self._hub = hub
         self._clock = clock
         self._nonces = nonces
+        self._salts = salts
 
     def legit_call(self) -> RawCall:
         """Return the pinned legitimate call the attacks start from."""
@@ -132,6 +136,7 @@ class AttackRunner:
             The published (numbered) attack line.
         """
         now, nonce = self._clock(), self._nonces()
+        salt = None if self._salts is None else self._salts()
         outcome = self._desk.guarded(
             lambda bank, verifier: apply_attack(
                 plan,
@@ -143,6 +148,7 @@ class AttackRunner:
                 self._desk.source,
                 now,
                 nonce,
+                salt=salt,
             )
         )
         origin = "template" if trace is None else "model"
@@ -158,6 +164,8 @@ class DeployRunner:
         hub: Hub that receives the deploy lines.
         clock: Current unix time in seconds.
         nonces: Source of unique freshness nonces.
+        salts: Source of 32-byte action salts, one per press; None lets the
+            gate draw them.
     """
 
     def __init__(
@@ -166,12 +174,14 @@ class DeployRunner:
         hub: EventHub,
         clock: Callable[[], int],
         nonces: Callable[[], str],
+        salts: Callable[[], bytes] | None = None,
     ) -> None:
         self._gate_key = gate_key
         self._gate_pub = public_key_of(gate_key)
         self._hub = hub
         self._clock = clock
         self._nonces = nonces
+        self._salts = salts
         self._target = ProdTarget(self._gate_pub)
         self._lock = threading.Lock()
 
@@ -185,8 +195,14 @@ class DeployRunner:
             The published (numbered) deploy line.
         """
         with self._lock:
+            salt = None if self._salts is None else self._salts()
             outcome = run_step(
-                step, self._gate_key, self._target, self._clock(), self._nonces()
+                step,
+                self._gate_key,
+                self._target,
+                self._clock(),
+                self._nonces(),
+                salt,
             )
         return self._hub.publish(deploy_line(outcome, self._gate_pub))
 

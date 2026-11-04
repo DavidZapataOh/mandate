@@ -1,8 +1,11 @@
 """Canonical action objects: fields, bytes, hashing."""
 
 import hashlib
+import hmac
 import json
 from dataclasses import dataclass
+
+ACTION_SALT_LEN = 32
 
 
 @dataclass(frozen=True)
@@ -64,3 +67,24 @@ def canonical_bytes(action: CavaAction) -> bytes:
 def action_hash(action: CavaAction) -> str:
     """Hex SHA-256 over canonical_bytes."""
     return hashlib.sha256(canonical_bytes(action)).hexdigest()
+
+
+def action_commitment(action: CavaAction, salt: bytes) -> str:
+    """Hex HMAC-SHA256 over canonical_bytes, keyed by the per-decision salt.
+
+    Without the salt nobody can confirm a guessed action against the digest;
+    with it anyone recomputes the digest.
+
+    Args:
+        action: The action to commit to.
+        salt: Exactly ACTION_SALT_LEN random bytes, as type bytes.
+
+    Returns:
+        Lowercase hex digest.
+
+    Raises:
+        ValueError: If the salt is not 32 bytes.
+    """
+    if type(salt) is not bytes or len(salt) != ACTION_SALT_LEN:
+        raise ValueError("action salt must be 32 bytes")
+    return hmac.new(salt, canonical_bytes(action), hashlib.sha256).hexdigest()

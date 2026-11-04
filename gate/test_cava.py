@@ -3,7 +3,13 @@ import dataclasses
 import pytest
 
 from bench.runner import run_bench
-from gate.cava import CavaAction, Freshness, action_hash, canonical_bytes
+from gate.cava import (
+    CavaAction,
+    Freshness,
+    action_commitment,
+    action_hash,
+    canonical_bytes,
+)
 
 ACTION = CavaAction(
     version="cava/1",
@@ -90,3 +96,20 @@ def test_hash_bench_measures_real_path():
     assert (r.name, r.samples) == ("gate.cava.hash", 50)
     assert r.counters == {"hashes": 50}
     assert r.p50_us >= 0.0
+
+
+def test_commitment_is_hmac_sha256_over_the_canonical_bytes():
+    assert action_commitment(ACTION, b"\x01" * 32) == (
+        "1940b4b607d65f4ad58933fca24b2b4a274dab3888f3de31e658567be27dd268"
+    )
+    assert action_commitment(ACTION, b"\x02" * 32) == (
+        "e360fb0fe58f96fb81234aa70117e44fa3e24d08ca8ef17050bea5b35efd4ea1"
+    )
+
+
+@pytest.mark.parametrize(
+    "salt", [b"", b"\x01" * 31, b"\x01" * 33, bytearray(32), "01" * 16]
+)
+def test_commitment_needs_a_32_byte_salt(salt):
+    with pytest.raises(ValueError, match="action salt must be 32 bytes"):
+        action_commitment(ACTION, salt)

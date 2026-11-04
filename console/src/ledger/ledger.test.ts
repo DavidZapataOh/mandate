@@ -48,7 +48,7 @@ describe("mountLedger", () => {
     store.add(parseLine(ATTACK));
     ledger.setMode("forensic");
     expect(rows()).toEqual([
-      "TEMPLATE #4 attack NOT_MET cbf0720db7ba recipient differs from intent",
+      "TEMPLATE #4 attack NOT_MET 89f0357807b9 recipient differs from intent",
     ]);
     expect(list.dataset.mode).toBe("forensic");
     ledger.setMode("game");

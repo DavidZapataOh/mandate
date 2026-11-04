@@ -7,7 +7,7 @@ import pytest
 
 from bank.api import Bank
 from bank.verifier import Verifier
-from gate.cava import Freshness, action_hash
+from gate.cava import Freshness, action_commitment
 from gate.policy import Intent, Policy, Rule, Verdict
 from gate.shim import Mode, RawCall
 from mandate.cli import main
@@ -22,6 +22,7 @@ from mandate.client import (
 TS = 1800000000
 NOW = 1800000100
 NONCE = "dd11ee22ff3300445566778899001122"
+SDK_COMMITMENT = "c9dc2e19064a73f725472251e018253ba08ca25852782f15fe50ef272d920070"
 
 
 def _call() -> RawCall:
@@ -69,7 +70,9 @@ def _intent() -> Intent:
     )
 
 
-def _request(private_key: bytes, mode: Mode = Mode.ENFORCE) -> RunRequest:
+def _request(
+    private_key: bytes, mode: Mode = Mode.ENFORCE, salt: bytes | None = None
+) -> RunRequest:
     return RunRequest(
         call=_call(),
         policy=_policy(),
@@ -82,6 +85,7 @@ def _request(private_key: bytes, mode: Mode = Mode.ENFORCE) -> RunRequest:
         scope="mandate-cli",
         reasoning_commitment="00" * 32,
         revocation_index=0,
+        salt=salt,
     )
 
 
@@ -258,5 +262,15 @@ def test_run_result_carries_the_decided_action(keypair, mode):
     bank = Bank({"checking-881": 50000, "acme-991": 0})
     result = run_governed(_request(priv, mode), bank, Verifier(pub))
     assert result.action is not None
-    assert action_hash(result.action) == result.event.action_hash
+    assert result.salt is not None
+    assert action_commitment(result.action, result.salt) == result.event.action_hash
     assert result.action.freshness == Freshness(NONCE, TS)
+
+
+def test_the_bank_settles_the_salted_hash_the_gate_certified(keypair):
+    priv, pub = keypair
+    bank = Bank({"checking-881": 50000, "acme-991": 0})
+    result = run_governed(_request(priv, salt=b"\x0c" * 32), bank, Verifier(pub))
+    assert result.salt == b"\x0c" * 32
+    assert result.payment is not None
+    assert result.payment.action_hash == result.event.action_hash == SDK_COMMITMENT
