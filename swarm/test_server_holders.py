@@ -132,3 +132,14 @@ async def test_pairing_and_unpairing_publish_no_line(make_desk):
         await http.post("/api/holder/unpair", json=body)
         lines = (await http.get("/api/lines")).json()
     assert lines == []
+
+
+@pytest.mark.anyio
+async def test_a_small_order_key_is_refused_before_the_token_is_spent(make_desk):
+    desk, _ = make_desk(register=False)
+    async with _app(desk) as http:
+        weak = await _pair(http, bytes.fromhex("01" + "00" * 31), TOKENS[0])
+        real = await _pair(http, _key(3), TOKENS[0])
+    assert (weak.status_code, weak.json()) == (400, {"error": "bad request"})
+    assert real.json() == {"registered": True}
+    assert desk.holder_keys == (_key(3),)

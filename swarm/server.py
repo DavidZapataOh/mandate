@@ -37,6 +37,7 @@ from bank.api import Bank
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
 from gate.consent import HolderApproval
+from gate.keys import strict_ed25519_public_key
 from gate.policy import Intent
 from swarm.agent import Responder
 from swarm.console_line import ConsoleLine, console_line_json
@@ -580,8 +581,8 @@ state is returned."""
     async def holder(request: Request) -> Response:
         body = await _fields(request, "public_key", "pairing")
         key = _decode(body["public_key"]) if body else None
-        # Checked before spending so a malformed key does not burn the token.
-        if body is None or key is None or len(key) != _KEY_LEN:
+        # Checked before spending so a refused key does not burn the token.
+        if body is None or key is None or not strict_ed25519_public_key(key):
             return _bad_request()
         if not pairing.spend(body["pairing"]):
             return _bad_request()

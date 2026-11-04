@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from gate.keys import strict_ed25519_public_key
 from gate.state import StateStore
 
 MAX_HOLDERS = 16
@@ -114,6 +115,7 @@ class HolderRegistry:
             number, paired = value["number"], value["paired"]
             if (
                 len(key) != _KEY_LEN
+                or not strict_ed25519_public_key(key)
                 or type(number) is not int
                 or type(paired) is not bool
             ):
@@ -161,9 +163,12 @@ class HolderRegistry:
             public_key: Raw Ed25519 public key of the device.
 
         Returns:
-            The new holder id; None when the key paired before or every slot
-            is taken.
+            The new holder id; None for a key that is not canonical or is of
+            small order, when the key paired before, or when every slot is
+            taken.
         """
+        if not strict_ed25519_public_key(public_key):
+            return None
         if any(h.key == public_key for h in self._holders.values()):
             return None
         if len(self.paired_keys) >= self._max_paired:

@@ -12,6 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from gate.cava import CavaAction
+from gate.keys import strict_ed25519_public_key
 from gate.policy import money_fields
 from gate.state import NEVER_EXPIRES, StateStore
 
@@ -317,7 +318,7 @@ def _certifier(
 ) -> bytes | None:
     if not (
         _sized(c.signature, _SIGNATURE_LEN)
-        and _sized(c.consent_key, _KEY_LEN)
+        and strict_ed25519_public_key(c.consent_key)
         and _sized(c.key_signature, _SIGNATURE_LEN)
         and _signed(c.consent_key, c.signature, message)
     ):
@@ -326,7 +327,7 @@ def _certifier(
     # Every key is tried, so timing does not reveal which one certified.
     found: bytes | None = None
     for key in holder_keys:
-        if _sized(key, _KEY_LEN) and _signed(key, c.key_signature, certified):
+        if strict_ed25519_public_key(key) and _signed(key, c.key_signature, certified):
             found = key if found is None else found
     return found
 

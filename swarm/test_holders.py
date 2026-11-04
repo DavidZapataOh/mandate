@@ -146,3 +146,20 @@ def test_a_failed_write_changes_no_holder(state_store, monkeypatch):
     with pytest.raises(sqlite3.OperationalError):
         holders.unpair(first)
     assert holders.paired == ((first, _key(3)),)
+
+
+IDENTITY = bytes.fromhex("01" + "00" * 31)
+
+
+def test_a_small_order_key_never_pairs():
+    holders = HolderRegistry(lambda: "h:0000000000000001")
+    assert holders.pair(IDENTITY) is None
+    assert holders.paired_keys == ()
+
+
+def test_a_stored_small_order_key_is_refused(state_store):
+    record = {"key": base64.b64encode(IDENTITY).decode(), "number": 1, "paired": True}
+    text = json.dumps(record, sort_keys=True)
+    state_store.put_record("holder", "h:0000000000000001", text)
+    with pytest.raises(ValueError, match="^holder record malformed$"):
+        HolderRegistry(lambda: "h:0000000000000002", state=state_store)

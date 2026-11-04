@@ -552,3 +552,28 @@ def test_the_first_certifying_key_wins_when_several_verify():
     signed = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
     certifier = public_key_of(HOLDER_SEED)
     assert certifying_key(signed, (certifier, certifier)) == certifier
+
+
+WEAK_ONE_TIME = bytes.fromhex("ee" + "ff" * 30 + "7f")
+WEAK_HOLDER = bytes.fromhex("01" + "00" * 31)
+# R = the identity point, S = 0: verifies under both keys above for any message.
+FORGED = bytes.fromhex("01" + "00" * 63)
+
+
+def test_a_small_order_one_time_key_certifies_nothing():
+    holder = Ed25519PrivateKey.from_private_bytes(HOLDER_SEED)
+    certificate = holder.sign(key_bytes(WEAK_ONE_TIME, UNSIGNED.nonce))
+    forged = dataclasses.replace(
+        UNSIGNED,
+        signature=FORGED,
+        consent_key=WEAK_ONE_TIME,
+        key_signature=certificate,
+    )
+    assert certifying_key(forged, (public_key_of(HOLDER_SEED),)) is None
+
+
+def test_a_small_order_holder_key_certifies_nothing():
+    forged = dataclasses.replace(
+        UNSIGNED, signature=FORGED, consent_key=WEAK_ONE_TIME, key_signature=FORGED
+    )
+    assert certifying_key(forged, (WEAK_HOLDER,)) is None
