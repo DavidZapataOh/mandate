@@ -4,10 +4,12 @@ import hashlib
 import hmac
 import json
 
+import httpx
 import pytest
 
 from bank.api import RailError
-from bank.conftest import RecordingRail
+from bank.conftest import Cassette, RecordingRail, recorded
+from bank.increase import IncreaseRail
 from evidence.cooperative import SignedState, verify_state
 from evidence.seams import select_cooperative
 from gate.certs import generate_keypair
@@ -36,10 +38,27 @@ def _quote(desk):
     return desk.quote("acme-991", 20000, "USD", "A-991")
 
 
-def _root(kind, body):
+def _root(*entries):
+    """Root of a log holding ``(kind, body)`` entries, or one kind and body."""
+    if len(entries) == 2 and isinstance(entries[0], str):
+        entries = (entries,)
     expected = Registry()
-    expected.append(kind, body)
+    for kind, body in entries:
+        expected.append(kind, body)
     return expected.root()
+
+
+def _body(payment_id, quote_id, reason, status):
+    return json.dumps(
+        {
+            "payment_id": payment_id,
+            "quote_id": quote_id,
+            "reason": reason,
+            "status": status,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def test_quote_shape(make_desk):
@@ -754,3 +773,218 @@ def test_intent_reads_its_funds_from_the_rail(make_desk):
         "status": "denied",
         "reason": "bank: unavailable",
     }
+
+
+FIRST_KEY = "mandate-cert-00000000000000000000000000000002"
+
+
+def _unsettled(make_desk, sign_quote, reason="bank: outcome unknown", clock=None):
+    rail = RecordingRail(RailError(reason), balance=50000)
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=rail, clock=clock)
+    q = _bound(desk)
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    return desk, holder, rail, desk.confirm(q["quote_id"])
+
+
+def _confirm_again(desk, holder, sign_quote):
+    q = _bound(desk)
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    return desk.confirm(q["quote_id"])
+
+
+@pytest.mark.parametrize("reason", ["bank: outcome unknown", "bank: not complete"])
+def test_an_unsettled_bank_outcome_blocks_the_intent(make_desk, sign_quote, reason):
+    desk, holder, rail, first = _unsettled(make_desk, sign_quote, reason)
+    assert (first["status"], first["reason"]) == ("denied", reason)
+    receipt = desk.intent_receipt("i:000001")
+    assert (receipt["status"], receipt["idempotency_key"], receipt["payment_id"]) == (
+        "unsettled",
+        FIRST_KEY,
+        None,
+    )
+    assert receipt["detail"] == (
+        f"The bank has not confirmed whether transfer {FIRST_KEY} went through "
+        f"({reason}). This intent pays nothing more until a lookup by that "
+        "idempotency key settles it."
+    )
+    again = _confirm_again(desk, holder, sign_quote)
+    assert (again["status"], again["reason"], again["payment_id"]) == (
+        "denied",
+        "intent: unsettled",
+        None,
+    )
+    assert len(rail.calls) == 1
+    assert desk.registry.root() == _root(
+        ("denial", _body(None, "q:000001", reason, "denied")),
+        ("denial", _body(None, "q:000002", "intent: unsettled", "denied")),
+    )
+
+
+@pytest.mark.parametrize("reason", ["bank: unavailable", "bank: refused"])
+def test_a_bank_refusal_leaves_the_intent_signed(make_desk, sign_quote, reason):
+    desk, _, _, first = _unsettled(make_desk, sign_quote, reason)
+    assert first["reason"] == reason
+    assert desk.intent_receipt("i:000001")["status"] == "signed"
+
+
+def test_reconciling_a_found_transfer_spends_the_intent(make_desk, sign_quote):
+    desk, holder, rail, _ = _unsettled(make_desk, sign_quote)
+    rail.found = True
+    settled = desk.reconcile("i:000001")
+    assert (settled["status"], settled["payment_id"]) == (
+        "paid",
+        "account_transfer_t1",
+    )
+    assert "detail" not in settled
+    assert rail.lookups == rail.calls
+    done = {
+        "status": "confirmed",
+        "quote_id": "q:000001",
+        "reason": "ok: reconciled",
+        "payment_id": "account_transfer_t1",
+    }
+    assert desk.status("q:000001") == done
+    assert desk.receipt("account_transfer_t1") == done
+    assert desk.registry.root() == _root(
+        ("denial", _body(None, "q:000001", "bank: outcome unknown", "denied")),
+        (
+            "execution",
+            _body("account_transfer_t1", "q:000001", "ok: reconciled", "confirmed"),
+        ),
+    )
+    assert desk.latest_seal()["seq_to"] == desk.registry.size() == 2
+    assert desk.reconcile("i:000001") == settled
+    assert len(rail.lookups) == 1
+    again = _confirm_again(desk, holder, sign_quote)
+    assert again["reason"] == "intent: already used"
+    assert len(rail.calls) == 1
+
+
+OPERATOR_DETAIL = (
+    f"The bank holds a transfer under {FIRST_KEY} that differs from this "
+    "payment (bank: transfer differs). This intent pays nothing more until "
+    "the operator checks that transfer at the bank."
+)
+TOO_EARLY_DETAIL = (
+    f"The bank holds no transfer under {FIRST_KEY} yet, and one may still "
+    "commit. This intent pays nothing more until a lookup at least 60 s after "
+    "the attempt still finds nothing; try again later."
+)
+
+
+def test_a_differing_transfer_blocks_the_intent_for_the_operator(make_desk, sign_quote):
+    desk, holder, rail, first = _unsettled(
+        make_desk, sign_quote, "bank: transfer differs"
+    )
+    assert first["reason"] == "bank: transfer differs"
+    receipt = desk.intent_receipt("i:000001")
+    assert (receipt["status"], receipt["detail"]) == ("unsettled", OPERATOR_DETAIL)
+    assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
+    assert len(rail.calls) == 1
+
+
+def test_a_lookup_finding_a_differing_transfer_never_pays_or_releases(
+    make_desk, sign_quote
+):
+    now = [NOW]
+    desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
+    rail.found = RailError("bank: transfer differs")
+    now[0] = NOW + 3600
+    view = desk.reconcile("i:000001")
+    assert (view["status"], view["payment_id"]) == ("unsettled", None)
+    assert view["detail"] == OPERATOR_DETAIL
+    assert desk.registry.size() == 1
+    assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
+    assert len(rail.calls) == 1
+
+
+def test_an_empty_lookup_inside_the_settle_window_releases_nothing(
+    make_desk, sign_quote
+):
+    now = [NOW]
+    desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
+    now[0] = NOW + 59
+    view = desk.reconcile("i:000001")
+    assert (view["status"], view["detail"]) == ("unsettled", TOO_EARLY_DETAIL)
+    assert len(rail.lookups) == 1
+    assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
+    assert len(rail.calls) == 1
+
+
+def test_an_empty_lookup_after_the_settle_window_releases_the_intent(
+    make_desk, sign_quote
+):
+    now = [NOW]
+    desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
+    now[0] = NOW + 30
+    assert desk.reconcile("i:000001")["status"] == "unsettled"
+    now[0] = NOW + 60
+    assert desk.reconcile("i:000001")["status"] == "signed"
+    assert len(rail.lookups) == 2
+    assert desk.registry.size() == 1
+    rail.error = None
+    again = _confirm_again(desk, holder, sign_quote)
+    assert (again["status"], again["payment_id"]) == (
+        "confirmed",
+        "account_transfer_t1",
+    )
+    assert [call[2] for call in rail.calls][0] == FIRST_KEY
+    assert rail.calls[1][2] != FIRST_KEY
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        RailError("bank: outcome unknown"),
+        RailError("bank: not complete"),
+        RailError("bank: transfer differs"),
+    ],
+)
+def test_a_lookup_that_cannot_settle_keeps_the_intent_unsettled(
+    make_desk, sign_quote, answer
+):
+    desk, holder, rail, _ = _unsettled(make_desk, sign_quote)
+    rail.found = answer
+    view = desk.reconcile("i:000001")
+    assert (view["status"], view["idempotency_key"]) == ("unsettled", FIRST_KEY)
+    assert str(answer) in view["detail"]
+    assert _confirm_again(desk, holder, sign_quote)["reason"] == "intent: unsettled"
+    assert len(rail.calls) == 1
+
+
+def test_reconciling_a_settled_or_unknown_intent_calls_no_bank(make_desk):
+    rail = RecordingRail(balance=50000)
+    desk, _ = make_desk(intents=(DEMO_INTENT,), bank=rail)
+    assert desk.reconcile("i:000001")["status"] == "signed"
+    assert desk.reconcile("i:999999") == {"status": "unknown", "intent_id": "i:999999"}
+    assert rail.lookups == []
+
+
+def test_a_lost_sandbox_answer_replayed_by_the_sdk_is_a_paid_confirm(
+    make_desk, sign_quote
+):
+    held = {
+        **recorded("account_transfer")["body"],
+        "account_id": "account_payer",
+        "destination_account_id": "account_payee",
+        "amount": 20000,
+        "idempotency_key": FIRST_KEY,
+    }
+    replayed = httpx.Response(200, json=held, headers={"idempotent-replayed": "true"})
+    cassette = Cassette("balance_lookup", httpx.ReadTimeout("lost"), replayed)
+    accounts = {"checking-881": "account_payer", "acme-991": "account_payee"}
+    rail = IncreaseRail(cassette.client(max_retries=2), accounts)
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=rail)
+    q = _bound(desk)
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    result = desk.confirm(q["quote_id"])
+    assert (result["status"], result["reason"], result["payment_id"]) == (
+        "confirmed",
+        "ok: executed",
+        held["id"],
+    )
+    assert desk.intent_receipt("i:000001")["status"] == "paid"
+    assert desk.registry.root() == _root(
+        ("execution", _body(held["id"], "q:000001", "ok: executed", "confirmed"))
+    )
+    assert desk.proof_receipt(held["id"]) is not None

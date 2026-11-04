@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64 } from "./bytes";
-import { AUDITOR, CONSENT, CONSENT_KEY, forge, GATE_KEY, HOLDER_KEY, RECEIPT, regate, reissue, resign, seedPublicKey, seedSign, tamper } from "./__fixtures__/receipts";
+import {
+  AUDITOR,
+  CONSENT,
+  CONSENT_KEY,
+  forge,
+  GATE_KEY,
+  HOLDER_KEY,
+  RECEIPT,
+  regate,
+  reissue,
+  resign,
+  SANDBOX_RECEIPT,
+  seedPublicKey,
+  seedSign,
+  tamper,
+} from "./__fixtures__/receipts";
 import { keyBytes } from "./canon";
 import { consentBytes } from "./chain";
 import { readDisclosure } from "./sdjwt";
@@ -151,10 +166,6 @@ describe("verifyReceipt", () => {
   });
 });
 
-const SANDBOX = {
-  rail: "sandbox", provider: "increase", transfer_id: "pay:000001", status: "complete",
-  idempotency_key: "mandate-cert-00000000000000000000000000000002",
-};
 const bank = (change: Record<string, unknown> | null) => (p: Record<string, unknown>) => {
   p.bank = change === null ? null : { ...(p.bank as object), ...change };
 };
@@ -169,12 +180,33 @@ describe("bank transfer step", () => {
     expect(await failed(await resign(bank(change)))).toEqual({ step: "Bank transfer", status: "fail", detail });
   });
 
-  it("names a sandbox transfer and where to look it up", async () => {
-    const results = await verifyReceipt(JSON.parse(await resign(bank(SANDBOX))), TRUST);
+  it("names a sandbox transfer and where it can be checked, without claiming it was", async () => {
+    const results = await verifyReceipt(JSON.parse(SANDBOX_RECEIPT), TRUST);
+    expect(results.map((r) => r.status)).toEqual(STEPS.map(() => "pass"));
     expect(results.at(-1)).toEqual({
       step: "Bank transfer",
       status: "pass",
-      detail: "SANDBOX transfer pay:000001 at increase, requested under this certificate; the account holder's Increase dashboard shows it",
+      detail:
+        "SANDBOX transfer account_transfer_t1 at increase, requested under this certificate; the gate signs this claim, and the id is checkable in the Increase sandbox dashboard of the account that holds the key",
+    });
+  });
+
+  it.each([
+    [{ provider: null }, "Sandbox transfer names provider null, not increase"],
+    [{ provider: "acme-bank" }, "Sandbox transfer names provider acme-bank, not increase"],
+    [{ transfer_id: "pay:000001" }, "Bank transfer pay:000001 is not an Increase transfer id"],
+    [{ transfer_id: "account_transfer_" }, "Bank transfer account_transfer_ is not an Increase transfer id"],
+    [{ transfer_id: "sandbox_account_transfer_a-b" }, "Bank transfer sandbox_account_transfer_a-b is not an Increase transfer id"],
+    [{ transfer_id: `account_transfer_${"a".repeat(65)}` }, `Bank transfer account_transfer_${"a".repeat(65)} is not an Increase transfer id`],
+  ])("a sandbox claim %j that is not an Increase transfer fails", async (change, detail) => {
+    expect(await failed(await resign(bank(change), SANDBOX_RECEIPT))).toEqual({ step: "Bank transfer", status: "fail", detail });
+  });
+
+  it("a simulated payment relabelled sandbox by the gate key fails at the bank step", async () => {
+    expect(await failed(await resign(bank({ rail: "sandbox", provider: "increase" })))).toEqual({
+      step: "Bank transfer",
+      status: "fail",
+      detail: "Bank transfer pay:000001 is not an Increase transfer id",
     });
   });
 

@@ -8,6 +8,7 @@ import httpx
 import pytest
 from increase import IdempotencyKeyAlreadyUsedError, InvalidOperationError
 
+from bank.api import PaymentRequest
 from bank.conftest import FIXTURES
 from bank.credentials import BANK_KEY_ENV
 from bank.increase import IncreaseRail, ensure_accounts, sandbox_client
@@ -163,10 +164,21 @@ def test_certified_payment_moves_sandbox_money_exactly_once():
     transfer = client.account_transfers.retrieve(payment.payment_id)
     assert (transfer.status, transfer.amount) == ("complete", 20000)
     assert transfer.idempotency_key == f"mandate-cert-{jti}"
+    # A fresh verifier has not spent the jti, so the bank's replayed answer
+    # is read as this certificate's own transfer: reported, never moved again.
     replay = Verifier(gate_pub).verify_and_execute(
         rail, result.certificate, to_proposed(result.action), now, result.salt
     )
-    assert replay.reason == "replay: bank idempotency key"
+    assert (replay.reason, replay.payment.payment_id) == (
+        "ok: executed",
+        payment.payment_id,
+    )
+    found = rail.reconcile(
+        PaymentRequest(DEMO[0], DEMO[1], 20000, "USD", "A-991"),
+        payment.action_hash,
+        payment.idempotency_key,
+    )
+    assert found is not None and found.payment_id == payment.payment_id
     assert rail.get_balance(DEMO[1]) == before + 20000
 
 

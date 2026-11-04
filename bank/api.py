@@ -87,7 +87,7 @@ class Bank:
                 raise ValueError("initial balance must be >= 0")
         self._balances = dict(initial)
         self._payments: dict[str, Payment] = {}
-        self._keys: set[str] = set()
+        self._keys: dict[str, Payment] = {}
         self._seq = 0
 
     @property
@@ -136,11 +136,26 @@ class Bank:
             idempotency_key=idempotency_key,
         )
         if idempotency_key is not None:
-            self._keys.add(idempotency_key)
+            self._keys[idempotency_key] = payment
         self._balances[request.from_acct] -= request.amount_cents
         self._balances[request.to_acct] += request.amount_cents
         self._payments[payment.payment_id] = payment
         return payment
+
+    def reconcile(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment | None:
+        """Return the payment that moved under an idempotency key, if any.
+
+        Args:
+            request: The payment the key was sent for.
+            action_hash: Salted hash of the action the payment settles.
+            idempotency_key: Key the payment was requested under.
+
+        Returns:
+            The recorded payment, or None when nothing moved under the key.
+        """
+        return self._keys.get(idempotency_key)
 
     def get_balance(self, acct: str) -> int:
         """Return the balance of an account in integer cents.

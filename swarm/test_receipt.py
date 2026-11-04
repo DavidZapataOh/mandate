@@ -24,6 +24,7 @@ from swarm.receipt import RECEIPT_TYP, present, proof_receipt
 FIXTURES = Path(__file__).resolve().parent.parent / "console/src/explorer/__fixtures__"
 GOLDEN = FIXTURES / "receipt.json"
 AUDITOR = FIXTURES / "auditor.json"
+SANDBOX_GOLDEN = FIXTURES / "receipt-sandbox.json"
 GATE = b"\x01" * 32
 HOLDER = b"\x02" * 32
 NOW = 1800001000
@@ -57,6 +58,26 @@ def test_desk_receipt_is_the_golden(make_desk, sign_quote):
     done = _pay(desk, sign_quote, "acme-991", 20000, "A-991")
     receipt = desk.proof_receipt(done["payment_id"])
     assert json.dumps(receipt, separators=(",", ":")) + "\n" == GOLDEN.read_text()
+
+
+def _sandbox_receipt(make_desk, sign_quote):
+    desk, _ = make_desk(
+        gate_key=GATE,
+        holder_key=HOLDER,
+        intents=(DEMO_INTENT,),
+        bank=RecordingRail(balance=50000),
+        bank_key=b"\x07" * 32,
+    )
+    q = desk.quote("acme-991", 20000, "USD", "A-991", "i:000001")
+    desk.approve(q["quote_id"], sign_quote(HOLDER, q))
+    done = desk.confirm(q["quote_id"])
+    return json.dumps(desk.proof_receipt(done["payment_id"]), separators=(",", ":"))
+
+
+def test_sandbox_desk_receipt_is_the_sandbox_golden(make_desk, sign_quote):
+    text = _sandbox_receipt(make_desk, sign_quote) + "\n"
+    assert text == SANDBOX_GOLDEN.read_text()
+    assert json.loads(text)["payment_id"] == "account_transfer_t1"
 
 
 def test_golden_verifies_with_the_python_verifiers():

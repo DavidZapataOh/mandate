@@ -7,6 +7,8 @@ import anyio
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from bank.api import RailError
+from bank.conftest import RecordingRail
 from gate.certs import generate_keypair
 from swarm.conftest import DEMO_INTENT, REASONING, message, tool_call
 from swarm.console_line import console_line_json
@@ -252,3 +254,77 @@ def test_an_unexpected_error_frees_the_slot(make_desk, fake_meta):
     handoff = _handoff(desk, fake_meta([RuntimeError("boom")]))
     handoff.start("i:000001")
     assert _until(handoff, "failed")["detail"] == "Muse Spark run failed."
+
+
+UNSETTLED_DETAIL = (
+    "The bank has not confirmed whether transfer "
+    "mandate-cert-00000000000000000000000000000002 went through "
+    "(bank: outcome unknown). This intent pays nothing more until a lookup "
+    "by that idempotency key settles it."
+)
+
+
+def _unsettled_run(make_desk, fake_meta, sign_quote, clock=None):
+    rail = RecordingRail(RailError("bank: outcome unknown"), balance=50000)
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=rail, clock=clock)
+    handoff = _handoff(desk, _paying_agent(fake_meta))
+    handoff.start("i:000001")
+    _until(handoff, "waiting")
+    desk.approve("q:000001", sign_quote(holder, desk.status("q:000001")))
+    return desk, rail, handoff, _until(handoff, "failed")
+
+
+def test_an_unknown_bank_outcome_is_never_reported_as_not_paid(
+    make_desk, fake_meta, sign_quote
+):
+    _, _, _, failed = _unsettled_run(make_desk, fake_meta, sign_quote)
+    assert failed["detail"] == UNSETTLED_DETAIL
+
+
+@pytest.mark.parametrize(
+    ("found", "answer"),
+    [
+        (RailError("bank: outcome unknown"), {"error": UNSETTLED_DETAIL}),
+        (True, {"error": "intent already paid: account_transfer_t1"}),
+    ],
+)
+def test_an_unsettled_intent_is_looked_up_before_another_run(
+    make_desk, fake_meta, sign_quote, found, answer
+):
+    desk, rail, handoff, _ = _unsettled_run(make_desk, fake_meta, sign_quote)
+    rail.found = found
+    assert handoff.start("i:000001") == answer
+    assert len(rail.lookups) == 1
+    assert len(rail.calls) == 1
+
+
+def test_an_intent_the_bank_never_paid_is_released_for_a_new_run(
+    make_desk, fake_meta, sign_quote
+):
+    now = [1800001000]
+    desk, rail, _, _ = _unsettled_run(
+        make_desk, fake_meta, sign_quote, clock=lambda: now[0]
+    )
+    again = _handoff(desk, _paying_agent(fake_meta))
+    assert "try again later" in again.start("i:000001")["error"]
+    now[0] += 60
+    assert again.start("i:000001")["state"] == "quoting"
+    assert len(rail.lookups) == 2
+
+
+@pytest.mark.anyio
+async def test_the_holder_page_hears_why_an_unsettled_intent_cannot_run(
+    make_desk, fake_meta, sign_quote
+):
+    rail = RecordingRail(RailError("bank: outcome unknown"), balance=50000)
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=rail)
+    q = desk.quote("acme-991", 20000, "USD", "A-991", "i:000001")
+    desk.approve(q["quote_id"], sign_quote(holder, q))
+    desk.confirm(q["quote_id"])
+    rail.found = RailError("bank: outcome unknown")
+    meta = _paying_agent(fake_meta)
+    app = build_server(desk, PAIR, agent=meta).streamable_http_app()
+    async with _asgi(app) as http:
+        refused = await http.post("/api/agent/start", **_start_request(holder))
+    assert (refused.status_code, refused.json()) == (409, {"error": UNSETTLED_DETAIL})
+    assert meta.requests == []

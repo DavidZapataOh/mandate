@@ -472,10 +472,11 @@ state is returned."""
         if body is None:
             return _bad_request()
         started = handoff.start(body["intent_id"])
-        if started.get("error") == "busy":
-            return JSONResponse(started, status_code=409)
-        if "error" in started:
+        if started.get("error") == "unknown intent":
             return JSONResponse(started, status_code=404)
+        # Busy, already paid, or a transfer the bank has not settled.
+        if "error" in started:
+            return JSONResponse(started, status_code=409)
         return JSONResponse(started, status_code=202)
 
     async def agent_status(request: Request) -> Response:

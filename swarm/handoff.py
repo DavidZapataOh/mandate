@@ -79,11 +79,23 @@ class AgentHandoff:
             intent_id: Id of an intent the holder signed and the desk has not
                 yet paid.
 
+        An intent whose last transfer the bank has not settled is first
+        looked up by its idempotency key; a run starts only once the bank
+        holds no transfer for it.
+
         Returns:
-            The new status, or ``{"error": ...}`` for an unknown intent or
-            while another run is under way.
+            The new status, or ``{"error": ...}`` for an unknown or paid
+            intent, an intent still unsettled, or while another run is under
+            way.
         """
-        if self._desk.intent_receipt(intent_id).get("status") != "signed":
+        receipt = self._desk.intent_receipt(intent_id)
+        if receipt.get("status") == "unsettled":
+            receipt = self._desk.reconcile(intent_id)
+        if receipt.get("status") == "unsettled":
+            return {"error": receipt["detail"]}
+        if receipt.get("status") == "paid":
+            return {"error": f"intent already paid: {receipt['payment_id']}"}
+        if receipt.get("status") != "signed":
             return {"error": "unknown intent"}
         with self._lock:
             if self._status["state"] in _RUNNING:
@@ -141,8 +153,12 @@ class AgentHandoff:
         self._set("confirming", f"Muse Spark is confirming quote {quote_id}.")
         await run_agent(self._meta, client, CONFIRM_REQUEST.format(quote_id=quote_id))
         outcome = self._desk.status(quote_id)
+        receipt = self._desk.intent_receipt(intent_id)
         if outcome["status"] == "confirmed":
             self._set("done", f"Paid: {outcome['payment_id']}.")
+        elif receipt.get("status") == "unsettled":
+            # The bank may hold the transfer: never say it was not paid.
+            self._set("failed", str(receipt["detail"]))
         else:
             reason = outcome.get("reason") or outcome["status"]
             self._set("failed", f"Not paid: {reason}.")

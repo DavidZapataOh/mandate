@@ -1,5 +1,6 @@
 import auditor from "./auditor.json" with { type: "json" };
 import golden from "./receipt.json" with { type: "json" };
+import sandboxGolden from "./receipt-sandbox.json" with { type: "json" };
 import { ascii, fromBase64Url, toBase64 } from "../bytes";
 import { disclosureDigest, readDisclosure } from "../sdjwt";
 
@@ -11,6 +12,8 @@ export const FIXTURE_SIGNATURE =
   "un4ZKczA3s72LLDWOPKsGnVpPA5cywTHLY1Zn_selaZxeaxFBoWVt0wCrY_DlGeEgeEv0qQxcuNgBhGiRqzCDw";
 /** Every field disclosed (the holder copy). */
 export const RECEIPT = JSON.stringify(golden);
+/** A holder copy of a payment the sandbox rail moved (an Increase transfer id). */
+export const SANDBOX_RECEIPT = JSON.stringify(sandboxGolden);
 /** No personal field disclosed (what the receipt route serves). */
 export const AUDITOR = JSON.stringify(auditor);
 /** The action and consent the golden's disclosures carry. */
@@ -121,11 +124,11 @@ export function disclosureText(name: unknown, value: unknown, salt: unknown = "A
 }
 
 /** The golden re-issued by the gate key with its signed payload edited; the Disclosures stay. */
-export async function resign(edit: (payload: Record<string, unknown>) => void): Promise<string> {
-  const { token, disclosures } = parts(RECEIPT);
+export async function resign(edit: (payload: Record<string, unknown>) => void, text: string = RECEIPT): Promise<string> {
+  const { token, disclosures } = parts(text);
   const [header, body] = token.split(".");
   const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body!)));
   edit(payload);
   const input = `${header}.${b64u(ascii(JSON.stringify(payload)))}`;
-  return tamper("sd", [`${input}.${await gateSign(input)}`, ...disclosures, ""].join("~"));
+  return tamper("sd", [`${input}.${await gateSign(input)}`, ...disclosures, ""].join("~"), text);
 }

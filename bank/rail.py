@@ -45,6 +45,26 @@ class BankRail(Protocol):
         """
         ...
 
+    def reconcile(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment | None:
+        """Look up the payment the rail holds under an idempotency key.
+
+        Args:
+            request: The payment the key was sent for.
+            action_hash: Salted hash of the action the payment settles.
+            idempotency_key: Key the payment was requested under.
+
+        Returns:
+            The payment when one moved under the key and matches the request;
+            None when nothing moved under it.
+
+        Raises:
+            RailError: If the rail cannot tell, or holds a transfer under the
+                key that cannot count as this payment.
+        """
+        ...
+
     def get_balance(self, acct: str) -> int:
         """Return the available balance of an account in integer cents.
 

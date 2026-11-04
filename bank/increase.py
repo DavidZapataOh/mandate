@@ -17,6 +17,7 @@ from increase import (
     PermissionDeniedError,
     RateLimitError,
 )
+from increase.types import AccountTransfer
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
 from bank.credentials import BANK_KEY_ENV, take_bank_key
@@ -30,9 +31,19 @@ DEMO_FUND_CENTS = 1_000_000
 # Increase rejects longer transfer descriptions.
 _DESCRIPTION_MAX = 200
 
+# The desk holds its lock through the bank call, so each call is bounded:
+# 5 s to connect, 10 s for each read or write. The SDK retries nothing by
+# itself (its retries honour a Retry-After of up to 60 s); a transfer whose
+# answer is lost is settled by one lookup of its idempotency key instead. A
+# payment makes at most two calls, so it gives up in about half a minute.
+BANK_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
+BANK_RETRIES = 0
+
 
 def sandbox_client(
-    api_key: str, http_client: httpx.Client | None = None, max_retries: int = 2
+    api_key: str,
+    http_client: httpx.Client | None = None,
+    max_retries: int = BANK_RETRIES,
 ) -> Increase:
     """Build an Increase client pinned to the sandbox host.
 
@@ -42,13 +53,15 @@ def sandbox_client(
     Args:
         api_key: Sandbox API key.
         http_client: Optional transport, used to record answers.
-        max_retries: Automatic retries on transient failures.
+        max_retries: Automatic retries on transient failures; each resends
+            the same idempotency key.
     """
     return Increase(
         api_key=api_key,
         base_url=SANDBOX_URL,
         http_client=http_client,
         max_retries=max_retries,
+        timeout=BANK_TIMEOUT,
     )
 
 
@@ -116,6 +129,12 @@ class IncreaseRail:
     ) -> Payment:
         """Move the money as one account transfer under the idempotency key.
 
+        The verifier spends the certificate before it calls the rail, so the
+        bank can hold a transfer under this key only because this certificate
+        asked for it: a replayed answer (the SDK resending after a lost
+        response) is this certificate's own transfer, paid when it matches the
+        request. When no answer comes at all, one lookup by the key settles it.
+
         Args:
             request: The payment to execute.
             action_hash: Salted hash of the action the payment settles.
@@ -125,8 +144,11 @@ class IncreaseRail:
             The payment, identified by the bank's transfer id.
 
         Raises:
-            ReplayError: If the bank already holds a transfer under the key.
-            RailError: If the bank failed or refused; the message is the reason.
+            ReplayError: If the bank holds the key for a transfer with other
+                parameters.
+            RailError: If the bank failed, refused, or reports a transfer that
+                differs from the request or is not complete; the message is
+                the reason.
             ValueError: If the key is missing, an account is unknown or funds
                 are insufficient.
         """
@@ -138,7 +160,7 @@ class IncreaseRail:
         # `from None` keeps SDK messages, which echo the request, out of
         # tracebacks shown to users.
         try:
-            raw = self._client.account_transfers.with_raw_response.create(
+            transfer = self._client.account_transfers.create(
                 account_id=source,
                 amount=request.amount_cents,
                 description=description,
@@ -153,14 +175,70 @@ class IncreaseRail:
                 raise ValueError(f"insufficient funds: {request.from_acct}") from None
             raise RailError("bank: refused") from None
         except (APIConnectionError, InternalServerError):
-            raise RailError("bank: outcome unknown") from None
+            transfer = None
         except (AuthenticationError, PermissionDeniedError, RateLimitError):
             raise RailError("bank: unavailable") from None
         except APIStatusError:
             raise RailError("bank: refused") from None
-        if raw.headers.get("idempotent-replayed") == "true":
-            raise ReplayError(idempotency_key)
-        transfer = raw.parse()
+        if transfer is not None:
+            return self._paid(transfer, request, action_hash, idempotency_key)
+        found = self.reconcile(request, action_hash, idempotency_key)
+        if found is None:
+            raise RailError("bank: outcome unknown")
+        return found
+
+    def reconcile(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment | None:
+        """Look up the transfer the bank holds under an idempotency key.
+
+        Args:
+            request: The payment the key was sent for.
+            action_hash: Salted hash of the action the payment settles.
+            idempotency_key: Key the transfer was requested under.
+
+        Returns:
+            The payment when the bank holds a matching complete transfer;
+            None when it holds no transfer under the key.
+
+        Raises:
+            RailError: ``bank: outcome unknown`` when the lookup itself gets
+                no answer; ``bank: not complete`` or ``bank: transfer differs``
+                for a transfer that cannot count as this payment.
+            ValueError: If an account is unknown.
+        """
+        try:
+            page = self._client.account_transfers.list(idempotency_key=idempotency_key)
+        except (APIConnectionError, APIStatusError):
+            raise RailError("bank: outcome unknown") from None
+        if not page.data:
+            return None
+        return self._paid(page.data[0], request, action_hash, idempotency_key)
+
+    def _paid(
+        self,
+        transfer: AccountTransfer,
+        request: PaymentRequest,
+        action_hash: str,
+        idempotency_key: str,
+    ) -> Payment:
+        # The receipt certifies what the bank holds, so it must be the request.
+        held = (
+            transfer.amount,
+            transfer.currency,
+            transfer.account_id,
+            transfer.destination_account_id,
+            transfer.idempotency_key,
+        )
+        asked = (
+            request.amount_cents,
+            request.currency,
+            self._id(request.from_acct),
+            self._id(request.to_acct),
+            idempotency_key,
+        )
+        if held != asked:
+            raise RailError("bank: transfer differs")
         if transfer.status != "complete":
             raise RailError("bank: not complete")
         return Payment(

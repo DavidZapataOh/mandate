@@ -94,6 +94,10 @@ function shown(value: unknown): string {
 }
 const short = (value: unknown) => `${shown(value).slice(0, 12)}…`;
 
+// The only bank a sandbox claim may name, and the shape of the transfer ids it issues.
+const SANDBOX_PROVIDER = "increase";
+const INCREASE_TRANSFER = /^(?:sandbox_)?account_transfer_[A-Za-z0-9]{1,64}$/;
+
 function own(obj: Record<string, unknown>, key: string): unknown {
   return Object.hasOwn(obj, key) ? obj[key] : undefined;
 }
@@ -315,10 +319,14 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
     if (bank.idempotency_key !== `mandate-cert-${certificateId(r.certificate)}`) {
       throw new Fail("Bank transfer was not requested under this certificate");
     }
+    if (bank.rail === "sandbox") {
+      if (bank.provider !== SANDBOX_PROVIDER) throw new Fail(`Sandbox transfer names provider ${shown(bank.provider)}, not ${SANDBOX_PROVIDER}`);
+      if (!INCREASE_TRANSFER.test(bank.transfer_id)) throw new Fail(`Bank transfer ${shown(bank.transfer_id)} is not an Increase transfer id`);
+    }
     if (bank.transfer_id !== r.payment_id) throw new Fail(`Bank transfer ${bank.transfer_id} is not the sealed payment ${r.payment_id}`);
     if (bank.status !== "complete") throw new Fail(`Bank reports the transfer ${bank.status}, not complete`);
     if (bank.rail === "sandbox") {
-      return `SANDBOX transfer ${bank.transfer_id} at ${shown(bank.provider)}, requested under this certificate; the account holder's Increase dashboard shows it`;
+      return `SANDBOX transfer ${bank.transfer_id} at ${SANDBOX_PROVIDER}, requested under this certificate; the gate signs this claim, and the id is checkable in the Increase sandbox dashboard of the account that holds the key`;
     }
     return `SIMULATED ledger payment ${bank.transfer_id}, requested under this certificate; no bank holds it`;
   },

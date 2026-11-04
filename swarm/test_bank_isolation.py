@@ -11,11 +11,19 @@ from swarm.server import build_server
 from swarm.test_server import ARGS, PAIR, _asgi
 
 ACCOUNTS = {"checking-881": "account_payer", "acme-991": "account_payee"}
+# The recorded transfer, as the bank holds it for this desk's first payment.
+HELD = {
+    **recorded("account_transfer")["body"],
+    "account_id": "account_payer",
+    "destination_account_id": "account_payee",
+    "amount": 20000,
+    "idempotency_key": "mandate-cert-00000000000000000000000000000002",
+}
 
 
 @pytest.mark.anyio
 async def test_the_bank_key_reaches_the_bank_and_nothing_else(make_desk, sign_quote):
-    cassette = Cassette("balance_lookup", "account_transfer")
+    cassette = Cassette("balance_lookup", (200, HELD))
     rail = IncreaseRail(cassette.client(), ACCOUNTS)
     hub = EventHub()
     desk, holder = make_desk(publish=hub.publish, intents=(DEMO_INTENT,), bank=rail)

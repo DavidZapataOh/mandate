@@ -10,9 +10,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from bank.api import RailError
-from bank.rail import SANDBOX, BankRail
-from bank.verifier import Verifier
+import jwt
+
+from bank.api import PaymentRequest, RailError
+from bank.rail import SANDBOX, BankRail, idempotency_key
+from bank.verifier import Verifier, action_commitment
 from evidence.cooperative import sign_state
 from evidence.seams import opaque_cooperative_ref, opaque_intent_ref
 from gate.cava import ACTION_SALT_LEN
@@ -29,7 +31,7 @@ from gate.events import DecisionEvent
 from gate.policy import Intent, Policy, Rule
 from gate.registry import Anchor, LogEntry, Registry
 from gate.shim import Mode, RawCall
-from mandate.client import RunRequest, run_governed
+from mandate.client import RunRequest, RunResult, run_governed, to_proposed
 from swarm.console_line import ConsoleLine, desk_line, forensic_of, pay_summary
 from swarm.intent import IntentError, confirmed_intent, intent_hash
 from swarm.meta_client import reasoning_commitment
@@ -48,6 +50,14 @@ _log = logging.getLogger(__name__)
 _KEY_LEN = 32
 _REVOCATION_BITS = 1024
 _STATEMENT_TTL_S = 300
+# Rail outcomes after which the bank may hold a transfer under the key: the
+# bound intent pays nothing more until a lookup by the idempotency key settles it.
+_DIFFERS = "bank: transfer differs"
+_UNSETTLED = ("bank: outcome unknown", "bank: not complete", _DIFFERS)
+# A lookup that finds nothing releases an intent only this long after the
+# attempt: a transfer whose answer was lost may still be committing.
+SETTLE_WINDOW_S = 60
+_NOT_YET = "bank: no transfer yet"
 _T = TypeVar("_T")
 
 
@@ -60,6 +70,16 @@ class _Quote:
     intent_id: str | None = None
 
 
+@dataclass(frozen=True)
+class _Unsettled:
+    quote_id: str
+    request: PaymentRequest
+    action_hash: str
+    key: str
+    reason: str
+    since: int
+
+
 @dataclass
 class _Intent:
     intent: Intent
@@ -67,6 +87,7 @@ class _Intent:
     funds_ref: str
     intent_ref: str
     payment_id: str | None = None
+    unsettled: _Unsettled | None = None
 
 
 # The debit account stays out of the certificate: the salted action hash
@@ -235,33 +256,95 @@ class PaymentDesk:
             intent_id: Intent to read.
 
         Returns:
-            Status (``signed`` or ``paid``), ids, hash, summary, the four
-            fields, the statement's reference and the payment id; an unknown
-            view when no such intent exists.
+            Status (``signed``, ``unsettled`` or ``paid``), ids, hash, summary,
+            the four fields, the statement's reference and the payment id; an
+            unsettled intent also carries the idempotency key the bank has not
+            settled and a ``detail`` sentence saying so. An unknown view when
+            no such intent exists.
+        """
+        with self._lock:
+            return self._intent_view(intent_id)
+
+    def reconcile(self, intent_id: str) -> dict[str, Any]:
+        """Settle an unsettled intent by one bank lookup of its idempotency key.
+
+        A transfer found complete and matching spends the intent: the quote
+        that sent it becomes confirmed and an execution entry is sealed. No
+        transfer under the key releases the intent for a new quote, but only
+        once ``SETTLE_WINDOW_S`` have passed since the attempt; earlier it
+        stays unsettled. A differing transfer, or a lookup that cannot tell,
+        leaves it unsettled.
+
+        Args:
+            intent_id: Intent to settle.
+
+        Returns:
+            The intent's view after the lookup; an intent that is not
+            unsettled is returned as it stands, with no bank call.
         """
         with self._lock:
             found = self._intents.get(intent_id)
-            if found is None:
-                return {"status": "unknown", "intent_id": intent_id}
-            i = found.intent
-            return {
-                "status": "signed" if found.payment_id is None else "paid",
-                "intent_id": intent_id,
-                "intent_hash": found.hash,
-                "summary": pay_summary(
-                    str(i.amount_cents),
-                    i.currency,
-                    i.recipient,
-                    i.reference,
-                    self._source,
-                ),
-                "amount_cents": i.amount_cents,
-                "currency": i.currency,
-                "recipient": i.recipient,
-                "reference": i.reference,
-                "evidence_ref": found.funds_ref,
-                "payment_id": found.payment_id,
-            }
+            if found is None or found.unsettled is None:
+                return self._intent_view(intent_id)
+            pending = found.unsettled
+            if not self.registry.has_room():
+                return self._intent_view(intent_id)
+            try:
+                payment = self.bank.reconcile(
+                    pending.request, pending.action_hash, pending.key
+                )
+            except (RailError, ValueError) as exc:
+                found.unsettled = dataclasses.replace(pending, reason=str(exc))
+                return self._intent_view(intent_id)
+            if payment is None and self._clock() - pending.since < SETTLE_WINDOW_S:
+                found.unsettled = dataclasses.replace(pending, reason=_NOT_YET)
+                return self._intent_view(intent_id)
+            found.unsettled = None
+            if payment is not None:
+                result: dict[str, Any] = {
+                    "status": "confirmed",
+                    "quote_id": pending.quote_id,
+                    "reason": "ok: reconciled",
+                    "payment_id": payment.payment_id,
+                }
+                found.payment_id = payment.payment_id
+                self._receipts[payment.payment_id] = result
+                record = self._quotes[pending.quote_id]
+                record.status = "confirmed"
+                record.result = result
+                self._append("execution", _result_body(result))
+            return self._intent_view(intent_id)
+
+    def _intent_view(self, intent_id: str) -> dict[str, Any]:
+        found = self._intents.get(intent_id)
+        if found is None:
+            return {"status": "unknown", "intent_id": intent_id}
+        i = found.intent
+        status = "signed" if found.payment_id is None else "paid"
+        if found.unsettled is not None:
+            status = "unsettled"
+        view: dict[str, Any] = {
+            "status": status,
+            "intent_id": intent_id,
+            "intent_hash": found.hash,
+            "summary": pay_summary(
+                str(i.amount_cents),
+                i.currency,
+                i.recipient,
+                i.reference,
+                self._source,
+            ),
+            "amount_cents": i.amount_cents,
+            "currency": i.currency,
+            "recipient": i.recipient,
+            "reference": i.reference,
+            "evidence_ref": found.funds_ref,
+            "payment_id": found.payment_id,
+        }
+        if found.unsettled is not None:
+            view["idempotency_key"] = found.unsettled.key
+            view["detail"] = _unsettled_detail(found.unsettled)
+        return view
 
     def quote(
         self,
@@ -391,8 +474,9 @@ class PaymentDesk:
             quote_id: Quote to execute.
 
         A quote naming no intent on a desk that requires one, or naming an
-        intent that already paid, is denied without a gate run; the denial is
-        still appended to the registry and sealed.
+        intent that already paid or whose last transfer the bank has not
+        settled, is denied without a gate run; the denial is still appended
+        to the registry and sealed.
 
         Args:
             quote_id: Quote to execute.
@@ -413,6 +497,8 @@ class PaymentDesk:
                 refusal = "intent: missing"
             elif bound is not None and bound.payment_id is not None:
                 refusal = "intent: already used"
+            elif bound is not None and bound.unsettled is not None:
+                refusal = "intent: unsettled"
             if not self.registry.has_room():
                 return {
                     "status": "denied",
@@ -583,6 +669,10 @@ class PaymentDesk:
             self._receipts[payment_id] = result
             if bound is not None:
                 bound.payment_id = payment_id
+        elif bound is not None and outcome.reason in _UNSETTLED:
+            bound.unsettled = _unsettled(quote_id, c, outcome, now)
+            if bound.unsettled is None:
+                _log.error("unsettled %s left without its idempotency key", quote_id)
         body = _result_body(result)
         kind = "execution" if paid else "denial"
         seq, seal = self._append(kind, body)
@@ -686,6 +776,53 @@ class PaymentDesk:
         if record.result is not None:
             return dict(record.result)
         return {"status": record.status, "quote_id": quote_id}
+
+
+def _unsettled(
+    quote_id: str, consent: Consent, outcome: RunResult, outcome_time: int
+) -> _Unsettled | None:
+    """What a later lookup needs to settle the transfer this outcome left open."""
+    if not (outcome.certificate and outcome.action and outcome.salt):
+        return None
+    # The desk's own gate signed the certificate moments ago.
+    claims = jwt.decode(outcome.certificate, options={"verify_signature": False})
+    return _Unsettled(
+        quote_id=quote_id,
+        request=PaymentRequest(
+            from_acct=consent.source,
+            to_acct=consent.recipient,
+            amount_cents=consent.amount_cents,
+            currency=consent.currency,
+            ref=consent.reference,
+        ),
+        action_hash=action_commitment(to_proposed(outcome.action), outcome.salt),
+        key=idempotency_key(claims["jti"]),
+        reason=outcome.reason,
+        since=outcome_time,
+    )
+
+
+def _unsettled_detail(pending: _Unsettled) -> str:
+    """The holder's sentence for an intent the bank has not settled."""
+    key = pending.key
+    if pending.reason == _DIFFERS:
+        return (
+            f"The bank holds a transfer under {key} that differs from this "
+            f"payment ({_DIFFERS}). This intent pays nothing more until the "
+            "operator checks that transfer at the bank."
+        )
+    if pending.reason == _NOT_YET:
+        return (
+            f"The bank holds no transfer under {key} yet, and one may still "
+            "commit. This intent pays nothing more until a lookup at least "
+            f"{SETTLE_WINDOW_S} s after the attempt still finds nothing; try "
+            "again later."
+        )
+    return (
+        f"The bank has not confirmed whether transfer {key} went through "
+        f"({pending.reason}). This intent pays nothing more until a lookup by "
+        "that idempotency key settles it."
+    )
 
 
 def _quote_id(number: int) -> str:

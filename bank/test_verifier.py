@@ -2,10 +2,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 from bank.api import Bank, PaymentRequest, RailError
-from bank.conftest import RecordingRail
+from bank.conftest import Cassette, RecordingRail, recorded
+from bank.increase import IncreaseRail
 from bank.verifier import (
     Freshness,
     ProposedAction,
@@ -444,3 +446,61 @@ def test_rail_failure_is_a_denial_and_spends_the_certificate(keypair, reason):
     retry = verifier.verify_and_execute(RecordingRail(), token, _proposed(), NOW, SALT)
     assert (failed.accepted, failed.reason, failed.payment) == (False, reason, None)
     assert retry.reason == "replay: jti consumed"
+
+
+def _increase_answering(*answers):
+    cassette = Cassette(*answers)
+    accounts = {"checking-881": "account_payer", "acme-991": "account_payee"}
+    return IncreaseRail(cassette.client(max_retries=2), accounts), cassette
+
+
+def _held(key, **change):
+    held = {
+        "account_id": "account_payer",
+        "destination_account_id": "account_payee",
+        "amount": 20000,
+        "idempotency_key": key,
+    }
+    return {**recorded("account_transfer")["body"], **held, **change}
+
+
+def test_a_transfer_whose_answer_was_lost_and_replayed_is_paid(keypair):
+    priv, pub = keypair
+    key = "mandate-cert-" + "a7" * 16
+    replayed = httpx.Response(
+        200, json=_held(key), headers={"idempotent-replayed": "true"}
+    )
+    rail, cassette = _increase_answering(httpx.ReadTimeout("lost"), replayed)
+    verifier = Verifier(pub)
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "a7" * 16)
+    result = verifier.verify_and_execute(rail, token, _proposed(), NOW, SALT)
+    assert (result.accepted, result.reason) == (True, "ok: executed")
+    assert result.payment.payment_id == recorded("account_transfer")["body"]["id"]
+    assert [r.headers["idempotency-key"] for r in cassette.requests] == [key, key]
+    again = verifier.verify_and_execute(rail, token, _proposed(), NOW, SALT)
+    assert again.reason == "replay: jti consumed"
+    assert len(cassette.requests) == 2
+
+
+def test_a_replayed_transfer_that_differs_is_a_recorded_refusal(keypair):
+    priv, pub = keypair
+    key = "mandate-cert-" + "a8" * 16
+    replayed = httpx.Response(
+        200, json=_held(key, amount=1), headers={"idempotent-replayed": "true"}
+    )
+    rail, _ = _increase_answering(httpx.ReadTimeout("lost"), replayed)
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "a8" * 16)
+    result = Verifier(pub).verify_and_execute(rail, token, _proposed(), NOW, SALT)
+    assert (result.accepted, result.reason, result.payment) == (
+        False,
+        "bank: transfer differs",
+        None,
+    )
+
+
+def test_the_simulated_bank_reconciles_by_key():
+    bank = _bank()
+    paid = bank.execute(_request(), "h1", "mandate-cert-k1")
+    assert bank.reconcile(_request(), "h1", "mandate-cert-k1") == paid
+    assert bank.reconcile(_request(), "h1", "mandate-cert-k2") is None
+    assert bank.get_balance("acme-991") == 20000

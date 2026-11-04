@@ -28,14 +28,21 @@ class RecordingRail:
     Args:
         error: Raised by every ``execute`` after the call is recorded.
         balance: Returned (or raised) by every ``get_balance``.
+        found: Returned (or raised) by every ``reconcile``: True for the
+            payment ``execute`` would have made, None for nothing found.
     """
 
     def __init__(
-        self, error: Exception | None = None, balance: int | Exception = 0
+        self,
+        error: Exception | None = None,
+        balance: int | Exception = 0,
+        found: bool | None | Exception = None,
     ) -> None:
-        self._error = error
+        self.error = error
         self._balance = balance
+        self.found = found
         self.calls: list[tuple[PaymentRequest, str, str | None]] = []
+        self.lookups: list[tuple[PaymentRequest, str, str | None]] = []
 
     @property
     def rail(self) -> str:
@@ -50,8 +57,24 @@ class RecordingRail:
     ) -> Payment:
         """Record the call, then raise the configured error or pay."""
         self.calls.append((request, action_hash, idempotency_key))
-        if self._error is not None:
-            raise self._error
+        if self.error is not None:
+            raise self.error
+        return self._payment(request, action_hash, idempotency_key)
+
+    def reconcile(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str
+    ) -> Payment | None:
+        """Record the lookup, then raise, find nothing or find the payment."""
+        self.lookups.append((request, action_hash, idempotency_key))
+        if isinstance(self.found, Exception):
+            raise self.found
+        if self.found is None:
+            return None
+        return self._payment(request, action_hash, idempotency_key)
+
+    def _payment(
+        self, request: PaymentRequest, action_hash: str, idempotency_key: str | None
+    ) -> Payment:
         return Payment(
             "account_transfer_t1",
             request.from_acct,
@@ -72,7 +95,7 @@ class RecordingRail:
         return self._balance
 
 
-Answer = str | tuple[int, dict[str, Any]] | Exception
+Answer = str | tuple[int, dict[str, Any]] | httpx.Response | Exception
 
 
 def named_accounts(*names: str) -> tuple[int, dict[str, Any]]:
@@ -90,18 +113,23 @@ class Cassette:
 
     Args:
         answers: In order, a recorded fixture name, a ``(status, body)`` pair,
-            or an exception to raise in place of a response.
+            a whole response, or an exception to raise in place of a response.
     """
 
     def __init__(self, *answers: Answer) -> None:
         self._answers: Iterator[Answer] = iter(answers)
         self.requests: list[httpx.Request] = []
 
-    def client(self) -> Increase:
-        """Build a sandbox client whose every request this cassette answers."""
+    def client(self, max_retries: int = 0) -> Increase:
+        """Build a sandbox client whose every request this cassette answers.
+
+        Args:
+            max_retries: The SDK's automatic retries, which resend the same
+                idempotency key after a lost response.
+        """
         transport = httpx.MockTransport(self._answer)
         return sandbox_client(
-            SENTINEL_KEY, httpx.Client(transport=transport), max_retries=0
+            SENTINEL_KEY, httpx.Client(transport=transport), max_retries=max_retries
         )
 
     def _answer(self, request: httpx.Request) -> httpx.Response:
@@ -109,6 +137,8 @@ class Cassette:
         answer = next(self._answers)
         if isinstance(answer, Exception):
             raise answer
+        if isinstance(answer, httpx.Response):
+            return answer
         headers: dict[str, str] = {}
         if isinstance(answer, str):
             saved = recorded(answer)

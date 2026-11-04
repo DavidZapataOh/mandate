@@ -24,9 +24,31 @@ KEY = "mandate-cert-" + "c1" * 16
 REQUEST = PaymentRequest("checking-881", "acme-991", 20000, "USD", "A-991")
 
 
-def _rail(*answers):
+def _rail(*answers, max_retries=0):
     cassette = Cassette(*answers)
-    return IncreaseRail(cassette.client(), ACCOUNTS), cassette
+    return IncreaseRail(cassette.client(max_retries), ACCOUNTS), cassette
+
+
+def _transfer(**change):
+    """The recorded transfer, as the bank holds it for REQUEST under KEY."""
+    held = {
+        "account_id": "account_payer",
+        "destination_account_id": "account_payee",
+        "amount": 20000,
+        "idempotency_key": KEY,
+    }
+    return {**recorded("account_transfer")["body"], **held, **change}
+
+
+def _replayed(body):
+    return httpx.Response(200, json=body, headers={"idempotent-replayed": "true"})
+
+
+def _listed(*transfers):
+    return 200, {"data": list(transfers), "next_cursor": None}
+
+
+LOST = httpx.ReadTimeout("response lost after the bank committed")
 
 
 def _body(request):
@@ -34,7 +56,7 @@ def _body(request):
 
 
 def test_execute_posts_one_keyed_account_transfer():
-    rail, cassette = _rail("account_transfer")
+    rail, cassette = _rail((200, _transfer()))
     payment = rail.execute(REQUEST, "h1", KEY)
     [sent] = cassette.requests
     assert (sent.method, str(sent.url)) == (
@@ -64,13 +86,136 @@ def test_execute_posts_one_keyed_account_transfer():
     )
 
 
-@pytest.mark.parametrize(
-    "answer", ["account_transfer_replayed", "idempotency_conflict"]
-)
-def test_a_key_the_bank_already_holds_is_a_replay(answer):
-    rail, _ = _rail(answer)
+def test_a_key_reused_with_other_parameters_is_a_replay():
+    rail, _ = _rail("idempotency_conflict")
     with pytest.raises(ReplayError):
         rail.execute(REQUEST, "h1", KEY)
+
+
+def test_a_replayed_answer_for_this_key_is_this_certificates_own_transfer():
+    rail, cassette = _rail(_replayed(_transfer()))
+    payment = rail.execute(REQUEST, "h1", KEY)
+    assert (payment.payment_id, payment.status, payment.idempotency_key) == (
+        recorded("account_transfer")["body"]["id"],
+        "complete",
+        KEY,
+    )
+    assert len(cassette.requests) == 1
+
+
+@pytest.mark.parametrize("lost", [LOST, (500, {"type": "internal_server_error"})])
+def test_a_lost_answer_the_sdk_retries_into_a_replay_is_paid(lost):
+    rail, cassette = _rail(lost, _replayed(_transfer()), max_retries=2)
+    payment = rail.execute(REQUEST, "h1", KEY)
+    assert payment.payment_id == recorded("account_transfer")["body"]["id"]
+    assert (payment.amount_cents, payment.from_acct, payment.to_acct) == (
+        20000,
+        "checking-881",
+        "acme-991",
+    )
+    sent = [
+        (r.method, r.url.path, r.headers["idempotency-key"]) for r in cassette.requests
+    ]
+    assert sent == [("POST", "/account_transfers", KEY)] * 2
+
+
+def test_the_recorded_replay_of_another_transfer_is_never_paid():
+    rail, _ = _rail(LOST, "account_transfer_replayed", max_retries=2)
+    with pytest.raises(RailError, match="^bank: transfer differs$"):
+        rail.execute(REQUEST, "h1", KEY)
+
+
+DIFFERENT = [
+    {"amount": 19999},
+    {"account_id": "account_other"},
+    {"destination_account_id": "account_evil"},
+    {"idempotency_key": "mandate-cert-other"},
+    {"currency": "EUR"},
+]
+
+
+@pytest.mark.parametrize("change", DIFFERENT)
+@pytest.mark.parametrize("replayed", [True, False])
+def test_a_transfer_that_differs_from_the_request_is_never_paid(change, replayed):
+    body = _transfer(**change)
+    rail, _ = _rail(_replayed(body) if replayed else (200, body))
+    with pytest.raises(RailError, match="^bank: transfer differs$"):
+        rail.execute(REQUEST, "h1", KEY)
+
+
+def test_a_replayed_transfer_left_pending_is_not_a_payment():
+    rail, _ = _rail(
+        LOST, _replayed(_transfer(status="pending_approval")), max_retries=1
+    )
+    with pytest.raises(RailError, match="^bank: not complete$"):
+        rail.execute(REQUEST, "h1", KEY)
+
+
+@pytest.mark.parametrize(
+    "lost",
+    [LOST, httpx.ConnectError("reset"), (503, {"type": "internal_server_error"})],
+)
+def test_no_answer_is_reconciled_by_one_lookup_of_the_key(lost):
+    rail, cassette = _rail(lost, _listed(_transfer()))
+    payment = rail.execute(REQUEST, "h1", KEY)
+    assert payment.payment_id == recorded("account_transfer")["body"]["id"]
+    lookup = cassette.requests[1]
+    assert (lookup.method, lookup.url.path) == ("GET", "/account_transfers")
+    assert dict(lookup.url.params) == {"idempotency_key": KEY}
+    assert len(cassette.requests) == 2
+
+
+def test_retries_that_all_lose_their_answer_end_in_the_lookup():
+    rail, cassette = _rail(LOST, LOST, _listed(_transfer()), max_retries=1)
+    assert rail.execute(REQUEST, "h1", KEY).status == "complete"
+    assert [r.method for r in cassette.requests] == ["POST", "POST", "GET"]
+
+
+@pytest.mark.parametrize(
+    ("found", "reason"),
+    [
+        (_listed(), "bank: outcome unknown"),
+        (LOST, "bank: outcome unknown"),
+        ((500, {"type": "internal_server_error"}), "bank: outcome unknown"),
+        (_listed(_transfer(status="pending_approval")), "bank: not complete"),
+        (_listed(_transfer(amount=1)), "bank: transfer differs"),
+    ],
+)
+def test_the_lookup_after_no_answer_never_guesses(found, reason):
+    rail, cassette = _rail(LOST, found)
+    with pytest.raises(RailError) as raised:
+        rail.execute(REQUEST, "h1", KEY)
+    assert str(raised.value) == reason
+    assert len(cassette.requests) == 2
+
+
+def test_reconcile_finds_the_transfer_by_its_key_or_nothing():
+    rail, cassette = _rail(_listed(_transfer()), _listed())
+    found = rail.reconcile(REQUEST, "h1", KEY)
+    assert found is not None
+    assert (found.payment_id, found.action_hash, found.idempotency_key) == (
+        recorded("account_transfer")["body"]["id"],
+        "h1",
+        KEY,
+    )
+    assert rail.reconcile(REQUEST, "h1", KEY) is None
+    assert [dict(r.url.params) for r in cassette.requests] == [
+        {"idempotency_key": KEY}
+    ] * 2
+
+
+def test_bank_time_is_bounded():
+    client = sandbox_client(SENTINEL_KEY)
+    assert client.max_retries == 0
+    assert client.timeout == httpx.Timeout(10.0, connect=5.0)
+    rail, cassette = _rail((200, _transfer()))
+    rail.execute(REQUEST, "h1", KEY)
+    assert cassette.requests[0].extensions["timeout"] == {
+        "connect": 5.0,
+        "read": 10.0,
+        "write": 10.0,
+        "pool": 10.0,
+    }
 
 
 def test_refused_overdraft_is_insufficient_funds():
@@ -94,12 +239,6 @@ def test_refusal_with_funds_on_hand_is_a_bank_refusal():
 @pytest.mark.parametrize(
     ("answer", "reason"),
     [
-        (httpx.ConnectError("down"), "bank: outcome unknown"),
-        (httpx.ReadTimeout("slow"), "bank: outcome unknown"),
-        (
-            (500, {"type": "internal_server_error", "status": 500}),
-            "bank: outcome unknown",
-        ),
         ((401, {"type": "invalid_api_key_error", "status": 401}), "bank: unavailable"),
         (
             (403, {"type": "environment_mismatch_error", "status": 403}),
@@ -117,8 +256,7 @@ def test_bank_failures_map_to_pinned_reasons(answer, reason):
 
 
 def test_transfer_left_pending_is_not_a_payment():
-    saved = recorded("account_transfer")["body"]
-    rail, _ = _rail((200, dict(saved, status="pending_approval")))
+    rail, _ = _rail((200, _transfer(status="pending_approval")))
     with pytest.raises(RailError, match="^bank: not complete$"):
         rail.execute(REQUEST, "h1", KEY)
 
@@ -229,7 +367,10 @@ def test_sandbox_prefixed_ids_are_used_as_the_bank_gives_them():
         ],
         "next_cursor": None,
     }
-    cassette = Cassette((200, listed), "account_transfer")
+    transfer = dict(
+        recorded("account_transfer")["body"], amount=20000, idempotency_key=KEY
+    )
+    cassette = Cassette((200, listed), (200, transfer))
     rail = IncreaseRail.connect(cassette.client())
     assert repr(rail) == "IncreaseRail(sandbox, accounts=['acme-991', 'checking-881'])"
     assert rail.holds(("checking-881", "acme-991"))
