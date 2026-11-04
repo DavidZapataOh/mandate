@@ -312,19 +312,47 @@ def _signed(key: bytes, signature: bytes, message: bytes) -> bool:
     return True
 
 
-def _verifies(c: Consent, message: bytes, holder_keys: tuple[bytes, ...]) -> bool:
+def _certifier(
+    c: Consent, message: bytes, holder_keys: tuple[bytes, ...]
+) -> bytes | None:
     if not (
         _sized(c.signature, _SIGNATURE_LEN)
         and _sized(c.consent_key, _KEY_LEN)
         and _sized(c.key_signature, _SIGNATURE_LEN)
         and _signed(c.consent_key, c.signature, message)
     ):
-        return False
+        return None
     certified = key_bytes(c.consent_key, c.nonce)
-    return any(
-        _sized(key, _KEY_LEN) and _signed(key, c.key_signature, certified)
-        for key in holder_keys
+    return next(
+        (
+            key
+            for key in holder_keys
+            if _sized(key, _KEY_LEN) and _signed(key, c.key_signature, certified)
+        ),
+        None,
     )
+
+
+def _verifies(c: Consent, message: bytes, holder_keys: tuple[bytes, ...]) -> bool:
+    return _certifier(c, message, holder_keys) is not None
+
+
+def certifying_key(c: Consent, holder_keys: tuple[bytes, ...]) -> bytes | None:
+    """The holder key that certified the one-time key that signed this consent.
+
+    Args:
+        c: Consent carrying the one-time signature and its certificate.
+        holder_keys: Raw Ed25519 public keys to try, in order.
+
+    Returns:
+        The first key whose certificate verifies; None for a malformed
+        consent or a chain no key completes.
+    """
+    try:
+        message = consent_bytes(c)
+    except ValueError:
+        return None
+    return _certifier(c, message, holder_keys)
 
 
 def verify_signature(c: Consent, holder_keys: tuple[bytes, ...]) -> bool:
