@@ -1,9 +1,11 @@
 """Append-only Merkle receipt log with inclusion proofs."""
 
+import base64
 import hashlib
 import json
 import re
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey,
@@ -18,6 +20,10 @@ _ANCHOR_PREFIX = b"anchor/v1:"
 _ENTRY_KINDS = frozenset({"execution", "denial", "anchor"})
 _DIGEST_LEN = 32
 _HEX64 = re.compile(r"[0-9a-fA-F]{64}")
+_MISMATCH = "state: registry entries do not match their seals"
+
+if TYPE_CHECKING:
+    from gate.state import StateStore
 
 
 @dataclass(frozen=True)
@@ -101,13 +107,53 @@ class Registry:
         self,
         max_entries: int = 100000,
         keypair: tuple[bytes, bytes] | None = None,
+        state: "StateStore | None" = None,
     ) -> None:
-        """Create an empty registry capped at max_entries entries."""
+        """Create a registry capped at max_entries entries.
+
+        Args:
+            max_entries: Budget on appended entries.
+            keypair: Raw Ed25519 (private, public) key pair that signs seals.
+            state: Durable store to load the log from and write it through to;
+                None keeps the log in memory only.
+
+        Raises:
+            ValueError: A stored seal does not verify with the keypair's public
+                half, or the stored entries do not match the stored seals.
+        """
         self._max_entries = max_entries
         self._keypair = keypair
+        self._state = state
         self._entries: list[LogEntry] = []
         self._anchors: list[Anchor] = []
         self._last_anchored = 0
+        if state is not None:
+            self._load(state)
+
+    def _load(self, state: "StateStore") -> None:
+        """Adopt the stored log after checking it; nothing is re-signed."""
+        entries = state.entries()
+        if any(entry.seq != n for n, entry in enumerate(entries, 1)):
+            raise ValueError(_MISMATCH)
+        anchors = [_anchor_of(view) for view in state.seals()]
+        public = self._keypair[1] if self._keypair is not None else None
+        if anchors and (
+            public is None or not all(verify_anchor(a, public) for a in anchors)
+        ):
+            raise ValueError("state: seal does not verify")
+        leaves = [_leaf_hash(entry) for entry in entries]
+        last = 0
+        for anchor in anchors:
+            if (
+                anchor.seq_from != last + 1
+                or not anchor.seq_from <= anchor.seq_to <= len(leaves)
+                or anchor.root != _tree_root(leaves[: anchor.seq_to]).hex()
+            ):
+                raise ValueError(_MISMATCH)
+            last = anchor.seq_to
+        self._entries = entries
+        self._anchors = anchors
+        self._last_anchored = last
 
     def append(self, kind: str, body: str) -> int:
         """Append a receipt; return its 1-based sequence number."""
@@ -118,7 +164,10 @@ class Registry:
         if len(self._entries) >= self._max_entries:
             raise ValueError("registry full: budget exceeded")
         seq = len(self._entries) + 1
-        self._entries.append(LogEntry(seq=seq, kind=kind, body=body))
+        entry = LogEntry(seq=seq, kind=kind, body=body)
+        if self._state is not None:
+            self._state.add_entry(entry)
+        self._entries.append(entry)
         return seq
 
     def has_room(self) -> bool:
@@ -128,6 +177,16 @@ class Registry:
     def size(self) -> int:
         """Number of appended entries."""
         return len(self._entries)
+
+    def entry(self, seq: int) -> LogEntry:
+        """The entry at seq.
+
+        Raises:
+            ValueError: If seq is outside the log.
+        """
+        if seq < 1 or seq > len(self._entries):
+            raise ValueError(f"unknown seq: {seq}")
+        return self._entries[seq - 1]
 
     def root(self) -> str:
         """Hex Merkle root of the log (EMPTY_ROOT when empty)."""
@@ -176,6 +235,8 @@ class Registry:
         )
         key = Ed25519PrivateKey.from_private_bytes(self._keypair[0])
         sealed = replace(unsigned, signature=key.sign(unsigned.signable_bytes()))
+        if self._state is not None:
+            self._state.add_seal(_seal_view(sealed))
         self._anchors.append(sealed)
         self._last_anchored = latest
         return sealed
@@ -183,6 +244,25 @@ class Registry:
     def anchors(self) -> tuple[Anchor, ...]:
         """Sealed anchors oldest-first."""
         return tuple(self._anchors)
+
+
+def _seal_view(anchor: Anchor) -> dict[str, Any]:
+    return {**asdict(anchor), "signature": base64.b64encode(anchor.signature).decode()}
+
+
+def _anchor_of(view: dict[str, Any]) -> Anchor:
+    try:
+        return Anchor(
+            v=view["v"],
+            anchor_id=view["anchor_id"],
+            seq_from=view["seq_from"],
+            seq_to=view["seq_to"],
+            root=view["root"],
+            ts=view["ts"],
+            signature=base64.b64decode(view["signature"], validate=True),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("state: seal does not verify") from exc
 
 
 def verify_inclusion(proof: InclusionProof, root: str) -> bool:

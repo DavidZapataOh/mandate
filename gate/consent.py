@@ -13,11 +13,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from gate.cava import CavaAction
 from gate.policy import money_fields
+from gate.state import NEVER_EXPIRES, StateStore
 
 _PREFIX = b"consent/v1:"
 _KEY_PREFIX = b"consent-key/v1:"
 _SIGNATURE_LEN = 64
 _KEY_LEN = 32
+_NONCE_KIND = "consent"
+_KEY_KIND = "consent-key"
 
 
 @dataclass(frozen=True)
@@ -207,34 +210,94 @@ def sign_consent(
 
 
 class ConsentLedger:
-    """Bounded FIFO record of consumed consent nonces and one-time keys."""
+    """Record of consumed consent nonces and one-time keys.
 
-    def __init__(self, max_entries: int = 100000) -> None:
+    In memory the record is a bounded FIFO. With a store it lives in the
+    store's `used` table instead, where every row is kept until the store
+    prunes it after the consent expired, so a restart forgets nothing a
+    consent could still be presented for.
+
+    Args:
+        max_entries: Bound on the in-memory record; unused with a store.
+        state: Durable store to write through to; None keeps it in memory.
+
+    Raises:
+        ValueError: If max_entries is below 1.
+    """
+
+    def __init__(
+        self, max_entries: int = 100000, state: StateStore | None = None
+    ) -> None:
         if max_entries < 1:
             raise ValueError("max_entries must be >= 1")
         self._max_entries = max_entries
+        self._state = state
         self._used: dict[str, None] = {}
         self._keys: dict[bytes, None] = {}
 
     def used(self, nonce: str) -> bool:
-        """True when the nonce was consumed and not yet evicted."""
+        """True when the nonce was consumed and not yet evicted or pruned."""
+        if self._state is not None:
+            return self._state.used(_NONCE_KIND, nonce)
         return nonce in self._used
 
-    def consume(self, nonce: str) -> None:
-        """Record the nonce, evicting the oldest past the bound."""
+    def consume(self, nonce: str, expires_at: int = NEVER_EXPIRES) -> None:
+        """Record the nonce; with a store it is on disk when this returns.
+
+        Args:
+            nonce: The consent's nonce.
+            expires_at: When the consent expires; the store may forget the
+                nonce after it.
+        """
+        if self._state is not None:
+            self._state.consume(_NONCE_KIND, nonce, expires_at)
+            return
         self._used[nonce] = None
         while len(self._used) > self._max_entries:
             del self._used[next(iter(self._used))]
 
     def key_used(self, consent_key: bytes) -> bool:
-        """True when the one-time key was consumed and not yet evicted."""
+        """True when the one-time key was consumed and not yet evicted or pruned."""
+        if self._state is not None:
+            return self._state.used(_KEY_KIND, consent_key.hex())
         return consent_key in self._keys
 
-    def consume_key(self, consent_key: bytes) -> None:
-        """Record the one-time key, evicting the oldest past the bound."""
+    def consume_key(self, consent_key: bytes, expires_at: int = NEVER_EXPIRES) -> None:
+        """Record the one-time key; with a store it is on disk when this returns.
+
+        Args:
+            consent_key: The consent's raw one-time public key.
+            expires_at: When the consent expires; the store may forget the
+                key after it.
+        """
+        if self._state is not None:
+            self._state.consume(_KEY_KIND, consent_key.hex(), expires_at)
+            return
         self._keys[consent_key] = None
         while len(self._keys) > self._max_entries:
             del self._keys[next(iter(self._keys))]
+
+    def spend(
+        self, nonce: str, consent_key: bytes, expires_at: int = NEVER_EXPIRES
+    ) -> None:
+        """Record a consent's nonce and one-time key together.
+
+        With a store both land in one transaction, so a crash between them
+        leaves neither spent rather than a nonce whose key could be certified
+        again.
+
+        Args:
+            nonce: The consent's nonce.
+            consent_key: The consent's raw one-time public key.
+            expires_at: When the consent expires.
+        """
+        if self._state is None:
+            self.consume(nonce, expires_at)
+            self.consume_key(consent_key, expires_at)
+            return
+        with self._state.transaction():
+            self.consume(nonce, expires_at)
+            self.consume_key(consent_key, expires_at)
 
 
 def _sized(value: object, size: int) -> bool:

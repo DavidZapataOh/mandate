@@ -1,3 +1,4 @@
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ from gate.certs import (
     issue_certificate,
 )
 from gate.policy import Verdict
+from gate.state import StateStore
 
 
 def _bank():
@@ -504,3 +506,57 @@ def test_the_simulated_bank_reconciles_by_key():
     assert bank.reconcile(_request(), "h1", "mandate-cert-k1") == paid
     assert bank.reconcile(_request(), "h1", "mandate-cert-k2") is None
     assert bank.get_balance("acme-991") == 20000
+
+
+def test_a_restarted_verifier_still_refuses_a_spent_certificate(keypair, tmp_path):
+    priv, pub = keypair
+    path = tmp_path / "state.db"
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "a1" * 16)
+    first = Verifier(pub, state=StateStore(path))
+    assert first.verify_and_execute(_bank(), token, _proposed(), NOW, SALT).accepted
+    rail = RecordingRail()
+    again = Verifier(pub, state=StateStore(path))
+    result = again.verify_and_execute(rail, token, _proposed(), NOW, SALT)
+    assert (result.reason, rail.calls) == ("replay: jti consumed", [])
+
+
+def test_revocations_survive_a_restart(keypair, tmp_path):
+    priv, pub = keypair
+    path = tmp_path / "state.db"
+    Verifier(pub, state=StateStore(path)).revoke(7)
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "b1" * 16)
+    again = Verifier(pub, state=StateStore(path))
+    result = again.verify_and_execute(RecordingRail(), token, _proposed(), NOW, SALT)
+    assert result.reason == "revoked: bit set"
+
+
+class _Crash(BaseException):
+    pass
+
+
+class _CrashingRail(RecordingRail):
+    """Fake rail whose process dies while the transfer is in flight."""
+
+    def execute(self, request, action_hash, idempotency_key=None):
+        self.calls.append((request, action_hash, idempotency_key))
+        raise _Crash
+
+
+def test_a_certificate_is_spent_on_disk_before_the_bank_is_called(keypair, tmp_path):
+    priv, pub = keypair
+    path = tmp_path / "state.db"
+    token = _token(gate_commitment(_gate_action(), SALT), priv, "c1" * 16)
+    crashing = _CrashingRail()
+    with pytest.raises(_Crash):
+        Verifier(pub, state=StateStore(path)).verify_and_execute(
+            crashing, token, _proposed(), NOW, SALT
+        )
+    assert len(crashing.calls) == 1
+    rail = RecordingRail()
+    again = Verifier(pub, state=StateStore(path))
+    result = again.verify_and_execute(rail, token, _proposed(), NOW, SALT)
+    assert (result.reason, rail.calls) == ("replay: jti consumed", [])
+    raw = sqlite3.connect(path)
+    rows = raw.execute("SELECT kind, key, expires_at FROM used").fetchall()
+    raw.close()
+    assert rows == [("jti", "c1" * 16, TS + 300)]

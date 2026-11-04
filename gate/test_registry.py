@@ -1,9 +1,17 @@
 import dataclasses
+import sqlite3
 
 import pytest
 
-from gate.certs import generate_keypair
-from gate.registry import EMPTY_ROOT, Registry, verify_anchor, verify_inclusion
+from gate.certs import generate_keypair, public_key_of
+from gate.registry import (
+    EMPTY_ROOT,
+    LogEntry,
+    Registry,
+    verify_anchor,
+    verify_inclusion,
+)
+from gate.state import StateStore
 
 ROOT2 = "4c73721e4d564032af7dfbdae6dc57d6f1eac3f36ea892a625c3c8b53d928b31"
 ROOT3 = "4f141be3d2b397f2e51da35902f9e930a485d8c34947079d22b3ff9fd97cd00f"
@@ -136,3 +144,92 @@ def test_size_counts_entries():
     reg.append("execution", '{"pay":"A-991"}')
     reg.append("denial", '{"reason":"mismatch"}')
     assert reg.size() == 2
+
+
+KEY = b"\x01" * 32
+
+
+def _sealed(store, bodies):
+    reg = Registry(keypair=(KEY, public_key_of(KEY)), state=store)
+    for n, body in enumerate(bodies, 1):
+        reg.append("execution", body)
+        reg.anchor(1800001000 + n)
+    return reg
+
+
+def test_a_registry_reopens_with_its_entries_and_seals(tmp_path):
+    path = tmp_path / "state.db"
+    first = _sealed(StateStore(path), ["a", "b", "c"])
+    root, seals = first.root(), first.anchors()
+    again = Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
+    assert (again.root(), again.anchors(), again.size()) == (root, seals, 3)
+    assert again.prove(2) == first.prove(2)
+    again.append("denial", "d")
+    assert again.anchor(1800001009).anchor_id == "anch:000004"
+
+
+def test_a_store_whose_entries_do_not_match_its_seals_is_refused(tmp_path):
+    path = tmp_path / "state.db"
+    _sealed(StateStore(path), ["a", "b"])
+    raw = sqlite3.connect(path)
+    raw.execute("UPDATE entries SET body = 'evil' WHERE seq = 1")
+    raw.commit()
+    raw.close()
+    with pytest.raises(ValueError, match="registry entries do not match their seals"):
+        Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
+
+
+def test_a_seal_signed_by_another_key_is_refused(tmp_path):
+    path = tmp_path / "state.db"
+    _sealed(StateStore(path), ["a"])
+    other = b"\x02" * 32
+    with pytest.raises(ValueError, match="^state: seal does not verify$"):
+        Registry(keypair=(other, public_key_of(other)), state=StateStore(path))
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        "DELETE FROM entries WHERE seq = 2",
+        "DELETE FROM seals WHERE seq_to = 1",
+        "INSERT INTO entries (seq, kind, body) VALUES (9, 'denial', 'gap')",
+    ],
+)
+def test_a_store_with_missing_rows_is_refused(tmp_path, edit):
+    path = tmp_path / "state.db"
+    _sealed(StateStore(path), ["a", "b"])
+    raw = sqlite3.connect(path)
+    raw.execute(edit)
+    raw.commit()
+    raw.close()
+    with pytest.raises(ValueError, match="registry entries do not match their seals"):
+        Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
+
+
+def test_an_entry_appended_before_a_crash_is_sealed_after_restart(tmp_path):
+    path = tmp_path / "state.db"
+    first = _sealed(StateStore(path), ["a"])
+    first.append("denial", "b")
+    again = Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
+    assert again.size() == 2
+    seal = again.anchor(1800001009)
+    assert (seal.anchor_id, seal.seq_from, seal.seq_to) == ("anch:000002", 2, 2)
+
+
+def test_a_failed_seal_write_leaves_the_registry_unsealed(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    reg = _sealed(store, ["a"])
+    reg.append("denial", "b")
+    store.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        reg.anchor(1800001009)
+    assert len(reg.anchors()) == 1
+
+
+def test_entry_reads_one_entry():
+    reg = Registry()
+    reg.append("execution", "a")
+    assert reg.entry(1) == LogEntry(1, "execution", "a")
+    for seq in (0, 2):
+        with pytest.raises(ValueError, match=f"^unknown seq: {seq}$"):
+            reg.entry(seq)

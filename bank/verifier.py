@@ -4,13 +4,17 @@ import hashlib
 import hmac
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from bank.api import Payment, PaymentRequest, RailError, ReplayError
 from bank.rail import BankRail, idempotency_key
+
+if TYPE_CHECKING:
+    # The bank runs apart from the gate; it only needs the store's shape.
+    from gate.state import StateStore
 
 _EVENT_TYPE = "urn:mandate:secevent:cert:v1"
 _SALT_LEN = 32
@@ -169,18 +173,32 @@ class Verifier:
 
     Args:
         public_key: Raw 32-byte Ed25519 public key.
-        max_entries: Bound on remembered certificate ids.
+        max_entries: Bound on remembered certificate ids in memory; with a
+            store, ids are kept until the store prunes them after `exp`.
         bits: Size of the revocation bitstring.
+        state: Durable store for spent certificate ids and revocations; None
+            keeps both in memory.
+
+    Raises:
+        IndexError: If a stored revocation index is outside [0, bits).
     """
 
     def __init__(
-        self, public_key: bytes, max_entries: int = 100000, bits: int = 1024
+        self,
+        public_key: bytes,
+        max_entries: int = 100000,
+        bits: int = 1024,
+        state: "StateStore | None" = None,
     ) -> None:
         self._public_key = public_key
         self._max_entries = max_entries
         self._bits = bits
+        self._state = state
         self._seen: dict[str, bool] = {}
         self._revoked = bytearray((bits + 7) // 8)
+        if state is not None:
+            for index in state.revoked():
+                self._set_bit(index)
 
     def revoke(self, index: int) -> None:
         """Set the revocation bit for the index.
@@ -191,9 +209,25 @@ class Verifier:
         Raises:
             IndexError: If the index is outside [0, bits).
         """
+        self._set_bit(index)
+        if self._state is not None:
+            self._state.revoke(index)
+
+    def _set_bit(self, index: int) -> None:
         if not 0 <= index < self._bits:
             raise IndexError(f"revocation index out of range: {index}")
         self._revoked[index // 8] |= 1 << (index % 8)
+
+    def _spend(self, jti: str, exp: int) -> bool:
+        """Spend the certificate id; with a store it is on disk before the rail."""
+        if self._state is not None:
+            return self._state.consume("jti", jti, exp)
+        if jti in self._seen:
+            return False
+        if len(self._seen) >= self._max_entries and self._seen:
+            del self._seen[next(iter(self._seen))]
+        self._seen[jti] = True
+        return True
 
     def _decode(self, token: str) -> tuple[dict[str, Any] | None, str | None]:
         key = Ed25519PublicKey.from_public_bytes(self._public_key)
@@ -267,11 +301,8 @@ class Verifier:
             )
         if self._revoked[index // 8] & (1 << (index % 8)):
             return PaymentResult(False, "revoked: bit set", None)
-        if jti in self._seen:
+        if not self._spend(jti, exp):
             return PaymentResult(False, "replay: jti consumed", None)
-        if len(self._seen) >= self._max_entries and self._seen:
-            del self._seen[next(iter(self._seen))]
-        self._seen[jti] = True
         try:
             approved = payload["events"][_EVENT_TYPE]["action_hash"]
         except (KeyError, TypeError):

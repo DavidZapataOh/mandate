@@ -1,5 +1,6 @@
 import base64
 import dataclasses
+import sqlite3
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -20,6 +21,7 @@ from gate.consent import (
 )
 from gate.policy import Intent, Policy, Rule, Verdict
 from gate.shim import Mode, RawCall, decide
+from gate.state import StateStore
 
 NOW = 1800001000
 GOLDEN = (
@@ -420,3 +422,105 @@ def test_a_broken_approval_fails_closed(change):
         False,
         "consent: bad signature",
     )
+
+
+def test_a_consent_spent_before_a_restart_stays_spent(tmp_path):
+    holder_priv, holder_pub = generate_keypair()
+    c = sign_consent(holder_priv, UNSIGNED)
+    path = tmp_path / "state.db"
+    ConsentLedger(state=StateStore(path)).consume(c.nonce, c.expires_at)
+    again = ConsentLedger(state=StateStore(path))
+    assert check_consent(c, (holder_pub,), _action(), NOW, again) == (
+        False,
+        "consent: already used",
+    )
+
+
+def test_a_consent_key_spent_before_a_restart_stays_spent(tmp_path):
+    c = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    path = tmp_path / "state.db"
+    ConsentLedger(state=StateStore(path)).consume_key(c.consent_key, c.expires_at)
+    again = ConsentLedger(state=StateStore(path))
+    other = dataclasses.replace(UNSIGNED, nonce="d0" * 16)
+    reused = sign_consent(HOLDER_SEED, other, ONE_TIME_SEED)
+    holder = public_key_of(HOLDER_SEED)
+    assert check_consent(reused, (holder,), _action(), NOW, again) == (
+        False,
+        "consent: key reused",
+    )
+
+
+class _Crash(BaseException):
+    pass
+
+
+def test_a_consent_is_spent_on_disk_before_its_certificate_exists(
+    tmp_path, monkeypatch
+):
+    gate_priv, _ = generate_keypair()
+    c = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    path = tmp_path / "state.db"
+    ledger = ConsentLedger(state=StateStore(path))
+
+    def crash(*args, **kwargs):
+        raise _Crash
+
+    monkeypatch.setattr("gate.shim.issue_certificate", crash)
+    with pytest.raises(_Crash):
+        _decide(gate_priv, c, public_key_of(HOLDER_SEED), ledger, "a" * 32)
+    raw = sqlite3.connect(path)
+    query = "SELECT kind, key, expires_at FROM used ORDER BY kind"
+    rows = raw.execute(query).fetchall()
+    raw.close()
+    assert rows == [
+        ("consent", c.nonce, c.expires_at),
+        ("consent-key", c.consent_key.hex(), c.expires_at),
+    ]
+
+
+def test_a_stored_ledger_is_bounded_by_pruning_not_eviction(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    ledger = ConsentLedger(max_entries=1, state=store)
+    ledger.consume("n1", NOW)
+    ledger.consume("n2", NOW + 10)
+    assert ledger.used("n1") and ledger.used("n2")
+    store.prune(NOW + 1)
+    assert (ledger.used("n1"), ledger.used("n2")) == (False, True)
+
+
+def test_an_in_memory_ledger_still_evicts_its_oldest():
+    ledger = ConsentLedger(max_entries=1)
+    ledger.consume("n1")
+    ledger.consume_key(b"k1", NOW)
+    ledger.consume("n2", NOW)
+    ledger.consume_key(b"k2")
+    assert (ledger.used("n1"), ledger.used("n2")) == (False, True)
+    assert (ledger.key_used(b"k1"), ledger.key_used(b"k2")) == (False, True)
+
+
+def test_a_crash_between_nonce_and_key_spends_neither(tmp_path, monkeypatch):
+    gate_priv, _ = generate_keypair()
+    c = sign_consent(HOLDER_SEED, UNSIGNED, ONE_TIME_SEED)
+    path = tmp_path / "state.db"
+    store = StateStore(path)
+    consume = store.consume
+
+    def crash_on_key(kind, key, expires_at):
+        if kind == "consent-key":
+            raise _Crash
+        return consume(kind, key, expires_at)
+
+    monkeypatch.setattr(store, "consume", crash_on_key)
+    with pytest.raises(_Crash):
+        _decide(
+            gate_priv,
+            c,
+            public_key_of(HOLDER_SEED),
+            ConsentLedger(state=store),
+            "a" * 32,
+        )
+    raw = sqlite3.connect(path)
+    assert raw.execute("SELECT * FROM used").fetchall() == []
+    raw.close()
+    again = ConsentLedger(state=StateStore(path))
+    assert (again.used(c.nonce), again.key_used(c.consent_key)) == (False, False)
