@@ -1,0 +1,10 @@
+{
+  "name": "ots.stamp",
+  "provider": "opentimestamps",
+  "measured_at": "2026-11-04T23:40:22Z",
+  "samples": 3,
+  "p50_ms": 4355.3,
+  "p95_ms": 4867.4,
+  "max_ms": 4924.3,
+  "note": "one seal root sent to the four aggregators"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "zktls.verify",
+  "provider": "local verifier binary",
+  "measured_at": "2026-11-04T23:40:13Z",
+  "samples": 10,
+  "p50_ms": 5.1,
+  "p95_ms": 6.0,
+  "max_ms": 6.4,
+  "note": "mandate-zktls verify on one captured presentation; local subprocess, no network"
+}

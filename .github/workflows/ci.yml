@@ -42,8 +42,8 @@ jobs:
           node-version: "24"
       - run: pip install -r requirements-dev.txt
       - run: pip install -e .
-      - run: coverage run -m pytest --deselect gate/test_perf.py::test_perf_within_budgets
-      - run: pytest -q gate/test_perf.py
+      - run: coverage run -m pytest --ignore=bench/test_budgets.py --ignore=bench/test_cli.py
+      - run: pytest -q bench/test_budgets.py bench/test_cli.py
       - run: coverage report
   console:
     runs-on: ubuntu-latest
@@ -68,6 +68,8 @@ jobs:
       - run: npm run typecheck
       - run: npm run coverage
       - run: npm run build
+      - run: python -m bench gate --no-jobs --dist console/dist
+        working-directory: .
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
         env:

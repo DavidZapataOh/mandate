@@ -1,0 +1,10 @@
+{
+  "name": "sandbox.reconcile",
+  "provider": "increase",
+  "measured_at": "2026-11-04T23:40:07Z",
+  "samples": 5,
+  "p50_ms": 397.1,
+  "p95_ms": 400.1,
+  "max_ms": 400.4,
+  "note": "one reconciliation round: list the debit account's transfers since genesis and compare with the sealed receipts"
+}

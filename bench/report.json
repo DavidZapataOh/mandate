@@ -1,0 +1,324 @@
+{
+  "host": {
+    "cpu": "Apple M4",
+    "cores": "10",
+    "os": "macOS-27.0.1",
+    "python": "3.14.3",
+    "commit": "42f7c8b-dirty"
+  },
+  "measured_at": "2026-11-04T23:40:56Z",
+  "measured": [
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.cava.hash",
+        "samples": 6000,
+        "p50_us": 3.458932042121887,
+        "p95_us": 3.5420525819063187,
+        "decisions_per_s": 272963.01678862446,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.cava.commit",
+        "samples": 6000,
+        "p50_us": 5.249981768429279,
+        "p95_us": 11.958996765315533,
+        "decisions_per_s": 164232.2666111472,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.policy.evaluate",
+        "samples": 6000,
+        "p50_us": 2.791057340800762,
+        "p95_us": 3.0440918635576946,
+        "decisions_per_s": 377943.8055759543,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.certs.verify",
+        "samples": 6000,
+        "p50_us": 71.16701453924179,
+        "p95_us": 74.99998901039362,
+        "decisions_per_s": 13525.313896269015,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.shim.decide",
+        "samples": 6000,
+        "p50_us": 10.167015716433525,
+        "p95_us": 10.458054021000862,
+        "decisions_per_s": 95426.10733092601,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.approval.verify",
+        "samples": 6000,
+        "p50_us": 43.12500823289156,
+        "p95_us": 43.79090969450772,
+        "decisions_per_s": 22943.02607765466,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.consent.check",
+        "samples": 6000,
+        "p50_us": 88.29100988805294,
+        "p95_us": 272.7267041336745,
+        "decisions_per_s": 9516.705980277156,
+        "counters": {
+          "ops": 6000
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.consent.find_holder",
+        "samples": 1500,
+        "p50_us": 665.8330094069242,
+        "p95_us": 695.8915677387267,
+        "decisions_per_s": 1477.3914797439534,
+        "counters": {
+          "ops": 1500
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "gate.governed.run",
+        "samples": 3000,
+        "p50_us": 147.04209752380848,
+        "p95_us": 158.17528474144638,
+        "decisions_per_s": 6529.892626789639,
+        "counters": {
+          "ops": 3000,
+          "unpaid": 0
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "desk.pay.memory",
+        "samples": 180,
+        "p50_us": 689.2289966344833,
+        "p95_us": 732.8277337364852,
+        "decisions_per_s": 1432.381154980908,
+        "counters": {
+          "ops": 180,
+          "unpaid": 0
+        }
+      }
+    },
+    {
+      "label": "local disk",
+      "result": {
+        "name": "desk.pay.durable",
+        "samples": 180,
+        "p50_us": 1053.4789762459695,
+        "p95_us": 1196.4266770519312,
+        "decisions_per_s": 910.5993733505629,
+        "counters": {
+          "ops": 180,
+          "unpaid": 0
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "registry.append_seal",
+        "samples": 180,
+        "p50_us": 40.66701512783766,
+        "p95_us": 42.29819169268012,
+        "decisions_per_s": 24179.33318014322,
+        "counters": {
+          "ops": 180
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "registry.prove",
+        "samples": 180,
+        "p50_us": 7.125083357095718,
+        "p95_us": 7.2520459070801735,
+        "decisions_per_s": 136843.19294718513,
+        "counters": {
+          "ops": 180
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "receipt.verify",
+        "samples": 6000,
+        "p50_us": 175.95908138900995,
+        "p95_us": 410.21110373549163,
+        "decisions_per_s": 4944.505136724472,
+        "counters": {
+          "ops": 6000,
+          "refused": 0
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "desk.reconcile",
+        "samples": 60,
+        "p50_us": 5142.8540027700365,
+        "p95_us": 5296.154448296875,
+        "decisions_per_s": 193.72641221594202,
+        "counters": {
+          "ops": 60,
+          "unbacked": 0
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "desk.receipt_by_hash",
+        "samples": 6000,
+        "p50_us": 15.3339933604002,
+        "p95_us": 30.125025659799576,
+        "decisions_per_s": 56792.5686642342,
+        "counters": {
+          "ops": 6000,
+          "missed": 0
+        }
+      }
+    },
+    {
+      "label": "local disk",
+      "result": {
+        "name": "state.reopen",
+        "samples": 9,
+        "p50_us": 15084.999962709844,
+        "p95_us": 15107.162552885711,
+        "decisions_per_s": 67.03998094333058,
+        "counters": {
+          "ops": 9
+        }
+      }
+    },
+    {
+      "label": "in process",
+      "result": {
+        "name": "attacks.templates",
+        "samples": 300,
+        "p50_us": 995.1670072041452,
+        "p95_us": 1049.9188210815191,
+        "decisions_per_s": 995.0483909096482,
+        "counters": {
+          "attempts": 2100,
+          "unblocked": 0,
+          "moved_cents": 0
+        }
+      }
+    }
+  ],
+  "sizes": {
+    "console.command": 23771,
+    "console.explorer": 20788,
+    "console.holder": 9172,
+    "console.index": 27943,
+    "console.lazy": 1013352
+  },
+  "live": [
+    {
+      "name": "ots.stamp",
+      "provider": "opentimestamps",
+      "measured_at": "2026-11-04T23:40:22Z",
+      "samples": 3,
+      "p50_ms": 4355.3,
+      "p95_ms": 4867.4,
+      "max_ms": 4924.3,
+      "note": "one seal root sent to the four aggregators"
+    },
+    {
+      "name": "ots.verify",
+      "provider": "opentimestamps + blockstream",
+      "measured_at": "2026-11-04T23:40:34Z",
+      "samples": 3,
+      "p50_ms": 2347.7,
+      "p95_ms": 2812.0,
+      "max_ms": 2863.5,
+      "note": "upgrade of the recorded confirmed proof, block header fetch and offline check"
+    },
+    {
+      "name": "sandbox.governed_payment",
+      "provider": "increase",
+      "measured_at": "2026-11-04T23:40:03Z",
+      "samples": 5,
+      "p50_ms": 357.1,
+      "p95_ms": 383.3,
+      "max_ms": 389.0,
+      "note": "gate decision, certificate, bank verifier and one Increase account transfer, from this machine"
+    },
+    {
+      "name": "sandbox.reconcile",
+      "provider": "increase",
+      "measured_at": "2026-11-04T23:40:07Z",
+      "samples": 5,
+      "p50_ms": 397.1,
+      "p95_ms": 400.1,
+      "max_ms": 400.4,
+      "note": "one reconciliation round: list the debit account's transfers since genesis and compare with the sealed receipts"
+    },
+    {
+      "name": "zktls.prove",
+      "provider": "increase + local notary",
+      "measured_at": "2026-11-04T23:40:10Z",
+      "samples": 2,
+      "p50_ms": 1414.8,
+      "p95_ms": 1833.8,
+      "max_ms": 1880.3,
+      "note": "holder-side MPC-TLS session with the sandbox through Mandate's notary, then the presentation"
+    },
+    {
+      "name": "zktls.verify",
+      "provider": "local verifier binary",
+      "measured_at": "2026-11-04T23:40:13Z",
+      "samples": 10,
+      "p50_ms": 5.1,
+      "p95_ms": 6.0,
+      "max_ms": 6.4,
+      "note": "mandate-zktls verify on one captured presentation; local subprocess, no network"
+    }
+  ],
+  "breaches": []
+}

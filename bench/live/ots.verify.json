@@ -1,0 +1,10 @@
+{
+  "name": "ots.verify",
+  "provider": "opentimestamps + blockstream",
+  "measured_at": "2026-11-04T23:40:34Z",
+  "samples": 3,
+  "p50_ms": 2347.7,
+  "p95_ms": 2812.0,
+  "max_ms": 2863.5,
+  "note": "upgrade of the recorded confirmed proof, block header fetch and offline check"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "zktls.prove",
+  "provider": "increase + local notary",
+  "measured_at": "2026-11-04T23:40:10Z",
+  "samples": 2,
+  "p50_ms": 1414.8,
+  "p95_ms": 1833.8,
+  "max_ms": 1880.3,
+  "note": "holder-side MPC-TLS session with the sandbox through Mandate's notary, then the presentation"
+}

@@ -40,3 +40,78 @@ min_decisions_per_s = 1340.0
 p50_us = 5725.0
 p95_us = 5825.0
 min_decisions_per_s = 174.0
+
+# Measured 2026-11-04 on Apple M4 (10 cores), Python 3.14.3: median of three runs of three rounds each. Same rule as above.
+[paths."gate.governed.run"]
+p50_us = 1300.0
+p95_us = 1400.0
+min_decisions_per_s = 760.0
+zero_counters = ["unpaid"]
+
+[paths."desk.pay.memory"]
+p50_us = 6200.0
+p95_us = 6400.0
+min_decisions_per_s = 160.0
+zero_counters = ["unpaid"]
+
+[paths."desk.pay.durable"]
+p50_us = 9800.0
+p95_us = 11000.0
+min_decisions_per_s = 100.0
+zero_counters = ["unpaid"]
+
+[paths."registry.append_seal"]
+p50_us = 370.0
+p95_us = 380.0
+min_decisions_per_s = 2700.0
+
+[paths."registry.prove"]
+p50_us = 64.0
+p95_us = 66.0
+min_decisions_per_s = 15000.0
+
+[paths."receipt.verify"]
+p50_us = 1600.0
+p95_us = 1800.0
+min_decisions_per_s = 610.0
+zero_counters = ["refused"]
+
+[paths."desk.reconcile"]
+p50_us = 46000.0
+p95_us = 47000.0
+min_decisions_per_s = 22.0
+zero_counters = ["unbacked"]
+
+[paths."desk.receipt_by_hash"]
+p50_us = 140.0
+p95_us = 140.0
+min_decisions_per_s = 7300.0
+zero_counters = ["missed"]
+
+[paths."state.reopen"]
+p50_us = 140000.0
+p95_us = 140000.0
+min_decisions_per_s = 7.5
+
+[paths."attacks.templates"]
+p50_us = 9000.0
+p95_us = 9600.0
+min_decisions_per_s = 110.0
+zero_counters = ["unblocked", "moved_cents"]
+
+# Gzip -9 bytes of each page's first load (entry, preloads, styles) and of everything loaded later. Builds are deterministic, so headroom is growth room only: pages x1.25, the pinned animation runtime x1.10, rounded up to the next thousand bytes.
+# Measured 2026-11-04 (Vite build): command 23,771; explorer 20,788; holder 9,172; index 27,943; lazy 1,013,352.
+[sizes."console.command"]
+max_gzip_bytes = 30000
+
+[sizes."console.explorer"]
+max_gzip_bytes = 26000
+
+[sizes."console.holder"]
+max_gzip_bytes = 12000
+
+[sizes."console.index"]
+max_gzip_bytes = 35000
+
+[sizes."console.lazy"]
+max_gzip_bytes = 1115000

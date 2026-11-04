@@ -1,0 +1,10 @@
+{
+  "name": "sandbox.governed_payment",
+  "provider": "increase",
+  "measured_at": "2026-11-04T23:40:03Z",
+  "samples": 5,
+  "p50_ms": 357.1,
+  "p95_ms": 383.3,
+  "max_ms": 389.0,
+  "note": "gate decision, certificate, bank verifier and one Increase account transfer, from this machine"
+}
