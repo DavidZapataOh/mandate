@@ -128,6 +128,8 @@ _CONTENT_TYPES = {
     ".jsonl": "application/x-ndjson",
     ".riv": "application/octet-stream",
     ".wasm": "application/wasm",
+    ".webmanifest": "application/manifest+json",
+    ".ico": "image/x-icon",
 }
 
 

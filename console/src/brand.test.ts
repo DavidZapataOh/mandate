@@ -83,3 +83,19 @@ test("DESIGN.md sets every type token in a brand face", () => {
   expect(families.length).toBeGreaterThan(0);
   expect(families.filter((f) => !["Inter", "JetBrains Mono", "Press Start 2P"].includes(f))).toEqual([]);
 });
+
+test("every built page carries the brand head and none hand-writes an icon", () => {
+  const pages = files(dist).filter((p) => p.endsWith(".html"));
+  expect(pages.map((p) => relative(dist, p))).toEqual(expect.arrayContaining(["command.html", "explorer.html", "holder.html", "index.html"]));
+  for (const page of pages) {
+    const html = readFileSync(page, "utf8");
+    expect(html.match(/<link rel="icon"[^>]*>/g)).toEqual([
+      '<link rel="icon" href="/console/brand/favicon.ico" sizes="48x48">',
+      '<link rel="icon" href="/console/brand/favicon.svg" type="image/svg+xml">',
+    ]);
+    expect(html).toContain('<link rel="manifest" href="/console/brand/site.webmanifest">');
+    expect(html).toContain('<meta name="theme-color" content="#0B0D10">');
+    expect(html.match(/rel="preload" as="font"/g)).toHaveLength(5);
+  }
+  expect(JSON.parse(readFileSync(join(dist, "brand/site.webmanifest"), "utf8")).theme_color).toBe("#0B0D10");
+});

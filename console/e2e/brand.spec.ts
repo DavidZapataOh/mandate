@@ -38,3 +38,20 @@ for (const surface of CONSOLE_PAGES) {
     });
   });
 }
+
+test("the manifest and its icons are served at the sizes and types it declares", async ({ request }) => {
+  const served = await request.get("/console/brand/site.webmanifest");
+  expect(served.headers()["content-type"]).toBe("application/manifest+json");
+  const manifest = await served.json();
+  expect(manifest.start_url).toBe("../");
+  for (const icon of manifest.icons as { src: string; sizes: string }[]) {
+    const resp = await request.get(`/console/brand/${icon.src}`);
+    expect(resp.status()).toBe(200);
+    const png = await resp.body();
+    expect(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`).toBe(icon.sizes);
+  }
+  const touch = await request.get("/console/brand/apple-touch-icon.png");
+  expect((await touch.body()).readUInt32BE(16)).toBe(180);
+  const ico = await request.get("/console/brand/favicon.ico");
+  expect([ico.status(), ico.headers()["content-type"]]).toEqual([200, "image/x-icon"]);
+});

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Plugin } from "vite";
+import type { HtmlTagDescriptor, Plugin, ResolvedConfig } from "vite";
 
 export interface Motion {
   readonly name: string;
@@ -60,12 +60,64 @@ export function tokensModule(t: DesignTokens): string {
   return `export const COLORS = ${JSON.stringify(t.colors)};\nexport const MOTION_MS = ${JSON.stringify(ms)};\n`;
 }
 
+/** The console's web app manifest, themed in Ink. */
+export function manifest(colors: Readonly<Record<string, string>>): string {
+  return `${JSON.stringify(
+    {
+      name: "Mandate Console",
+      short_name: "Mandate",
+      start_url: "../",
+      scope: "../",
+      icons: [
+        { src: "icon-192.png", sizes: "192x192", type: "image/png" },
+        { src: "icon-512.png", sizes: "512x512", type: "image/png" },
+        { src: "maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+      ],
+      theme_color: colors.ink,
+      background_color: colors.ink,
+      display: "standalone",
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+/** The head tags every page gets: icons, manifest, theme colour and UI font preloads. */
+export function headTags(base: string, ink: string, fonts: readonly string[]): HtmlTagDescriptor[] {
+  const head = (tag: string, attrs: Record<string, string>): HtmlTagDescriptor => ({ tag, attrs, injectTo: "head" });
+  return [
+    head("link", { rel: "icon", href: `${base}brand/favicon.ico`, sizes: "48x48" }),
+    head("link", { rel: "icon", href: `${base}brand/favicon.svg`, type: "image/svg+xml" }),
+    head("link", { rel: "apple-touch-icon", href: `${base}brand/apple-touch-icon.png` }),
+    head("link", { rel: "manifest", href: `${base}brand/site.webmanifest` }),
+    head("meta", { name: "theme-color", content: ink }),
+    ...fonts.map((font) => head("link", { rel: "preload", as: "font", type: "font/woff2", crossorigin: "", href: `${base}${font}` })),
+  ];
+}
+
 /** Vite plugin serving DESIGN.md and its sidecar as `virtual:brand.css` and `virtual:brand`. */
 export function brandTokens(root: string): Plugin {
   const design = join(root, "DESIGN.md");
   const sidecar = join(root, ".impeccable", "design.json");
+  let base = "/";
+  const colorsNow = (): Record<string, string> => readColors(readFileSync(design, "utf8"));
   return {
     name: "mandate-brand-tokens",
+    configResolved(config: ResolvedConfig) {
+      base = config.base;
+    },
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "brand/site.webmanifest", source: manifest(colorsNow()) });
+    },
+    transformIndexHtml: {
+      order: "post",
+      handler(_html, ctx) {
+        const fonts = Object.keys(ctx.bundle ?? {})
+          .filter((name) => name.endsWith(".woff2") && !name.includes("press-start"))
+          .sort();
+        return headTags(base, colorsNow().ink!, fonts);
+      },
+    },
     resolveId(id) {
       return id === CSS_ID || id === JS_ID ? `\0${id}` : null;
     },
