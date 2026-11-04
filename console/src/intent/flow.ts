@@ -93,7 +93,7 @@ export class IntentFlow {
       status: "Signed. The agent gets only the intent id.",
       receipt: result,
       fundsOk,
-      funds: fundsOk ? "Funds sufficient: bank-signed statement verified on this device." : `Statement not verified: ${verdict}`,
+      funds: fundsOk ? "Funds sufficient: desk-signed statement verified on this device." : `Statement not verified: ${verdict}`,
     });
   }
 

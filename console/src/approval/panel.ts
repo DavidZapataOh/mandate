@@ -142,6 +142,8 @@ export function mountApproval(
 
   const title = node("h2", "title", root);
   title.textContent = "Holder approval";
+  title.tabIndex = 0;
+  title.setAttribute("role", "button");
   const status = node("p", "status", root);
   status.setAttribute("role", "status");
   const stepList = node("ol", "steps", root);
@@ -177,6 +179,9 @@ export function mountApproval(
   let readSeq = 0;
   let pollScheduled = false;
   let renderTicket = 0;
+  let shownPhase: Phase | null = null;
+  let shownQuote = "";
+  let opened = "";
   let readTicket = 0;
 
   function remember(id: string, fields: ConsentFields): void {
@@ -219,6 +224,30 @@ export function mountApproval(
       }, DEVICE_POLL_MS);
     }
   }
+
+  /** A paid or denied quote folds to its verdict line so the ledger under it stays reachable. */
+  function syncFold(): void {
+    const settled = shownPhase === "paid" || shownPhase === "denied";
+    const folded = settled && opened !== shownQuote;
+    if (folded) root.dataset.collapsed = "true";
+    else delete root.dataset.collapsed;
+    if (settled) title.setAttribute("aria-expanded", String(!folded));
+    else title.removeAttribute("aria-expanded");
+  }
+
+  function toggleFold(): void {
+    if (shownPhase !== "paid" && shownPhase !== "denied") return;
+    opened = opened === shownQuote ? "" : shownQuote;
+    syncFold();
+  }
+
+  title.addEventListener("click", toggleFold);
+  title.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleFold();
+    }
+  });
 
   async function render(): Promise<void> {
     const ticket = ++renderTicket;
@@ -270,6 +299,9 @@ export function mountApproval(
     root.hidden = false;
     root.dataset.phase = phase;
     root.dataset.quote = quote;
+    shownPhase = phase;
+    shownQuote = quote;
+    syncFold();
     if (gateState === null) delete root.dataset.gate;
     else root.dataset.gate = gateState;
     status.textContent = statusText(phase, outcome.paymentId, fields);

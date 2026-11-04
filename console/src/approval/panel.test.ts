@@ -167,6 +167,26 @@ describe("mountApproval", () => {
     expect(steps()).toEqual(["done", "done", "done", "done"]);
   });
 
+  it("folds to a one-line verdict once paid and expands on demand", async () => {
+    store.add(desk(1, "quote", "quoted"));
+    const mounted = mount();
+    await mounted.refresh();
+    expect(root.dataset.collapsed).toBeUndefined();
+    api.quotes = [];
+    store.add(desk(2, "approve", "approved"));
+    store.add(desk(3, "confirm", "confirmed", { payment_id: "pay:000001" }));
+    await mounted.refresh();
+    const toggle = root.querySelector<HTMLElement>(".title");
+    expect(root.dataset.collapsed).toBe("true");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(text(".status")).toBe("Verified at the gate · paid pay:000001");
+    toggle?.click();
+    expect(root.dataset.collapsed).toBeUndefined();
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    toggle?.click();
+    expect(root.dataset.collapsed).toBe("true");
+  });
+
   it("flags a gate check over different consent fields", async () => {
     store.add(desk(1, "quote", "quoted"));
     const mounted = mount();

@@ -105,3 +105,26 @@ test("the console says when no holder device is paired, then names it", async ({
     timeout: 5_000,
   });
 });
+
+test("after a paid flow the newest ledger row opens the forensic drawer with a real click", async ({
+  browser,
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${desk.base}/console/`);
+  const device = await pairHolder(browser, desk);
+  agent(desk, "quote", "acme-991", "20000", "USD", "A-991");
+  const approval = page.locator("#approval");
+  await expect(approval).toHaveAttribute("data-phase", "waiting");
+  await device.getByRole("button", { name: "Review" }).click();
+  await device.getByRole("button", { name: "Approve" }).click();
+  await expect(approval).toHaveAttribute("data-phase", "approved");
+  expect(agent(desk, "confirm", "q:000001").status).toBe("confirmed");
+  await expect(approval).toHaveAttribute("data-phase", "paid");
+  await expect(approval).toBeVisible();
+  const newest = page.locator("#ledger button").last();
+  await expect(newest).toBeVisible();
+  // No force and no scripted click: Playwright fails if another element covers the row.
+  await newest.click({ timeout: 5_000 });
+  await expect(page.locator("#forensic")).toBeVisible();
+});

@@ -490,6 +490,24 @@ main {
   margin: 0;
 }
 
+/* Settled quotes fold to one verdict line; the title unfolds the full consent on demand. */
+#approval[data-collapsed="true"] {
+  grid-template-areas: "title status status";
+  padding-bottom: 8px;
+}
+
+#approval[data-collapsed="true"] > :not(.title):not(.status) {
+  display: none;
+}
+
+#approval .title[role="button"] {
+  cursor: default;
+}
+
+#approval .title[aria-expanded] {
+  cursor: pointer;
+}
+
 #approval .title {
   grid-area: title;
   align-self: center;
@@ -1274,6 +1292,12 @@ button.scenario .badge {
   #approval .status {
     justify-self: start;
     text-align: left;
+  }
+
+  #approval[data-collapsed="true"] {
+    grid-template-areas:
+      "title"
+      "status";
   }
 
   #approval .device {

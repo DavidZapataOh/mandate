@@ -60,7 +60,7 @@ test("the holder signs a typed intent and Muse Spark pays it from the id alone",
   await page.click("#intent-sign");
   await expect(page.locator("#receipt-id")).toHaveText("i:000001");
   await expect(page.locator("#receipt-funds")).toHaveText(
-    "Funds sufficient: bank-signed statement verified on this device.",
+    "Funds sufficient: desk-signed statement verified on this device.",
   );
   const funds = page.locator("#receipt-funds");
   await expect(funds).toHaveCSS("color", "rgb(31, 213, 152)");

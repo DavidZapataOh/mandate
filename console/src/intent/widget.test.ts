@@ -47,7 +47,7 @@ describe("holder page", () => {
     expect(shown).toEqual([
       "i:000001",
       SIGNED.intent_hash,
-      "Funds sufficient: bank-signed statement verified on this device.",
+      "Funds sufficient: desk-signed statement verified on this device.",
       "ev:cooperative-signed:c97da00074742018dff37a1130a145f3",
     ]);
     expect([$("intent-review").hidden, $("intent-sign").hidden, $("intent-discard").hidden]).toEqual([false, true, true]);

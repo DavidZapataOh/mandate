@@ -8,7 +8,7 @@ export interface IntentFields {
   reference: string;
 }
 
-/** The simulated bank's signed funds statement, as the desk returns it. */
+/** The desk-signed funds statement over the balance its bank reports, as the desk returns it. */
 export interface BankState {
   subject: string;
   statement: string;

@@ -75,7 +75,7 @@ describe("signing", () => {
     expect([flow.view.phase, flow.view.status, flow.view.funds, flow.view.fundsOk]).toEqual([
       "signed",
       "Signed. The agent gets only the intent id.",
-      "Funds sufficient: bank-signed statement verified on this device.",
+      "Funds sufficient: desk-signed statement verified on this device.",
       true,
     ]);
   });
