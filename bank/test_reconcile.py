@@ -46,10 +46,21 @@ def test_a_canceled_transfer_moved_nothing_and_is_skipped():
 def test_the_view_has_the_pinned_keys_in_order():
     view = Reconciliation(
         "sandbox", "increase", "2027-01-15T08:16:40Z", 1800001200, 2, 2, (), (),
-        ("q:000003 -> t3",), (), None,
+        ("q:000003 -> t3",), (), ("i:000001 -> t1 + t2",), ("pending q:000004",),
+        None,
     ).view()  # fmt: skip
     assert list(view) == [
         "rail", "provider", "since", "checked_at", "transfers", "certified",
-        "unbacked", "missing", "resolved", "pending", "error",
+        "unbacked", "missing", "resolved", "pending", "paid_twice", "unreadable",
+        "error",
     ]  # fmt: skip
+    assert (view["paid_twice"], view["unreadable"]) == (
+        ["i:000001 -> t1 + t2"],
+        ["pending q:000004"],
+    )
     assert view["resolved"] == ["q:000003 -> t3"]
+
+
+def test_a_sealed_payment_the_bank_canceled_is_missing():
+    listed = [_t("t1", "mandate-cert-j1", status="canceled")]
+    assert compare(listed, {"t1": ("j1", True)}, "sandbox") == (0, (), ("t1",))

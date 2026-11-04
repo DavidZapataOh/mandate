@@ -581,3 +581,31 @@ def test_listing_failures_are_unavailable(answer):
     rail, _ = _rail(answer)
     with pytest.raises(RailError, match="^bank: unavailable$"):
         rail.transfers("checking-881", SINCE)
+
+
+UNUSABLE = [
+    HTML,
+    (200, {"data": "nope"}),
+    (200, {"data": [{"id": "t1"}], "next_cursor": None}),
+    (200, {"data": [7], "next_cursor": None}),
+]
+
+
+@pytest.mark.parametrize("answer", UNUSABLE)
+def test_a_listing_answer_that_is_not_transfers_is_unavailable(answer):
+    rail, _ = _rail(answer)
+    with pytest.raises(RailError, match="^bank: unavailable$"):
+        rail.transfers("checking-881", SINCE)
+
+
+@pytest.mark.parametrize("answer", UNUSABLE)
+def test_a_lookup_answer_that_is_not_transfers_is_unavailable(answer):
+    rail, _ = _rail(answer)
+    with pytest.raises(RailError, match="^bank: unavailable$"):
+        rail.transfer_by_key(KEY)
+
+
+def test_a_lookup_that_cannot_reach_the_bank_is_unavailable():
+    rail, _ = _rail(httpx.ConnectError("down"))
+    with pytest.raises(RailError, match="^bank: unavailable$"):
+        rail.transfer_by_key(KEY)

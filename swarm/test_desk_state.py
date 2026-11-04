@@ -275,3 +275,43 @@ def test_every_unsettled_reason_stays_journaled(state_store, reason):
     assert [k for k, _ in state_store.records("pending")] == ["q:000001"]
     again, _ = _restart(state_store)
     assert again.intent_receipt("i:000001")["status"] == "unsettled"
+
+
+def test_a_forged_entry_past_the_last_seal_stops_the_restart(state_store, sign_quote):
+    _pay(_desk(state_store), sign_quote, "acme-991", 20000, "A-991")
+    forged = json.dumps(
+        {
+            "payment_id": "pay:forged",
+            "quote_id": "q:000009",
+            "reason": "ok: executed",
+            "status": "confirmed",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    path = state_store.path
+    state_store.close()
+    raw = sqlite3.connect(path)
+    raw.execute(
+        "INSERT INTO entries (seq, kind, body) VALUES (2, 'execution', ?)", (forged,)
+    )
+    raw.commit()
+    raw.close()
+    again = StateStore(path)
+    with pytest.raises(
+        ValueError, match="^state: registry entries past the last seal$"
+    ):
+        _desk(again, nonce_from=101)
+    again.close()
+
+
+def test_an_account_added_to_the_opening_balances_is_opened(tmp_path):
+    path = tmp_path / "state.db"
+    Bank({"checking-881": 100}, state=StateStore(path))
+    again = Bank({"checking-881": 5, "acme-991": 7}, state=StateStore(path))
+    assert (again.get_balance("checking-881"), again.get_balance("acme-991")) == (
+        100,
+        7,
+    )
+    third = Bank({}, state=StateStore(path))
+    assert third.get_balance("acme-991") == 7

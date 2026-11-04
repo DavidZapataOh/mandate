@@ -21,3 +21,8 @@ test-results/
 playwright-report/
 zktls/target/
 .mandate/
+# Desk state directories: the gate's private key and the durable store.
+gate.key
+.gate.key.*.tmp
+state.db
+state.db-*

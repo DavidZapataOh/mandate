@@ -84,6 +84,12 @@ describe("mountCommand", () => {
     expect(document.querySelector('[data-metric="unbacked"]')?.hasAttribute("data-alert")).toBe(true);
   });
 
+  it("flags the bank tile when an intent was paid twice", async () => {
+    setup({ server: bankTile({ paid_twice: ["i:000001 -> t2 + t1"] }) });
+    await vi.waitFor(() => expect(text('[data-metric="unbacked"] .value')).toBe("0 of 3 · SANDBOX increase · checked 2027-01-15T08:20:00Z · 1 paid twice"));
+    expect(document.querySelector('[data-metric="unbacked"]')?.hasAttribute("data-alert")).toBe(true);
+  });
+
   it("names the window and the registry root it rests on", async () => {
     setup();
     await vi.waitFor(() =>

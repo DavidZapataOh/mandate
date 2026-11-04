@@ -792,7 +792,7 @@ def test_cli_sandbox_rail_needs_a_state_dir(monkeypatch, capsys, dist):
 
 def test_cli_refuses_a_readable_gate_key(monkeypatch, capsys, dist, tmp_path):
     state = tmp_path / "state"
-    state.mkdir()
+    state.mkdir(mode=0o700)
     (state / "gate.key").write_bytes(b"\x01" * 32)
     (state / "gate.key").chmod(0o644)
     with pytest.raises(SystemExit) as stopped:
@@ -853,6 +853,18 @@ def test_cli_refuses_a_state_dir_another_process_holds(
     assert capsys.readouterr().err == "state: directory in use\n"
 
 
+def test_cli_refuses_a_state_dir_others_can_read(monkeypatch, capsys, dist, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    state.chmod(0o755)
+    with pytest.raises(SystemExit) as stopped:
+        _run_cli(
+            monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
+        )
+    assert stopped.value.code == 2
+    assert capsys.readouterr().err == ("state: directory must be private (chmod 700)\n")
+
+
 @pytest.mark.parametrize(
     ("failure", "reason"),
     [
@@ -880,6 +892,7 @@ def test_cli_refuses_a_corrupt_store(monkeypatch, capsys, dist, tmp_path):
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     (state / "state.db").write_bytes(b"not a database" * 100)
+    (state / "state.db").chmod(0o600)
     with pytest.raises(SystemExit) as stopped:
         _run_cli(
             monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state)
@@ -899,7 +912,17 @@ async def test_cli_reconciles_once_at_start(monkeypatch, capsys, dist, tmp_path)
     assert (bank["rail"], bank["transfers"], bank["error"]) == ("simulated", 0, None)
 
 
-def test_the_reconcile_loop_repeats_until_stopped(make_desk, monkeypatch):
+@pytest.mark.parametrize(
+    "raised",
+    [
+        sqlite3.OperationalError("database is locked"),
+        AttributeError("data"),
+        KeyError("sd"),
+    ],
+)
+def test_the_reconcile_loop_repeats_until_stopped(
+    make_desk, monkeypatch, caplog, raised
+):
     desk, _ = make_desk()
     runs = []
     stop = threading.Event()
@@ -908,12 +931,32 @@ def test_the_reconcile_loop_repeats_until_stopped(make_desk, monkeypatch):
         runs.append(1)
         if len(runs) == 3:
             stop.set()
-        # A locked store skips one round; the next one tries again.
-        raise sqlite3.OperationalError("database is locked")
+        # A failed round is logged; the next one tries again.
+        raise raised
 
     monkeypatch.setattr(desk, "reconcile", counted)
     console.reconcile_every(desk, 0.001, stop).join(timeout=5)
     assert len(runs) == 3
+    logged = [r.getMessage() for r in caplog.records if r.name == "swarm.console"]
+    assert logged == [f"reconcile failed ({type(raised).__name__})"] * 3
+    assert all(str(raised) not in line for line in logged)
+
+
+@pytest.mark.anyio
+async def test_a_start_whose_reconcile_fails_serves_and_says_why(
+    monkeypatch, capsys, dist, tmp_path
+):
+    def broken(self, ledger):
+        raise AttributeError("data")
+
+    monkeypatch.setattr(PaymentDesk, "_reconcile_bank", broken)
+    seen, _ = _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"),
+    )  # fmt: skip
+    async with _asgi(seen["app"]) as http:
+        bank = (await http.get("/api/provenance")).json()["bank"]
+    assert (bank["rail"], bank["error"]) == ("simulated", "reconcile: failed")
 
 
 def test_a_stopped_console_closes_its_store(monkeypatch, capsys, dist, tmp_path):

@@ -33,6 +33,8 @@ describe("parseProvenance", () => {
     ["a fractional count", JSON.stringify({ ...body, bank: { ...bank, transfers: 1.5 } })],
     ["a list holding a number", JSON.stringify({ ...body, bank: { ...bank, missing: [1] } })],
     ["a provider that is not text", JSON.stringify({ ...body, bank: { ...bank, provider: 3 } })],
+    ["a bank block missing paid_twice", JSON.stringify({ ...body, bank: { ...bank, paid_twice: undefined } })],
+    ["unreadable holding a number", JSON.stringify({ ...body, bank: { ...bank, unreadable: [2] } })],
     ["a rule missing consent_required", JSON.stringify({
       ...body, policies: [{ ...body.policies[0], rules: [{ ...body.policies[0].rules[0], consent_required: undefined }] }],
     })],

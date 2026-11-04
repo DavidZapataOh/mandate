@@ -867,8 +867,8 @@ OPERATOR_DETAIL = (
 )
 TOO_EARLY_DETAIL = (
     f"The bank holds no transfer under {FIRST_KEY} yet, and one may still "
-    "commit. This intent pays nothing more until a lookup at least 60 s after "
-    "the attempt still finds nothing; try again later."
+    "commit. This intent pays nothing more until its certificate has expired "
+    "and a lookup at least 60 s later still finds nothing; try again later."
 )
 
 
@@ -898,12 +898,13 @@ def test_a_lookup_finding_a_differing_transfer_never_pays_or_releases(
     assert len(rail.calls) == 1
 
 
-def test_an_empty_lookup_inside_the_settle_window_releases_nothing(
-    make_desk, sign_quote
+@pytest.mark.parametrize("later", [59, 61, 300, 359])
+def test_an_empty_lookup_before_the_certificate_expired_and_settled_releases_nothing(
+    make_desk, sign_quote, later
 ):
     now = [NOW]
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
-    now[0] = NOW + 59
+    now[0] = NOW + later
     view = desk.reconcile_intent("i:000001")
     assert (view["status"], view["detail"]) == ("unsettled", TOO_EARLY_DETAIL)
     assert len(rail.lookups) == 1
@@ -911,14 +912,15 @@ def test_an_empty_lookup_inside_the_settle_window_releases_nothing(
     assert len(rail.calls) == 1
 
 
-def test_an_empty_lookup_after_the_settle_window_releases_the_intent(
+def test_an_empty_lookup_after_expiry_and_the_settle_window_releases_the_intent(
     make_desk, sign_quote
 ):
     now = [NOW]
     desk, holder, rail, _ = _unsettled(make_desk, sign_quote, clock=lambda: now[0])
-    now[0] = NOW + 30
-    assert desk.reconcile_intent("i:000001")["status"] == "unsettled"
     now[0] = NOW + 60
+    assert desk.reconcile_intent("i:000001")["status"] == "unsettled"
+    # The certificate lives 300 s; a transfer under it may still commit.
+    now[0] = NOW + 300 + 60
     assert desk.reconcile_intent("i:000001")["status"] == "signed"
     assert len(rail.lookups) == 2
     assert desk.registry.size() == 1

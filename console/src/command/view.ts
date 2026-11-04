@@ -4,7 +4,7 @@ import { attackLabel } from "../scene/cues";
 import type { LineStore } from "../store/store";
 import type { ConsoleLine } from "../wire/types";
 import { computePosture, counted, DEFINITIONS, formatCents, LABELS, type Posture } from "./posture";
-import { type Provenance, provenanceOf, type ServerProvenance } from "./provenance";
+import { bankAlert, type Provenance, provenanceOf, type ServerProvenance } from "./provenance";
 import { attackTotal, buildReport, latencyParts, lineCount, metricValue, NOT_STOPPED, reportFileName, reportJson, reportMarkdown, stoppedAtParts, TILES } from "./report";
 import { APPLICABILITY, CONTROLS, DISCLAIMER, evidenceText, registryText } from "./standards";
 
@@ -301,7 +301,7 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
       const zero = String(value === "0" || value === "0.00");
       if (tile.article.dataset["zero"] !== zero) tile.article.dataset["zero"] = zero;
       if (key === "unbacked") {
-        const alert = (prov.bank?.unbacked.length ?? 0) > 0;
+        const alert = bankAlert(prov);
         if (tile.article.hasAttribute("data-alert") !== alert) tile.article.toggleAttribute("data-alert", alert);
       }
       setText(tile.drill, showText(metricSeqs(key, posture).length));

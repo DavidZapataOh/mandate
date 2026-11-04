@@ -30,6 +30,11 @@ export interface BankCheck {
   readonly missing: readonly string[];
   readonly resolved: readonly string[];
   readonly pending: readonly string[];
+  /** `<intent id> -> <payment id> + <payment id>` for each intent more than one transfer paid. */
+  readonly paid_twice: readonly string[];
+  /** `<kind> <key>` for each stored journal or receipt the check could not read. */
+  readonly unreadable: readonly string[];
+  /** Why the check could not run, or null; `checked_at` is then the time it failed. */
   readonly error: string | null;
 }
 
@@ -86,7 +91,7 @@ function validPolicy(v: unknown): boolean {
 
 const BANK_KEYS = [
   "rail", "provider", "since", "checked_at", "transfers", "certified",
-  "unbacked", "missing", "resolved", "pending", "error",
+  "unbacked", "missing", "resolved", "pending", "paid_twice", "unreadable", "error",
 ] as const;
 
 const texts = (v: unknown): boolean => Array.isArray(v) && v.every(text);
@@ -99,6 +104,7 @@ function validBank(v: unknown): boolean {
       (v["provider"] === null || text(v["provider"])) &&
       text(v["since"]) && count(v["checked_at"]) && count(v["transfers"]) && count(v["certified"]) &&
       texts(v["unbacked"]) && texts(v["missing"]) && texts(v["resolved"]) && texts(v["pending"]) &&
+      texts(v["paid_twice"]) && texts(v["unreadable"]) &&
       (v["error"] === null || text(v["error"])))
   );
 }
@@ -135,10 +141,19 @@ export function bankText(prov: Provenance): string {
   if (prov.epoch === null) return "server provenance unavailable";
   const b = prov.bank;
   if (b === null) return "not reconciled yet";
-  if (b.error !== null) return `not checked: ${b.error}`;
-  const rail = b.provider === null ? b.rail.toUpperCase() : `${b.rail.toUpperCase()} ${b.provider}`;
   const at = new Date(b.checked_at * 1000).toISOString().replace(".000", "");
-  return `${b.unbacked.length} of ${b.transfers} · ${rail} · checked ${at}`;
+  // A failed check names its own time, so an older success never reads as current.
+  if (b.error !== null) return `not checked: ${b.error} · ${at}`;
+  const rail = b.provider === null ? b.rail.toUpperCase() : `${b.rail.toUpperCase()} ${b.provider}`;
+  const twice = b.paid_twice.length > 0 ? ` · ${b.paid_twice.length} paid twice` : "";
+  const unread = b.unreadable.length > 0 ? ` · ${b.unreadable.length} unreadable` : "";
+  return `${b.unbacked.length} of ${b.transfers} · ${rail} · checked ${at}${twice}${unread}`;
+}
+
+/** Whether the bank check names money nothing explains: an unbacked transfer or an intent paid twice. */
+export function bankAlert(prov: Provenance): boolean {
+  const b = prov.bank;
+  return b !== null && (b.unbacked.length > 0 || b.paid_twice.length > 0);
 }
 
 /** What a window rests on: epoch, bounds, registry root and policies, each with where it came from. */

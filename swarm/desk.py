@@ -5,6 +5,7 @@ import dataclasses
 import json
 import logging
 import os
+import sqlite3
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -30,7 +31,7 @@ from evidence.zktls import (
     ZktlsError,
 )
 from gate.cava import ACTION_SALT_LEN, CavaAction, Freshness, canonical_bytes
-from gate.certs import generate_keypair, public_key_of
+from gate.certs import DEFAULT_TTL_S, generate_keypair, public_key_of
 from gate.consent import (
     Consent,
     ConsentLedger,
@@ -67,14 +68,21 @@ _STATEMENT_TTL_S = 300
 # bound intent pays nothing more until a lookup by the idempotency key settles it.
 _DIFFERS = "bank: transfer differs"
 _UNSETTLED = ("bank: outcome unknown", "bank: not complete", _DIFFERS)
-# A lookup that finds nothing releases an intent only this long after the
-# attempt: a transfer whose answer was lost may still be committing.
+# A lookup that finds nothing releases an intent only this long after its
+# certificate expired: a transfer whose answer was lost may still be
+# committing, or not yet listed, while the certificate lives and just after.
 SETTLE_WINDOW_S = 60
 _NOT_YET = "bank: no transfer yet"
 _OUTCOME_UNKNOWN = "bank: outcome unknown"
 _NOT_COMPLETE = "bank: not complete"
 _RECONCILED = "ok: reconciled at the bank"
 _NOT_PAID = "bank: no transfer under this certificate"
+_UNREADABLE = "state: store unreadable"
+_ROUND_FAILED = "reconcile: failed"
+_STATE_DOWN = "state: unavailable"
+_BANK_DOWN = "bank: unavailable"
+# A journal another path settled while this round asked the bank.
+_GONE = ""
 _BYTE_FIELDS = ("signature", "consent_key", "key_signature")
 _T = TypeVar("_T")
 
@@ -208,12 +216,26 @@ class PaymentDesk:
         # a desk without a store names no such boundary.
         self._genesis = ""
         self._reconciliation: dict[str, Any] | None = None
+        # Payment ids by intent, for every intent more than one transfer paid.
+        self._paid_twice: dict[str, list[str]] = {}
         # HTTP routes and the MCP session run on different threads.
         self._lock = threading.Lock()
+        # One reconciliation round at a time; it holds the desk lock only
+        # between bank calls, never across one.
+        self._rounds = threading.Lock()
         if state is not None:
             self._load(state)
 
     def _load(self, state: StateStore) -> None:
+        """Adopt the stored desk; a row that does not read stops the start."""
+        try:
+            self._read(state)
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            if isinstance(exc, ValueError) and str(exc).startswith("state: "):
+                raise
+            raise ValueError(_UNREADABLE) from exc
+
+    def _read(self, state: StateStore) -> None:
         genesis = state.get("genesis")
         if genesis is None:
             genesis = iso_utc(self._clock())
@@ -232,9 +254,13 @@ class PaymentDesk:
         self._receipts = {k: json.loads(v) for k, v in state.records("result")}
         self._proofs = {k: json.loads(v) for k, v in state.records("receipt")}
         self._closed = {k: json.loads(v) for k, v in state.records("quote")}
+        self._paid_twice = {
+            k: _texts(json.loads(v)) for k, v in state.records("paid_twice")
+        }
         for quote_id, value in state.records("pending"):
+            journal = _journal_from(value)
             if quote_id not in self._closed:
-                self._crashed(quote_id, json.loads(value))
+                self._crashed(quote_id, journal)
 
     def _crashed(self, quote_id: str, journal: dict[str, Any]) -> None:
         """Adopt a confirm the process died in after the certificate existed.
@@ -464,25 +490,36 @@ class PaymentDesk:
     def reconcile(self) -> Reconciliation:
         """Reconcile the whole desk with the bank.
 
-        Settles every journaled payment (see ``_settle_journal``), in quote
+        Settles every journaled payment (see ``_settle_found``), in quote
         order, then compares the transfers the bank lists from the debit
         account since the registry began with the sealed receipts. Reads
         only; the bank is never asked to move money. The view is kept as the
         latest reconciliation. A bank that cannot be read stops the settling
         and is named in ``error``; the comparison then does not run and
-        writes nothing.
+        writes nothing. A stored journal or receipt that cannot be read is
+        named in ``unreadable`` and skipped.
+
+        The desk lock is held only between bank calls, so the desk keeps
+        answering while the bank is asked; each settlement re-reads its
+        journal under the lock first. One round runs at a time.
 
         Returns:
             The ``Reconciliation``.
 
         Raises:
             ValueError: If the rail cannot list its transfers.
+            Exception: Whatever else stopped the round, after a view naming
+                the failure and its time was kept as the latest one.
         """
         ledger = self.bank
         if not isinstance(ledger, TransferLedger):
             raise ValueError("reconcile: the rail cannot list transfers")
-        with self._lock:
-            return self._reconcile_bank(ledger)
+        with self._rounds:
+            try:
+                return self._reconcile_bank(ledger)
+            except Exception as exc:
+                self._round_failed(ledger, exc)
+                raise
 
     def latest_reconciliation(self) -> dict[str, Any] | None:
         """View of the newest reconciliation, or None before the first one."""
@@ -491,101 +528,247 @@ class PaymentDesk:
             return None if latest is None else json.loads(json.dumps(latest))
 
     def _reconcile_bank(self, ledger: TransferLedger) -> Reconciliation:
-        resolved, pending, error = self._settle_journals(ledger)
-        transfers = certified = 0
-        unbacked: tuple[str, ...] = ()
-        missing: tuple[str, ...] = ()
+        with self._lock:
+            journals = [] if self._state is None else self._state.records("pending")
+        resolved, pending, unreadable, error = self._settle_journals(
+            ledger, sorted(journals)
+        )
+        with self._lock:
+            before = set(self._sealed(ledger.rail)[0])
+        listed: list[BankTransfer] | None = None
         if error is None:
             try:
-                listed = ledger.transfers(self._source, self._genesis)
+                listed = _listing(ledger, self._source, self._genesis)
             except RailError as exc:
                 error = str(exc)
-            else:
-                sealed = self._sealed(ledger.rail)
+        with self._lock:
+            # Sealed after the listing, so a payment the bank listed is
+            # certified; missing only if it was sealed before the listing.
+            sealed, bad = self._sealed(ledger.rail)
+            transfers = certified = 0
+            unbacked: tuple[str, ...] = ()
+            missing: tuple[str, ...] = ()
+            if listed is not None:
+                self._late_transfers(listed)
                 certified, unbacked, missing = compare(listed, sealed, ledger.rail)
+                missing = tuple(pid for pid in missing if pid in before)
                 transfers = sum(1 for t in listed if t.status != CANCELED)
-        report = Reconciliation(
-            ledger.rail,
-            ledger.provider,
-            self._genesis,
-            self._clock(),
-            transfers,
-            certified,
-            unbacked,
-            missing,
-            resolved,
-            pending,
-            error,
-        )
+            report = Reconciliation(
+                ledger.rail,
+                ledger.provider,
+                self._genesis,
+                self._clock(),
+                transfers,
+                certified,
+                unbacked,
+                missing,
+                resolved,
+                pending,
+                self._twice(),
+                (*unreadable, *bad),
+                error,
+            )
+            self._keep_reconciliation(report)
+            return report
+
+    def _round_failed(self, ledger: TransferLedger, exc: Exception) -> None:
+        """Keep a view saying the round failed and when, never a stale success."""
+        reason = _STATE_DOWN if isinstance(exc, sqlite3.Error) else _ROUND_FAILED
+        with self._lock:
+            report = Reconciliation(
+                ledger.rail,
+                ledger.provider,
+                self._genesis,
+                self._clock(),
+                0,
+                0,
+                (),
+                (),
+                (),
+                (),
+                self._twice(),
+                (),
+                reason,
+            )
+            try:
+                self._keep_reconciliation(report)
+            except sqlite3.Error:
+                self._reconciliation = report.view()
+
+    def _keep_reconciliation(self, report: Reconciliation) -> None:
         view = report.view()
+        self._reconciliation = view
         if self._state is not None:
             self._state.put("reconciliation", json.dumps(view))
-        self._reconciliation = view
-        return report
 
-    def _sealed(self, rail: str) -> dict[str, tuple[str, bool]]:
-        """Each stored receipt on a rail: its jti and whether its entry is ours."""
-        sealed: dict[str, tuple[str, bool]] = {}
-        for receipt in self._proofs.values():
-            bank = _jws_payload(receipt["sd"].split("~")[0]).get("bank")
-            if bank is None or bank.get("rail") != rail:
+    def _second_payment(self, iid: str, payment_id: str) -> list[str] | None:
+        """The intent's payments with ``payment_id`` added, when it paid already."""
+        bound = self._intents.get(iid)
+        if bound is None or bound.payment_id in (None, payment_id):
+            return None
+        first = self._paid_twice.get(iid) or [str(bound.payment_id)]
+        return None if payment_id in first else [*first, payment_id]
+
+    def _note_twice(self, iid: str, payments: list[str]) -> None:
+        self._paid_twice[iid] = payments
+        _log.error("intent %s paid more than once: %s", iid, ", ".join(payments))
+
+    def _late_transfers(self, listed: list[BankTransfer]) -> None:
+        """Name every listed transfer under a released key whose intent paid again."""
+        if self._state is None:
+            return
+        released: dict[str, Any] = {}
+        for key, value in self._state.records("released"):
+            try:
+                released[key] = json.loads(value)
+            except ValueError:
                 continue
-            entry = LogEntry(**receipt["registry"]["entry"])
+        for transfer in listed:
+            iid = released.get(transfer.idempotency_key or "")
+            if not isinstance(iid, str) or not iid or transfer.status == CANCELED:
+                continue
+            twice = self._second_payment(iid, transfer.transfer_id)
+            if twice is not None:
+                self._put("paid_twice", iid, twice)
+                self._note_twice(iid, twice)
+
+    def _twice(self) -> tuple[str, ...]:
+        return tuple(
+            f"{iid} -> {' + '.join(pids)}" for iid, pids in self._paid_twice.items()
+        )
+
+    def _sealed(self, rail: str) -> tuple[dict[str, tuple[str, bool]], list[str]]:
+        """Each stored receipt on a rail: its jti and whether its entry is ours.
+
+        Returns:
+            The sealed map, and ``receipt <payment id>`` for each stored
+            receipt that does not read.
+        """
+        sealed: dict[str, tuple[str, bool]] = {}
+        bad: list[str] = []
+        for payment_id, receipt in self._proofs.items():
+            try:
+                bank = _jws_payload(receipt["sd"].split("~")[0]).get("bank")
+                if bank is None or bank.get("rail") != rail:
+                    continue
+                entry = LogEntry(**receipt["registry"]["entry"])
+                jti = _jws_payload(receipt["certificate"])["jti"]
+            except Exception:
+                bad.append(f"receipt {payment_id}")
+                continue
             ours = 0 < entry.seq <= self.registry.size()
             ours = ours and self.registry.entry(entry.seq) == entry
-            jti = _jws_payload(receipt["certificate"])["jti"]
             sealed[receipt["payment_id"]] = (jti, ours)
-        return sealed
+        return sealed, bad
 
     def _settle_journals(
-        self, ledger: TransferLedger
-    ) -> tuple[tuple[str, ...], tuple[str, ...], str | None]:
-        """Settle every journaled payment the bank can now answer for."""
-        if self._state is None:
-            return (), (), None
+        self, ledger: TransferLedger, journals: list[tuple[str, str]]
+    ) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...], str | None]:
+        """Settle every journaled payment the bank can now answer for.
+
+        Each lookup runs outside the desk lock; its settlement runs under it.
+
+        Returns:
+            The resolved and pending lists, the journals that do not read,
+            and why the bank could not be read (or None).
+        """
         resolved: list[str] = []
         pending: list[str] = []
+        unreadable: list[str] = []
         error: str | None = None
-        for quote_id, value in sorted(self._state.records("pending")):
-            if error is not None or not self.registry.has_room():
+        for quote_id, value in journals:
+            if error is not None:
                 pending.append(quote_id)
                 continue
             try:
-                outcome = self._settle_journal(ledger, quote_id, json.loads(value))
+                journal = _journal_from(value)
+            except ValueError:
+                unreadable.append(f"pending {quote_id}")
+                continue
+            if not _on_rail(journal, ledger.rail):
+                pending.append(quote_id)
+                continue
+            try:
+                transfer, held = self._look_up(ledger, journal)
             except RailError as exc:
                 error = str(exc)
-                outcome = None
+                pending.append(quote_id)
+                continue
+            try:
+                with self._lock:
+                    outcome = self._settle_found(
+                        quote_id, value, journal, transfer, held
+                    )
+            except sqlite3.Error:
+                raise
+            except Exception as exc:
+                # Only the type: a message could carry consent fields or keys.
+                _log.error("journal %s not settled (%s)", quote_id, type(exc).__name__)
+                unreadable.append(f"pending {quote_id}")
+                continue
             if outcome is None:
                 pending.append(quote_id)
-            else:
+            elif outcome != _GONE:
                 resolved.append(f"{quote_id} -> {outcome}")
-        return tuple(resolved), tuple(pending), error
+        return tuple(resolved), tuple(pending), tuple(unreadable), error
 
-    def _settle_journal(
-        self, ledger: TransferLedger, quote_id: str, journal: dict[str, Any]
+    def _look_up(
+        self, ledger: TransferLedger, journal: dict[str, Any]
+    ) -> tuple[BankTransfer | None, Payment | None]:
+        """Ask the bank for a journal's transfer; no desk state is touched.
+
+        Returns:
+            The transfer held under the journal's key (or None), and the
+            bank's payment for it when it is complete and the journal's.
+
+        Raises:
+            RailError: If the bank cannot be read, or answers with anything
+                that is not a transfer.
+        """
+        try:
+            transfer = ledger.transfer_by_key(journal["idempotency_key"])
+        except RailError:
+            raise
+        except Exception:
+            raise RailError(_BANK_DOWN) from None
+        if transfer is not None and not isinstance(transfer, BankTransfer):
+            raise RailError(_BANK_DOWN)
+        held = None
+        if transfer is not None and transfer.status == "complete":
+            held = self._matching(journal, transfer)
+        return transfer, held
+
+    def _settle_found(
+        self,
+        quote_id: str,
+        value: str,
+        journal: dict[str, Any],
+        transfer: BankTransfer | None,
+        held: Payment | None,
     ) -> str | None:
-        """Settle one journaled payment by a lookup of its idempotency key.
+        """Settle one journaled payment from what a lookup of its key found.
 
         A complete transfer that matches the journal field by field becomes
         the sealed payment; no transfer (or a canceled one) once the
-        certificate has expired becomes a sealed "not paid". Anything else,
-        a transfer still awaiting approval included, stays pending.
+        certificate has expired and ``SETTLE_WINDOW_S`` more have passed
+        becomes a sealed "not paid". Anything else, a transfer still awaiting
+        approval included, stays pending. Runs under the desk lock.
 
         Returns:
-            The transfer id, ``not paid``, or None while it stays pending.
-
-        Raises:
-            RailError: If the bank cannot be read.
+            The transfer id, ``not paid``, ``_GONE`` when the journal changed
+            or was settled since it was read, or None while it stays pending.
         """
-        transfer = ledger.transfer_by_key(journal["idempotency_key"])
+        if self._state is None or self._state.record("pending", quote_id) != value:
+            return _GONE
+        if not self.registry.has_room():
+            return None
         if transfer is not None and transfer.status == "complete":
-            held = self._matching(journal, transfer)
             if held is None:
                 return None
             self._seal_transfer(quote_id, journal, held)
             return held.payment_id
         absent = transfer is None or transfer.status == CANCELED
-        if absent and self._clock() > journal["expires_at"]:
+        if absent and self._clock() >= _release_at(journal["expires_at"]):
             self._seal_not_paid(quote_id, journal)
             return "not paid"
         return None
@@ -607,9 +790,13 @@ class PaymentDesk:
         except RailError as exc:
             if str(exc) in (_DIFFERS, _NOT_COMPLETE):
                 return None
-            raise RailError("bank: unavailable") from None
+            raise RailError(_BANK_DOWN) from None
         except ValueError:
             return None
+        except Exception:
+            raise RailError(_BANK_DOWN) from None
+        if held is not None and not isinstance(held, Payment):
+            raise RailError(_BANK_DOWN)
         if held is None or held.payment_id != transfer.transfer_id:
             return None
         return held if _same_payment(held, request, key) else None
@@ -646,6 +833,7 @@ class PaymentDesk:
         iid = journal["intent_id"] or ""
         bound = self._intents.get(iid)
         changes = _paid_changes(bound, quote_id, payment.payment_id)
+        twice = self._second_payment(iid, payment.payment_id)
 
         def work() -> tuple[InclusionProof, dict[str, Any]]:
             seq, seal = self._append("execution", body)
@@ -671,10 +859,14 @@ class PaymentDesk:
             self._put("quote", quote_id, result)
             if bound is not None and changes:
                 self._put("intent", iid, _intent_record(_replace(bound, changes)))
+            if twice is not None:
+                self._put("paid_twice", iid, twice)
             self._drop("pending", quote_id)
             return proof, receipt
 
         proof, receipt = self._durably(work)
+        if twice is not None:
+            self._note_twice(iid, twice)
         self._proofs[payment.payment_id] = receipt
         self._receipts[payment.payment_id] = result
         if bound is not None:
@@ -694,7 +886,11 @@ class PaymentDesk:
         self._emit("confirm", result, consent, None, forensic)
 
     def _seal_not_paid(self, quote_id: str, journal: dict[str, Any]) -> None:
-        """Seal that an expired certificate moved no money; release its intent."""
+        """Seal that an expired certificate moved no money; release its intent.
+
+        The released key is kept, so a transfer the bank lists under it later
+        is named as a second payment of the intent once it has paid again.
+        """
         result: dict[str, Any] = {
             "status": "denied",
             "quote_id": quote_id,
@@ -712,6 +908,7 @@ class PaymentDesk:
             self._put("quote", quote_id, result)
             if bound is not None and changes:
                 self._put("intent", iid, _intent_record(_replace(bound, changes)))
+            self._put("released", journal["idempotency_key"], iid)
             self._drop("pending", quote_id)
 
         self._durably(work)
@@ -720,10 +917,11 @@ class PaymentDesk:
         self._close_quote(quote_id, result)
 
     def _journal_of(self, quote_id: str) -> dict[str, Any] | None:
+        """The quote's journal; ValueError when it is stored but does not read."""
         if self._state is None:
             return None
         value = self._state.record("pending", quote_id)
-        return None if value is None else dict(json.loads(value))
+        return None if value is None else _journal_from(value)
 
     def reconcile_intent(self, intent_id: str) -> dict[str, Any]:
         """Settle an unsettled intent by one bank lookup of its idempotency key.
@@ -731,9 +929,11 @@ class PaymentDesk:
         A transfer found complete and matching spends the intent: the quote
         that sent it becomes confirmed and an execution entry is sealed. No
         transfer under the key releases the intent for a new quote, but only
-        once ``SETTLE_WINDOW_S`` have passed since the attempt; earlier it
-        stays unsettled. A differing transfer, or a lookup that cannot tell,
-        leaves it unsettled.
+        once its certificate has expired and ``SETTLE_WINDOW_S`` more have
+        passed; earlier it stays unsettled. With a journal the release is the
+        reconciler's: a sealed "not paid" that closes the journal. A
+        differing transfer, a lookup that cannot tell, or a journal that does
+        not read leaves it unsettled.
 
         Args:
             intent_id: Intent to settle.
@@ -750,6 +950,12 @@ class PaymentDesk:
             if not self.registry.has_room():
                 return self._intent_view(intent_id)
             try:
+                journal = self._journal_of(pending.quote_id)
+            except ValueError:
+                return self._intent_view(intent_id)
+            if journal is not None and not _on_rail(journal, self.bank.rail):
+                return self._intent_view(intent_id)
+            try:
                 payment = self.bank.reconcile(
                     pending.request, pending.action_hash, pending.key
                 )
@@ -757,12 +963,18 @@ class PaymentDesk:
                 still = dataclasses.replace(pending, reason=str(exc))
                 self._keep_intent(intent_id, found, unsettled=still)
                 return self._intent_view(intent_id)
-            if payment is None and self._clock() - pending.since < SETTLE_WINDOW_S:
+            expires = (
+                pending.since + DEFAULT_TTL_S
+                if journal is None
+                else journal["expires_at"]
+            )
+            if payment is None and self._clock() < _release_at(expires):
                 still = dataclasses.replace(pending, reason=_NOT_YET)
                 self._keep_intent(intent_id, found, unsettled=still)
                 return self._intent_view(intent_id)
-            journal = self._journal_of(pending.quote_id)
-            if payment is None:
+            if payment is None and journal is not None:
+                self._seal_not_paid(pending.quote_id, journal)
+            elif payment is None:
                 self._keep_intent(intent_id, found, unsettled=None)
             elif journal is not None:
                 # One settlement for both paths: a receipt the reconciler counts.
@@ -1163,6 +1375,8 @@ class PaymentDesk:
                 "holder_key": _b64(self._holder_of(c)),
                 "idempotency_key": idempotency_key(claims["jti"]),
                 "expires_at": claims["exp"],
+                # Only the bank that was called can say what it holds.
+                "rail": self.bank.rail,
             }
             state.put_record("pending", quote_id, _dumps(entry))
 
@@ -1519,6 +1733,68 @@ def _action_from(record: dict[str, Any]) -> CavaAction:
     )
 
 
+def _release_at(expires_at: int) -> int:
+    """When a lookup that finds nothing may release a certificate's intent."""
+    return int(expires_at) + SETTLE_WINDOW_S
+
+
+def _texts(value: Any) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError(_UNREADABLE)
+    return value
+
+
+def _journal_from(value: str) -> dict[str, Any]:
+    """A stored journal, checked field by field.
+
+    Raises:
+        ValueError: ``state: store unreadable`` when any field the settling
+            reads does not parse.
+    """
+    try:
+        journal = json.loads(value)
+        Consent(**_consent_from(journal["consent"]))
+        _journal_hash(journal)
+        base64.b64decode(journal["holder_key"], validate=True)
+        _jws_payload(journal["certificate"])["jti"]
+        usable = (
+            isinstance(journal["quote_id"], str)
+            and isinstance(journal["idempotency_key"], str)
+            and type(journal["expires_at"]) is int
+            and (journal["intent_id"] is None or isinstance(journal["intent_id"], str))
+            and isinstance(journal.get("rail", ""), str)
+        )
+    except Exception as exc:
+        raise ValueError(_UNREADABLE) from exc
+    if not usable:
+        raise ValueError(_UNREADABLE)
+    return dict(journal)
+
+
+def _on_rail(journal: dict[str, Any], rail: str) -> bool:
+    """Whether a journal was written on ``rail``.
+
+    A journal written before journals named their rail counts as the
+    current rail's.
+    """
+    return bool(journal.get("rail", rail) == rail)
+
+
+def _listing(ledger: TransferLedger, source: str, since: str) -> list[BankTransfer]:
+    """The bank's listing; anything that is not a list of transfers is unavailable."""
+    try:
+        listed = ledger.transfers(source, since)
+    except RailError:
+        raise
+    except Exception:
+        raise RailError(_BANK_DOWN) from None
+    if not isinstance(listed, list) or not all(
+        isinstance(t, BankTransfer) for t in listed
+    ):
+        raise RailError(_BANK_DOWN)
+    return listed
+
+
 def _jws_payload(token: str) -> dict[str, Any]:
     """Claims of a token the desk's gate signed; read, not verified."""
     part = token.split(".")[1]
@@ -1614,9 +1890,9 @@ def _unsettled_detail(pending: _Unsettled) -> str:
     if pending.reason == _NOT_YET:
         return (
             f"The bank holds no transfer under {key} yet, and one may still "
-            "commit. This intent pays nothing more until a lookup at least "
-            f"{SETTLE_WINDOW_S} s after the attempt still finds nothing; try "
-            "again later."
+            "commit. This intent pays nothing more until its certificate has "
+            f"expired and a lookup at least {SETTLE_WINDOW_S} s later still "
+            "finds nothing; try again later."
         )
     return (
         f"The bank has not confirmed whether transfer {key} went through "

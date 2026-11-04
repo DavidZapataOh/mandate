@@ -24,7 +24,17 @@ describe("evidenceText of the bank", () => {
       evidenceText("bank", posture, provenanceOf(window, down, null)),
       evidenceText("bank", posture, provenanceOf(window, null, "demo-1")),
       evidenceText("bank", posture, bare),
-    ]).toEqual(["not checked: bank: unavailable", "not reconciled in a replay", "server provenance unavailable"]);
+    ]).toEqual(["not checked: bank: unavailable · 2027-01-15T08:20:00Z", "not reconciled in a replay", "server provenance unavailable"]);
+  });
+
+  it("names every intent paid twice and every stored row it could not read", () => {
+    const bank = JSON.parse(SERVER_BODY_BANK).bank;
+    const twice = parseProvenance(JSON.stringify({
+      ...JSON.parse(SERVER_BODY), bank: { ...bank, paid_twice: ["i:000001 -> t2 + t1"], unreadable: ["receipt t9"] },
+    }));
+    expect(evidenceText("bank", posture, provenanceOf(window, twice, null))).toBe(
+      "bank lists 3 transfers since 2027-01-15T08:16:40Z: 3 with a certificate and a sealed entry, 0 without; 0 sealed payments missing at the bank; paid twice: i:000001 -> t2 + t1; not read: receipt t9",
+    );
   });
 });
 

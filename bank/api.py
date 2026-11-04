@@ -98,8 +98,8 @@ class Bank:
     Args:
         initial: Mapping of account name to opening balance in integer cents.
         state: Durable store the ledger loads from and writes through to;
-            ``initial`` is used only while it holds no balances. None keeps
-            the ledger in memory.
+            ``initial`` opens only the accounts it does not hold yet. None
+            keeps the ledger in memory.
 
     Raises:
         ValueError: If any opening balance is negative.
@@ -120,13 +120,14 @@ class Bank:
         self._seq = len(self._payments)
 
     def _load(self, state: "StateStore") -> None:
-        stored = state.records("balance")
-        if stored:
-            self._balances = {acct: int(cents) for acct, cents in stored}
-        else:
+        stored = {acct: int(cents) for acct, cents in state.records("balance")}
+        # An account the store does not hold yet opens with its balance.
+        opened = {a: c for a, c in self._balances.items() if a not in stored}
+        if opened:
             with state.transaction():
-                for acct, cents in self._balances.items():
+                for acct, cents in opened.items():
                     state.put_record("balance", acct, str(cents))
+        self._balances = {**stored, **opened}
         for payment_id, value in state.records("payment"):
             payment = Payment(**json.loads(value))
             self._payments[payment_id] = payment
@@ -153,9 +154,9 @@ class Bank:
         Returns:
             The payments from that account, with no creation time.
         """
-        return [
-            _transfer(p) for p in self._payments.values() if p.from_acct == from_acct
-        ]
+        # A snapshot: a payment may be recorded on another thread meanwhile.
+        payments = list(self._payments.values())
+        return [_transfer(p) for p in payments if p.from_acct == from_acct]
 
     def transfer_by_key(self, key: str) -> BankTransfer | None:
         """Return the payment recorded under an idempotency key.

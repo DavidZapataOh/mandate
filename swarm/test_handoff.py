@@ -308,8 +308,11 @@ def test_an_intent_the_bank_never_paid_is_released_for_a_new_run(
     again = _handoff(desk, _paying_agent(fake_meta))
     assert "try again later" in again.start("i:000001")["error"]
     now[0] += 60
+    # The certificate lives 300 s; a transfer under it may still commit.
+    assert "try again later" in again.start("i:000001")["error"]
+    now[0] += 300
     assert again.start("i:000001")["state"] == "quoting"
-    assert len(rail.lookups) == 2
+    assert len(rail.lookups) == 3
 
 
 @pytest.mark.anyio

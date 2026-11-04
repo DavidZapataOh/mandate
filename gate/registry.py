@@ -21,6 +21,7 @@ _ENTRY_KINDS = frozenset({"execution", "denial", "anchor"})
 _DIGEST_LEN = 32
 _HEX64 = re.compile(r"[0-9a-fA-F]{64}")
 _MISMATCH = "state: registry entries do not match their seals"
+_UNSEALED = "state: registry entries past the last seal"
 
 if TYPE_CHECKING:
     from gate.state import StateStore
@@ -115,11 +116,13 @@ class Registry:
             max_entries: Budget on appended entries.
             keypair: Raw Ed25519 (private, public) key pair that signs seals.
             state: Durable store to load the log from and write it through to;
-                None keeps the log in memory only.
+                None keeps the log in memory only. Its writer must seal each
+                append in the same transaction as the append.
 
         Raises:
             ValueError: A stored seal does not verify with the keypair's public
-                half, or the stored entries do not match the stored seals.
+                half, the stored entries do not match the stored seals, or
+                entries follow the last seal.
         """
         self._max_entries = max_entries
         self._keypair = keypair
@@ -131,7 +134,11 @@ class Registry:
             self._load(state)
 
     def _load(self, state: "StateStore") -> None:
-        """Adopt the stored log after checking it; nothing is re-signed."""
+        """Adopt the stored log after checking it; nothing is re-signed.
+
+        The newest seal must cover every stored entry: a writer that seals
+        each append in the same transaction never leaves an unsealed tail.
+        """
         entries = state.entries()
         if any(entry.seq != n for n, entry in enumerate(entries, 1)):
             raise ValueError(_MISMATCH)
@@ -151,6 +158,10 @@ class Registry:
             ):
                 raise ValueError(_MISMATCH)
             last = anchor.seq_to
+        # Every append is sealed in the same commit, so a stored entry no
+        # seal covers was written by something other than this registry.
+        if last != len(entries):
+            raise ValueError(_UNSEALED)
         self._entries = entries
         self._anchors = anchors
         self._last_anchored = last

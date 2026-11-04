@@ -68,6 +68,10 @@ class Reconciliation:
         resolved: ``<quote id> -> <transfer id>`` or ``<quote id> -> not paid``
             for each journaled payment settled by this check.
         pending: Quote ids whose journaled payment is still unsettled.
+        paid_twice: ``<intent id> -> <payment id> + <payment id>`` for each
+            intent more than one transfer paid.
+        unreadable: ``<kind> <key>`` for each stored journal or receipt this
+            check could not read; the rest of the check still ran.
         error: Why the bank could not be read, or None.
     """
 
@@ -81,6 +85,8 @@ class Reconciliation:
     missing: tuple[str, ...]
     resolved: tuple[str, ...]
     pending: tuple[str, ...]
+    paid_twice: tuple[str, ...]
+    unreadable: tuple[str, ...]
     error: str | None
 
     def view(self) -> dict[str, Any]:
@@ -96,6 +102,8 @@ class Reconciliation:
             "missing": list(self.missing),
             "resolved": list(self.resolved),
             "pending": list(self.pending),
+            "paid_twice": list(self.paid_twice),
+            "unreadable": list(self.unreadable),
             "error": self.error,
         }
 
@@ -110,7 +118,8 @@ def compare(
     A listed transfer is certified when its idempotency key names the
     certificate of the sealed receipt for the same transfer id and that
     receipt's entry is the registry's; any other transfer that moved money is
-    unbacked. A sealed payment the bank does not list is missing.
+    unbacked. A sealed payment the bank does not list, or lists as canceled,
+    is missing.
 
     Args:
         listed: The transfers the bank lists from the desk's account.
@@ -136,6 +145,6 @@ def compare(
             certified += 1
         else:
             unbacked.append(transfer.transfer_id)
-    held = {transfer.transfer_id for transfer in listed}
+    held = {t.transfer_id for t in listed if t.status != CANCELED}
     missing = tuple(sorted(pid for pid in sealed if pid not in held))
     return certified, tuple(unbacked), missing

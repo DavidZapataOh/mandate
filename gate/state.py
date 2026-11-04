@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import stat
 import tempfile
 import threading
 import time
@@ -57,6 +58,16 @@ def _create_empty(path: Path) -> None:
     _fsync_dir(path.parent)
 
 
+def _check_private(st: os.stat_result, what: str, mode: str) -> None:
+    """Refuse a state file that is not this user's own private regular file."""
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(f"state: {what} must be a regular file")
+    if st.st_uid != os.geteuid():
+        raise ValueError(f"state: {what} must be owned by this user")
+    if st.st_mode & _GROUP_OTHER_BITS:
+        raise ValueError(f"state: {what} must be private (chmod {mode})")
+
+
 def _publish_key(path: Path) -> None:
     """Write a fresh key beside `path`, then link it into place in one step.
 
@@ -94,14 +105,17 @@ class StateStore:
                 file 0600 when missing.
 
         Raises:
-            ValueError: The file is not a readable SQLite database, or was
-                written by an unsupported schema version.
+            ValueError: The file is a link, not this user's, readable by group
+                or others, not a readable SQLite database, or written by an
+                unsupported schema version.
         """
         self._path = path
         if not path.parent.exists():
             path.parent.mkdir(mode=_PRIVATE_DIR, parents=True)
             path.parent.chmod(_PRIVATE_DIR)
         _create_empty(path)
+        # It holds every holder copy and every journaled certificate.
+        _check_private(os.lstat(path), "store", "600")
         self._lock = threading.RLock()
         self._depth = 0
         self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
@@ -155,7 +169,9 @@ class StateStore:
                 yield
             except BaseException:
                 self._depth -= 1
-                if outermost:
+                # SQLite may have rolled back already (a full disk, an I/O
+                # error); a second ROLLBACK would replace the real cause.
+                if outermost and self._db.in_transaction:
                     self._db.execute("ROLLBACK")
                 raise
             self._depth -= 1
@@ -284,17 +300,21 @@ def load_gate_key(path: Path) -> bytes:
         The 32 raw key bytes.
 
     Raises:
-        ValueError: The file is readable by group or others, or is not
-            exactly 32 bytes long.
+        ValueError: The file is a link, not this user's, readable by group or
+            others, or not exactly 32 bytes long.
     """
     for stale in path.parent.glob(f".{path.name}.*.tmp"):
         stale.unlink(missing_ok=True)
     if not path.exists():
         _publish_key(path)
-    fd = os.open(path, os.O_RDONLY)
     try:
-        if os.fstat(fd).st_mode & _GROUP_OTHER_BITS:
-            raise ValueError("state: gate key must be private (chmod 600)")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        if path.is_symlink():
+            raise ValueError("state: gate key must be a regular file") from exc
+        raise
+    try:
+        _check_private(os.fstat(fd), "gate key", "600")
         data = os.read(fd, _KEY_LEN + 1)
     finally:
         os.close(fd)

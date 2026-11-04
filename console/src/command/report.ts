@@ -70,7 +70,8 @@ function orderedBank(b: BankCheck): BankCheck {
   return {
     rail: b.rail, provider: b.provider, since: b.since, checked_at: b.checked_at,
     transfers: b.transfers, certified: b.certified, unbacked: [...b.unbacked], missing: [...b.missing],
-    resolved: [...b.resolved], pending: [...b.pending], error: b.error,
+    resolved: [...b.resolved], pending: [...b.pending], paid_twice: [...b.paid_twice],
+    unreadable: [...b.unreadable], error: b.error,
   };
 }
 

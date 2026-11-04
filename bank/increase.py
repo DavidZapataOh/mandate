@@ -312,20 +312,23 @@ class IncreaseRail:
 
         Raises:
             ValueError: If the account is unknown.
-            RailError: If the bank cannot be read (``bank: unavailable``).
+            RailError: If the bank cannot be read, or its answer is not a
+                list of transfers (``bank: unavailable``).
         """
         account_id = self.account_id(from_acct)
+        # Any answer that does not read as transfers (a proxy's page, an odd
+        # body, a dropped connection) leaves the listing unknown.
         try:
-            listed = list(
-                self._client.account_transfers.list(
+            return [
+                _held(transfer)
+                for transfer in self._client.account_transfers.list(
                     account_id=account_id,
                     created_at={"on_or_after": since},
                     limit=100,
                 )
-            )
-        except (APIConnectionError, APIStatusError):
+            ]
+        except Exception:
             raise RailError("bank: unavailable") from None
-        return [_held(transfer) for transfer in listed]
 
     def transfer_by_key(self, key: str) -> BankTransfer | None:
         """Return the transfer the bank holds under an idempotency key.
@@ -337,14 +340,17 @@ class IncreaseRail:
             The transfer, or None when the bank holds none under the key.
 
         Raises:
-            RailError: If the bank cannot be read (``bank: unavailable``).
+            RailError: If the bank cannot be read, or its answer is not a
+                list of transfers (``bank: unavailable``).
         """
         try:
             page = self._client.account_transfers.list(idempotency_key=key)
-            found = next(iter(page), None)
-        except (APIConnectionError, APIStatusError):
+            held: object = page.data
+            if not isinstance(held, list):
+                raise TypeError("not a list")
+            return _held(held[0]) if held else None
+        except Exception:
             raise RailError("bank: unavailable") from None
-        return None if found is None else _held(found)
 
     def get_balance(self, acct: str) -> int:
         """Return the available balance of an account in integer cents.
@@ -366,7 +372,10 @@ class IncreaseRail:
             raise RailError("bank: unavailable") from None
 
 
-def _held(transfer: AccountTransfer) -> BankTransfer:
+def _held(transfer: object) -> BankTransfer:
+    """The bank's transfer, read field by field; TypeError when it is not one."""
+    if not isinstance(transfer, AccountTransfer):
+        raise TypeError("not a transfer")
     return BankTransfer(
         transfer.id,
         transfer.amount,

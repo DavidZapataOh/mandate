@@ -28,6 +28,7 @@ export const SERVER_BODY_BANK = JSON.stringify({
   ...JSON.parse(SERVER_BODY),
   bank: {
     rail: "sandbox", provider: "increase", since: "2027-01-15T08:16:40Z", checked_at: 1800001200,
-    transfers: 3, certified: 3, unbacked: [], missing: [], resolved: [], pending: [], error: null,
+    transfers: 3, certified: 3, unbacked: [], missing: [], resolved: [], pending: [],
+    paid_twice: [], unreadable: [], error: null,
   },
 });

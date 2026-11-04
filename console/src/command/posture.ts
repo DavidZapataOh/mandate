@@ -112,7 +112,7 @@ export const DEFINITIONS: Readonly<Record<MetricKey, string>> = {
   rails:
     "Verified payments in this window grouped by the rail that moved the money, as each payment line names it (for example SANDBOX or SIMULATED).",
   unbacked:
-    "Account transfers the bank itself lists from the desk's debit account since this registry began that carry no idempotency key naming a certificate this desk issued, or have no sealed execution entry in the registry. A read-only reconciler asks the bank's own API; 0 means every payment that left the account at the bank has a certificate and a receipt. Sealed payments the bank does not list are named in the evidence.",
+    "Account transfers the bank itself lists from the desk's debit account since this registry began that carry no idempotency key naming a certificate this desk issued, or have no sealed execution entry in the registry. A read-only reconciler asks the bank's own API; 0 means every payment that left the account at the bank has a certificate and a receipt. A confirmed payment whose proof receipt could not be built counts as without. Sealed payments the bank does not list, or lists as canceled, are named in the evidence. An intent that more than one transfer paid is named as paid twice and flags the tile.",
 };
 
 const ATTACK_LAYERS: Readonly<Record<string, string>> = {

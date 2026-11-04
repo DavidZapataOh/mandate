@@ -50,6 +50,7 @@ class RecordingRail:
         self.provider = "increase"
         self.listed: list[BankTransfer] = []
         self.listed_error: Exception | None = None
+        self.paid_id = "account_transfer_t1"
 
     @property
     def rail(self) -> str:
@@ -108,7 +109,7 @@ class RecordingRail:
         self, request: PaymentRequest, action_hash: str, idempotency_key: str | None
     ) -> Payment:
         return Payment(
-            "account_transfer_t1",
+            self.paid_id,
             request.from_acct,
             request.to_acct,
             request.amount_cents,

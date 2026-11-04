@@ -1,9 +1,12 @@
 import base64
 import sqlite3
+import threading
 
+import anyio
 import pytest
 
 from bank.conftest import SENTINEL_KEY, RecordingRail
+from swarm.desk import PaymentDesk
 from swarm.hub import EventHub
 from swarm.server import build_server
 from swarm.test_server import FOREIGN, PAIR, _asgi
@@ -25,7 +28,8 @@ async def test_reconcile_route_reports_without_the_key(make_desk, state_store):
     assert resp.json() == {
         "rail": "sandbox", "provider": "increase", "since": "2027-01-15T08:16:40Z",
         "checked_at": 1800001000, "transfers": 0, "certified": 0, "unbacked": [],
-        "missing": [], "resolved": [], "pending": [], "error": None,
+        "missing": [], "resolved": [], "pending": [], "paid_twice": [],
+        "unreadable": [], "error": None,
     }  # fmt: skip
     assert resp.headers["cache-control"] == "no-store"
     assert prov.json()["bank"] == resp.json()
@@ -87,3 +91,58 @@ async def test_a_failed_commit_answers_a_clean_error(
         resp = await http.post(path, json=body)
     assert (resp.status_code, resp.json()) == (503, {"error": "state: unavailable"})
     assert "Traceback" not in resp.text
+
+
+class _Gated(RecordingRail):
+    """A rail whose listing waits until the test lets it answer."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.done = False
+
+    def transfers(self, from_acct, since):
+        self.started.set()
+        self.release.wait(5)
+        self.done = True
+        return super().transfers(from_acct, since)
+
+
+@pytest.mark.anyio
+async def test_routes_answer_while_a_slow_listing_runs(make_desk, state_store):
+    rail = _Gated(balance=50000)
+    first = {}
+    async with _asgi(_app(make_desk, state_store, rail)) as http:
+        async with anyio.create_task_group() as tasks:
+
+            async def run():
+                first["resp"] = await http.post("/api/reconcile", json={})
+
+            tasks.start_soon(run)
+            assert await anyio.to_thread.run_sync(rail.started.wait, 5)
+            busy = await http.post("/api/reconcile", json={})
+            prov = await http.get("/api/provenance")
+            pending = await http.get("/api/pending")
+            answered_meanwhile = not rail.done
+            rail.release.set()
+    assert answered_meanwhile
+    assert (busy.status_code, busy.json()) == (409, {"error": "reconcile busy"})
+    assert (prov.status_code, pending.status_code) == (200, 200)
+    assert first["resp"].status_code == 200
+
+
+@pytest.mark.anyio
+async def test_a_round_that_fails_answers_a_clean_error(
+    make_desk, state_store, monkeypatch
+):
+    def broken(self, ledger):
+        raise AttributeError("data")
+
+    monkeypatch.setattr(PaymentDesk, "_reconcile_bank", broken)
+    async with _asgi(_app(make_desk, state_store, RecordingRail())) as http:
+        resp = await http.post("/api/reconcile", json={})
+        prov = await http.get("/api/provenance")
+    assert (resp.status_code, resp.json()) == (502, {"error": "reconcile failed"})
+    assert "Traceback" not in resp.text
+    assert prov.json()["bank"]["error"] == "reconcile: failed"

@@ -187,7 +187,9 @@ export function evidenceText(key: EvidenceKey, p: Posture, prov: Provenance): st
       if (prov.source === "replay" || prov.epoch === null || b === null || b.error !== null) {
         return bankText(prov);
       }
-      return `bank lists ${counted(b.transfers, "transfer", "transfers")} since ${b.since}: ${b.certified} with a certificate and a sealed entry, ${b.unbacked.length} without; ${counted(b.missing.length, "sealed payment", "sealed payments")} missing at the bank`;
+      const twice = b.paid_twice.length > 0 ? `; paid twice: ${b.paid_twice.join(", ")}` : "";
+      const unread = b.unreadable.length > 0 ? `; not read: ${b.unreadable.join(", ")}` : "";
+      return `bank lists ${counted(b.transfers, "transfer", "transfers")} since ${b.since}: ${b.certified} with a certificate and a sealed entry, ${b.unbacked.length} without; ${counted(b.missing.length, "sealed payment", "sealed payments")} missing at the bank${twice}${unread}`;
     }
     case "registry":
       return prov.registry === null

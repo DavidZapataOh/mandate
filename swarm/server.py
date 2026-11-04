@@ -100,6 +100,8 @@ _NOT_FOUND = {"error": "not found"}
 _SEND_TIMEOUT_S = 10.0
 _NOT_PAIRED_DEVICE = {"error": "not the paired device"}
 _RECONCILE_UNAVAILABLE = {"error": "reconcile unavailable"}
+_RECONCILE_BUSY = {"error": "reconcile busy"}
+_RECONCILE_FAILED = {"error": "reconcile failed"}
 _STATE_UNAVAILABLE = {"error": "state: unavailable"}
 _log = logging.getLogger(__name__)
 _VOICE_SIG = re.compile(r"[A-Za-z0-9_-]{86}")
@@ -444,15 +446,19 @@ state is returned."""
         """Return the stored receipt of a confirmed payment."""
         return desk.receipt(payment_id)
 
+    # Desk calls that may wait on the desk lock run on a worker thread, so a
+    # payment or a reconciliation in progress never stalls the event loop.
     async def pending(request: Request) -> Response:
-        return JSONResponse({"pending": desk.pending()})
+        return JSONResponse({"pending": await anyio.to_thread.run_sync(desk.pending)})
 
     async def approve(request: Request) -> Response:
         body = await _fields(request, "quote_id", *_APPROVAL)
         approval = _approval(body) if body else None
         if body is None or approval is None:
             return _bad_request()
-        return JSONResponse(desk.approve(body["quote_id"], approval))
+        return JSONResponse(
+            await anyio.to_thread.run_sync(desk.approve, body["quote_id"], approval)
+        )
 
     async def sign_intent(request: Request) -> Response:
         body = await _fields(request, "signature")
@@ -460,13 +466,17 @@ state is returned."""
         signature = _decode(body["signature"]) if body else None
         if intent is None or signature is None:
             return _bad_request()
-        return JSONResponse(desk.record_intent(intent, signature))
+        return JSONResponse(
+            await anyio.to_thread.run_sync(desk.record_intent, intent, signature)
+        )
 
     async def funds_challenge(request: Request) -> Response:
         body = await _fields(request, "intent_id")
         if body is None:
             return _bad_request()
-        return JSONResponse(desk.funds_challenge(body["intent_id"]))
+        return JSONResponse(
+            await anyio.to_thread.run_sync(desk.funds_challenge, body["intent_id"])
+        )
 
     proving = {"proof": False}
 
@@ -561,7 +571,8 @@ state is returned."""
             return _bad_request()
         if not pairing.spend(body["pairing"]):
             return _bad_request()
-        return JSONResponse({"registered": desk.register_holder(key)})
+        registered = await anyio.to_thread.run_sync(desk.register_holder, key)
+        return JSONResponse({"registered": registered})
 
     async def keys(request: Request) -> Response:
         """Publish the gate key and the paired holder keys.
@@ -576,7 +587,7 @@ state is returned."""
         )
 
     async def registry(request: Request) -> Response:
-        return JSONResponse({"seal": desk.latest_seal()})
+        return JSONResponse({"seal": await anyio.to_thread.run_sync(desk.latest_seal)})
 
     async def receipt(request: Request) -> Response:
         query = dict(request.query_params)
@@ -585,7 +596,9 @@ state is returned."""
         everything = "disclose" in query
         if everything and not _loopback_only(request):
             return JSONResponse({"error": "holder copy is local only"}, status_code=403)
-        found = desk.proof_receipt(request.path_params["payment_id"])
+        found = await anyio.to_thread.run_sync(
+            desk.proof_receipt, request.path_params["payment_id"]
+        )
         if found is None:
             return JSONResponse({"error": "not found"}, status_code=404)
         # The holder copy stays on this origin; anything shared leaves without
@@ -705,18 +718,30 @@ state is returned."""
     async def posture(request: Request) -> Response:
         if hub is None:
             return _bad_request()
-        return JSONResponse(
-            provenance(hub, desk), headers={"cache-control": "no-store"}
-        )
+        view = await anyio.to_thread.run_sync(provenance, hub, desk)
+        return JSONResponse(view, headers={"cache-control": "no-store"})
+
+    reconciling = {"round": False}
 
     async def reconcile(request: Request) -> Response:
-        if await _fields(request) != {}:
-            return _bad_request()
-        try:
-            # The bank answers over the network; the event loop keeps serving.
-            report = await anyio.to_thread.run_sync(desk.reconcile)
-        except ValueError:
-            return JSONResponse(dict(_RECONCILE_UNAVAILABLE), status_code=409)
+        # One round at a time, claimed before the body is read: any loopback
+        # client may ask, and each round pages the bank.
+        with _one_at_a_time(reconciling, "round") as free:
+            if not free:
+                return JSONResponse(dict(_RECONCILE_BUSY), status_code=409)
+            if await _fields(request) != {}:
+                return _bad_request()
+            try:
+                # The bank answers over the network; the event loop keeps serving.
+                report = await anyio.to_thread.run_sync(desk.reconcile)
+            except ValueError:
+                return JSONResponse(dict(_RECONCILE_UNAVAILABLE), status_code=409)
+            except sqlite3.Error:
+                raise
+            except Exception as exc:
+                # Only the type: a message could carry bank or consent fields.
+                _log.error("reconcile failed (%s)", type(exc).__name__)
+                return JSONResponse(dict(_RECONCILE_FAILED), status_code=502)
         return JSONResponse(report.view(), headers={"cache-control": "no-store"})
 
     async def attack(request: Request) -> Response:

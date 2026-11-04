@@ -9,6 +9,7 @@ import os
 import secrets
 import socket
 import sqlite3
+import stat
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -370,12 +371,18 @@ def _hold(path: Path) -> int:
         The descriptor holding the lock; closing it releases the directory.
 
     Raises:
-        ValueError: If another process holds the directory.
+        ValueError: If the directory is a link, not this user's, open to
+            group or others, or held by another process.
     """
     if not path.exists():
         path.mkdir(mode=_PRIVATE_DIR, parents=True)
         path.chmod(_PRIVATE_DIR)
-    held = os.open(path / "lock", os.O_CREAT | os.O_RDWR, 0o600)
+    found = os.lstat(path)
+    if not stat.S_ISDIR(found.st_mode) or found.st_uid != os.geteuid():
+        raise ValueError("state: directory must be this user's own directory")
+    if found.st_mode & 0o077:
+        raise ValueError("state: directory must be private (chmod 700)")
+    held = os.open(path / "lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
@@ -405,7 +412,8 @@ def reconcile_every(
 ) -> threading.Thread:
     """Reconcile the desk with its bank every ``every_s`` seconds until stopped.
 
-    A store that refuses a round is logged and tried again at the next one.
+    A round that fails for any reason is logged by its type and tried again
+    at the next one; the desk keeps a view naming the failure and its time.
 
     Args:
         desk: Desk to reconcile.
@@ -418,14 +426,24 @@ def reconcile_every(
 
     def loop() -> None:
         while not stop.wait(every_s):
-            try:
-                desk.reconcile()
-            except sqlite3.Error as exc:
-                _log.error("state: %s", exc)
+            reconcile_round(desk)
 
     thread = threading.Thread(target=loop, name="reconcile", daemon=True)
     thread.start()
     return thread
+
+
+def reconcile_round(desk: PaymentDesk) -> None:
+    """Run one reconciliation round; a failure is logged by its type only.
+
+    Args:
+        desk: Desk to reconcile.
+    """
+    try:
+        desk.reconcile()
+    except Exception as exc:
+        # Only the type: a message could carry bank or consent fields.
+        _log.error("reconcile failed (%s)", type(exc).__name__)
 
 
 def _port_free(listen: str) -> bool:
@@ -633,8 +651,8 @@ def _serve(
         intake=intake,
         agent=agent,
     ).streamable_http_app()
-    with _state_errors(parser):
-        desk.reconcile()
+    # A round that fails leaves its reason in the view; the console serves.
+    reconcile_round(desk)
     if desk.bank.rail == SANDBOX:
         stop = threading.Event()
         loop = reconcile_every(desk, RECONCILE_EVERY_S, stop)

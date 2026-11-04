@@ -206,14 +206,25 @@ def test_a_store_with_missing_rows_is_refused(tmp_path, edit):
         Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
 
 
-def test_an_entry_appended_before_a_crash_is_sealed_after_restart(tmp_path):
+def test_a_store_with_entries_past_the_last_seal_is_refused(tmp_path):
     path = tmp_path / "state.db"
     first = _sealed(StateStore(path), ["a"])
     first.append("denial", "b")
-    again = Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
-    assert again.size() == 2
-    seal = again.anchor(1800001009)
-    assert (seal.anchor_id, seal.seq_from, seal.seq_to) == ("anch:000002", 2, 2)
+    with pytest.raises(
+        ValueError, match="^state: registry entries past the last seal$"
+    ):
+        Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
+
+
+def test_a_store_with_entries_and_no_seal_is_refused(tmp_path):
+    path = tmp_path / "state.db"
+    Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path)).append(
+        "denial", "a"
+    )
+    with pytest.raises(
+        ValueError, match="^state: registry entries past the last seal$"
+    ):
+        Registry(keypair=(KEY, public_key_of(KEY)), state=StateStore(path))
 
 
 def test_a_failed_seal_write_leaves_the_registry_unsealed(tmp_path):

@@ -115,6 +115,7 @@ def test_a_corrupt_store_is_refused_not_reset(tmp_path):
     path = tmp_path / "state.db"
     garbage = b"not a database" * 100
     path.write_bytes(garbage)
+    path.chmod(0o600)
     with pytest.raises(ValueError, match="^state: store unreadable$"):
         StateStore(path)
     assert path.read_bytes() == garbage
@@ -126,3 +127,38 @@ def test_a_key_write_cut_short_never_becomes_the_key(tmp_path):
     key = load_gate_key(tmp_path / "gate.key")
     assert len(key) == 32
     assert sorted(p.name for p in tmp_path.iterdir()) == ["gate.key"]
+
+
+def test_a_rollback_keeps_the_error_that_caused_it(state_store):
+    with pytest.raises(RuntimeError, match="^the cause$"):
+        with state_store.transaction():
+            state_store.put("a", "1")
+            # SQLite rolls back by itself on some failures (disk full, I/O).
+            state_store._db.execute("ROLLBACK")
+            raise RuntimeError("the cause")
+    assert state_store.get("a") is None
+
+
+def test_a_store_readable_by_others_is_refused(tmp_path):
+    path = tmp_path / "state.db"
+    StateStore(path).close()
+    path.chmod(0o644)
+    private = r"^state: store must be private \(chmod 600\)$"
+    with pytest.raises(ValueError, match=private):
+        StateStore(path)
+
+
+def test_a_store_that_is_a_link_is_refused(tmp_path):
+    real = tmp_path / "elsewhere.db"
+    StateStore(real).close()
+    (tmp_path / "state.db").symlink_to(real)
+    with pytest.raises(ValueError, match="^state: store must be a regular file$"):
+        StateStore(tmp_path / "state.db")
+
+
+def test_a_gate_key_that_is_a_link_is_refused(tmp_path):
+    real = tmp_path / "elsewhere.key"
+    load_gate_key(real)
+    (tmp_path / "gate.key").symlink_to(real)
+    with pytest.raises(ValueError, match="^state: gate key must be a regular file$"):
+        load_gate_key(tmp_path / "gate.key")
