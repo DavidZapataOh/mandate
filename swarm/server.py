@@ -100,6 +100,9 @@ _PROXY_HEADERS = (
     "x-real-ip",
     "cf-connecting-ip",
 )
+# Pairing tokens are printed to stdout, which a host keeps as a log; a token
+# that outlived the start would be a standing approval credential there.
+PAIRING_TTL_S = 600
 _KEY_LEN = 32
 _POLL_S = 0.05
 _MAX_DIGITS = 18
@@ -354,15 +357,29 @@ def _approval(body: dict[str, Any]) -> HolderApproval | None:
 
 
 class _Pairings:
-    """One-time tokens, each of which lets exactly one device pair as a holder."""
+    """One-time tokens, each of which lets exactly one device pair as a holder.
 
-    def __init__(self, tokens: tuple[str, ...]) -> None:
+    Every token lapses `ttl_s` seconds after the set was issued.
+    """
+
+    def __init__(
+        self,
+        tokens: tuple[str, ...],
+        clock: Callable[[], float],
+        ttl_s: int = PAIRING_TTL_S,
+    ) -> None:
         self._tokens = [token.encode() for token in tokens]
         self._lock = threading.Lock()
+        self._clock = clock
+        self._ttl_s = ttl_s
+        self._issued = clock()
 
     def spend(self, offered: str) -> bool:
         given = offered.encode()
         with self._lock:
+            if self._clock() - self._issued > self._ttl_s:
+                self._tokens.clear()
+                return False
             # Compare against every token, so timing says nothing about which
             # one, or how much of one, matched.
             hits = [hmac.compare_digest(given, t) for t in self._tokens]
@@ -384,6 +401,7 @@ def build_server(
     voice: Transcriber | None = None,
     intake: IntentIntake | None = None,
     agent: Responder | None = None,
+    clock: Callable[[], float] = time.time,
 ) -> MCPServer:
     """Expose a payment desk as MCP tools plus the holder's HTTP routes.
 
@@ -395,7 +413,8 @@ def build_server(
     Args:
         desk: Desk the tools and routes operate on.
         pairing_token: One-time secret, or one per holder device, that a
-            device posts to /api/holder to pair; each is spent on first use.
+            device posts to /api/holder to pair; each is spent on first use
+            and every one lapses `PAIRING_TTL_S` seconds after this call.
         allowed_hosts: Host header names the `/api` and `/app` routes accept.
         hub: When given, also serves its lines on `/api/events` (SSE),
             `/api/lines` and `/api/forensic/{seq}`.
@@ -413,13 +432,15 @@ def build_server(
         agent: When given, Muse Spark pays a signed intent handed to it behind
             `POST /api/agent/start` and `GET /api/agent`; None reports both as
             unavailable.
+        clock: The server's wall clock, in unix seconds.
 
     Returns:
         An MCP server named `mandate`.
     """
     srv = MCPServer("mandate")
     pairing = _Pairings(
-        (pairing_token,) if isinstance(pairing_token, str) else pairing_token
+        (pairing_token,) if isinstance(pairing_token, str) else pairing_token,
+        clock,
     )
 
     @srv.tool()

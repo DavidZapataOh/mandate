@@ -143,3 +143,19 @@ async def test_a_small_order_key_is_refused_before_the_token_is_spent(make_desk)
     assert (weak.status_code, weak.json()) == (400, {"error": "bad request"})
     assert real.json() == {"registered": True}
     assert desk.holder_keys == (_key(3),)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("elapsed", "want"),
+    [(600, (200, {"registered": True})), (601, (400, {"error": "bad request"}))],
+    ids=["at ten minutes", "past ten minutes"],
+)
+async def test_a_pairing_token_lapses_after_ten_minutes(make_desk, elapsed, want):
+    desk, _ = make_desk(register=False)
+    now = [1800001000.0]
+    app = build_server(desk, TOKENS, clock=lambda: now[0]).streamable_http_app()
+    now[0] += elapsed
+    async with _asgi(app) as http:
+        resp = await _pair(http, _key(3), TOKENS[0])
+    assert (resp.status_code, resp.json()) == want
