@@ -1,6 +1,9 @@
 import json
 import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 import pytest
@@ -617,3 +620,58 @@ def test_a_lookup_that_cannot_reach_the_bank_is_unavailable():
     rail, _ = _rail(httpx.ConnectError("down"))
     with pytest.raises(RailError, match="^bank: unavailable$"):
         rail.transfer_by_key(KEY)
+
+
+ROOT = Path(__file__).resolve().parent.parent
+FRESH_RUNS = 5
+# A fresh interpreter has imported none of the SDK's resource modules yet,
+# which is the state a console is in at its first payment.
+RACE = """
+import json, threading
+import httpx
+from bank.conftest import SENTINEL_KEY, recorded
+from bank.increase import IncreaseRail, sandbox_client
+
+def answer(request):
+    name = "balance_lookup" if request.url.path.endswith("/balance") else (
+        "account_transfers_none"
+    )
+    return httpx.Response(200, json=recorded(name)["body"])
+
+transport = httpx.MockTransport(answer)
+client = sandbox_client(SENTINEL_KEY, httpx.Client(transport=transport))
+rail = IncreaseRail(client, {"checking-881": "a", "acme-991": "b"})
+start, errors = threading.Barrier(2), []
+def call(read):
+    start.wait()
+    try:
+        read()
+    except Exception as exc:
+        errors.append(f"{type(exc).__name__}: {exc}")
+reads = (lambda: rail.get_balance("checking-881"), lambda: rail.transfer_by_key("k"))
+threads = [threading.Thread(target=call, args=(read,)) for read in reads]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+print(json.dumps(sorted(errors)))
+"""
+
+
+def test_a_fresh_client_answers_two_threads_from_its_first_call():
+    runs = [
+        subprocess.Popen(  # noqa: S603
+            [sys.executable, "-c", RACE],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(FRESH_RUNS)
+    ]
+    errors = []
+    for run in runs:
+        out, err = run.communicate(timeout=60)
+        assert run.returncode == 0, err[-2000:]
+        errors.extend(json.loads(out.splitlines()[-1]))
+    assert errors == []

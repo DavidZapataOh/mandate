@@ -59,6 +59,20 @@ BANK_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 BANK_RETRIES = 0
 
 
+# Every resource the package calls on a client, warmed by ``sandbox_client``.
+_RESOURCES = (
+    "account_numbers",
+    "account_transfers",
+    "accounts",
+    "ach_transfers",
+    "cards",
+    "event_subscriptions",
+    "events",
+    "real_time_decisions",
+    "simulations",
+)
+
+
 def sandbox_client(
     api_key: str,
     http_client: httpx.Client | None = None,
@@ -83,13 +97,19 @@ def sandbox_client(
         http_client = DefaultHttpxClient(follow_redirects=False)
     else:
         http_client.follow_redirects = False
-    return Increase(
+    client = Increase(
         api_key=api_key,
         base_url=SANDBOX_URL,
         http_client=http_client,
         max_retries=max_retries,
         timeout=BANK_TIMEOUT,
     )
+    # The SDK builds each resource on first use and imports its module then;
+    # two threads doing that first import at once fail with KeyError, so the
+    # building thread does it before any other thread can share the client.
+    for name in _RESOURCES:
+        getattr(client, name)
+    return client
 
 
 def _open_accounts(client: Increase) -> dict[str, str]:
