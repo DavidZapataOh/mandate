@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from bank.conftest import RecordingRail
 from gate.cava import CavaAction, Freshness, action_commitment
 from gate.certs import public_key_of, read_claims
 from gate.consent import Consent, verify_signature
@@ -16,6 +17,7 @@ from gate.registry import (
 )
 from gate.sdjwt import process
 from swarm.anchor import ReasoningAnchor
+from swarm.conftest import DEMO_INTENT
 from swarm.desk import DESK_POLICY
 from swarm.receipt import RECEIPT_TYP, present, proof_receipt
 
@@ -252,3 +254,22 @@ def test_receipt_names_only_its_own_payment(make_desk, sign_quote):
     text = json.dumps(desk.proof_receipt(done["payment_id"]))
     assert "A-991" not in text
     assert "pay:000001" not in text
+
+
+def test_receipt_signs_the_bank_transfer(make_desk, sign_quote):
+    desk, holder = make_desk(intents=(DEMO_INTENT,), bank=RecordingRail(balance=50000))
+    q = desk.quote("acme-991", 20000, "USD", "A-991", intent_id="i:000001")
+    desk.approve("q:000001", sign_quote(holder, q))
+    desk.confirm("q:000001")
+    receipt = desk.proof_receipt("account_transfer_t1")
+    signed, reason = process(receipt["sd"], desk.gate_public_key, RECEIPT_TYP)
+    assert reason == "ok: verified"
+    assert signed["bank"] == {
+        "rail": "sandbox",
+        "provider": "increase",
+        "transfer_id": "account_transfer_t1",
+        "status": "complete",
+        "idempotency_key": "mandate-cert-00000000000000000000000000000002",
+    }
+    entry = json.loads(receipt["registry"]["entry"]["body"])
+    assert entry["payment_id"] == "account_transfer_t1"

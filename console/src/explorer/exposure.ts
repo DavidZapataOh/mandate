@@ -6,6 +6,7 @@ export const NEVER_IN_A_RECEIPT = [
   "Account balances",
   "The bill behind the payment",
   "The model's reasoning in clear (only its commitment or encrypted blobs)",
+  "The bank API key",
 ] as const;
 
 /** How a field the holder did not disclose reads. */
@@ -33,6 +34,10 @@ export function exposure(r: Receipt, d: Disclosed): Array<[string, string]> {
     ["Holder public key", or(c.holder_key)],
     ["Sealed at (unix seconds)", String(r.registry.seal.ts)],
   ];
+  if (d.bank !== null) {
+    const { rail, provider, transfer_id, status } = d.bank;
+    rows.push(["Bank transfer", `${rail.toUpperCase()} ${provider === null ? "" : `${provider} `}${transfer_id} (${status})`]);
+  }
   if (r.reasoning !== null) {
     rows.push(["Encrypted model reasoning", `${r.reasoning.blobs.length} blob(s) from ${r.reasoning.model}`]);
   }

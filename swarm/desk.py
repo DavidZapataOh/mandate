@@ -609,6 +609,7 @@ class PaymentDesk:
                     self._gate_key,
                     self._salts,
                     action_salt=outcome.salt,
+                    payment=outcome.payment,
                 )
             except Exception as exc:
                 # Only the type: a message could carry consent fields or keys.

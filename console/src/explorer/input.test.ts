@@ -7,6 +7,14 @@ describe("classify", () => {
   it("reads a payment id", () => {
     expect(classify("  pay:000001\n")).toEqual({ kind: "payment", id: "pay:000001" });
   });
+  it("reads a bank transfer id as a payment id", () => {
+    expect(classify("account_transfer_7k9qe1ysdgqztnt63l7n")).toEqual({ kind: "payment", id: "account_transfer_7k9qe1ysdgqztnt63l7n" });
+  });
+  it("reads a sandbox bank transfer id as a payment id", () => {
+    expect(classify("sandbox_account_transfer_astdbpezq3uovbhia1nb")).toEqual({
+      kind: "payment", id: "sandbox_account_transfer_astdbpezq3uovbhia1nb",
+    });
+  });
   it("reads a certificate", () => {
     const token = JSON.parse(RECEIPT).certificate;
     expect(classify(token)).toEqual({ kind: "certificate", token });
@@ -20,7 +28,7 @@ describe("classify", () => {
   it("finds no payment behind an attack line", () => {
     expect(classify(ATTACK)).toEqual({ kind: "line", seq: 4, paymentId: null });
   });
-  it.each(["", "pay:1", "hello", "[1]", '{"v":1}'])("refuses %j", (text) => {
+  it.each(["", "pay:1", "hello", "[1]", '{"v":1}', "account_transfer_", "sandbox_account_", "account_transfer_a-b", `account_transfer_${"a".repeat(65)}`])("refuses %j", (text) => {
     expect(classify(text)).toEqual({ kind: "unknown", reason: "Paste a receipt, a certificate, a payment id or a console line" });
   });
   it("finds no payment behind a forged approval that carries a consent", () => {

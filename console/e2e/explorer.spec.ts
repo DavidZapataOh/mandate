@@ -35,7 +35,7 @@ test("with a pinned key the receipt verifies offline and a forgery fails red", a
   await expect(page.locator("#key-source")).toHaveText("Pinned by you");
   await verify(page, RECEIPT);
   await expect(verdict(page)).toHaveText("VERIFIED");
-  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(9);
+  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(10);
   await verify(page, forge("recipient", "evil-666"));
   await expect(verdict(page)).toHaveText("NOT VERIFIED");
   await expect(failed(page)).toHaveAttribute("data-step", "Receipt disclosures");

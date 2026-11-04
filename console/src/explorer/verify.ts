@@ -15,6 +15,7 @@ export const STEPS = [
   "Registry inclusion",
   "Registry seal",
   "Reasoning anchor",
+  "Bank transfer",
 ] as const;
 
 export type StepName = (typeof STEPS)[number];
@@ -305,6 +306,22 @@ const CHECKS: Readonly<Record<StepName, Check>> = {
     if (digest !== commitment) throw new Fail(`Anchor digest ${short(digest)} differs from the certified commitment`);
     return `Anchor digest ${short(digest)} of ${reasoning.model} response ${reasoning.response_id} is the certified commitment`;
   },
+
+  // Offline it can bind the transfer to this certificate and payment; only the bank can say it still holds it.
+  "Bank transfer": async (ctx) => {
+    const r = ctx.get("receipt");
+    const { bank } = ctx.get("disclosed");
+    if (bank === null) throw new Fail("Receipt names no bank transfer");
+    if (bank.idempotency_key !== `mandate-cert-${certificateId(r.certificate)}`) {
+      throw new Fail("Bank transfer was not requested under this certificate");
+    }
+    if (bank.transfer_id !== r.payment_id) throw new Fail(`Bank transfer ${bank.transfer_id} is not the sealed payment ${r.payment_id}`);
+    if (bank.status !== "complete") throw new Fail(`Bank reports the transfer ${bank.status}, not complete`);
+    if (bank.rail === "sandbox") {
+      return `SANDBOX transfer ${bank.transfer_id} at ${shown(bank.provider)}, requested under this certificate; the account holder's Increase dashboard shows it`;
+    }
+    return `SIMULATED ledger payment ${bank.transfer_id}, requested under this certificate; no bank holds it`;
+  },
 };
 
 async function run(ctx: Context, steps: Readonly<Record<StepName, Check | string>>): Promise<StepResult[]> {
@@ -345,7 +362,7 @@ export async function verifyCertificate(token: string, trust: Trust): Promise<St
   return run(new Context(token, trust), steps);
 }
 
-/** The chain's verdict: VERIFIED only when all nine steps passed. */
+/** The chain's verdict: VERIFIED only when every step passed. */
 export function verdictOf(results: readonly StepResult[]): Verdict {
   const failure = results.find((r) => r.status === "fail");
   if (failure !== undefined) return { label: "NOT VERIFIED", text: `Failed at ${failure.step}: ${failure.detail}` };

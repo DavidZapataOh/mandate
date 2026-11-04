@@ -8,7 +8,8 @@ export type Pasted =
   | { kind: "line"; seq: number; paymentId: string | null }
   | { kind: "unknown"; reason: string };
 
-const PAYMENT = /^pay:[0-9]{6,}$/;
+// A desk payment id, or the bank's transfer id when a sandbox rail paid it.
+const PAYMENT = /^(?:pay:[0-9]{6,}|(?:sandbox_)?account_transfer_[A-Za-z0-9]{1,64})$/;
 const COMPACT_JWS = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const REFUSED = "Paste a receipt, a certificate, a payment id or a console line";
 

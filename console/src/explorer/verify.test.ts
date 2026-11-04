@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fromBase64 } from "./bytes";
-import { AUDITOR, CONSENT, CONSENT_KEY, forge, GATE_KEY, HOLDER_KEY, RECEIPT, regate, reissue, seedPublicKey, seedSign, tamper } from "./__fixtures__/receipts";
+import { AUDITOR, CONSENT, CONSENT_KEY, forge, GATE_KEY, HOLDER_KEY, RECEIPT, regate, reissue, resign, seedPublicKey, seedSign, tamper } from "./__fixtures__/receipts";
 import { keyBytes } from "./canon";
 import { consentBytes } from "./chain";
 import { readDisclosure } from "./sdjwt";
@@ -31,6 +31,7 @@ describe("verifyReceipt", () => {
       "Entry 1 of 1 recomputes the sealed root 70566024e09c…",
       "Seal anch:000001 over entries 1–1 verifies",
       "No model reasoning: the certificate commits to an empty chain",
+      "SIMULATED ledger payment pay:000001, requested under this certificate; no bank holds it",
     ]);
   });
 
@@ -80,6 +81,7 @@ describe("verifyReceipt", () => {
     expect(results.map((r) => `${r.step}: ${r.status}`)).toEqual([
       "Receipt format: pass", "Gate certificate: pass", "Receipt disclosures: pass", "Canonical action: withheld",
       "Policy: pass", "Holder consent: withheld", "Registry inclusion: pass", "Registry seal: pass", "Reasoning anchor: pass",
+      "Bank transfer: pass",
     ]);
     expect(results[2]?.detail).toBe("Signed by the gate key; withheld by the holder: amount, payee, account, reference, holder");
     expect(results[3]?.detail).toBe("Withheld: the action's targets and salt were not disclosed; the certificate still fixes its salted hash");
@@ -149,6 +151,65 @@ describe("verifyReceipt", () => {
   });
 });
 
+const SANDBOX = {
+  rail: "sandbox", provider: "increase", transfer_id: "pay:000001", status: "complete",
+  idempotency_key: "mandate-cert-00000000000000000000000000000002",
+};
+const bank = (change: Record<string, unknown> | null) => (p: Record<string, unknown>) => {
+  p.bank = change === null ? null : { ...(p.bank as object), ...change };
+};
+
+describe("bank transfer step", () => {
+  it.each([
+    [null, "Receipt names no bank transfer"],
+    [{ idempotency_key: "mandate-cert-other" }, "Bank transfer was not requested under this certificate"],
+    [{ transfer_id: "pay:000002" }, "Bank transfer pay:000002 is not the sealed payment pay:000001"],
+    [{ status: "pending_approval" }, "Bank reports the transfer pending_approval, not complete"],
+  ])("a gate-signed bank block %j fails at the bank step", async (change, detail) => {
+    expect(await failed(await resign(bank(change)))).toEqual({ step: "Bank transfer", status: "fail", detail });
+  });
+
+  it("names a sandbox transfer and where to look it up", async () => {
+    const results = await verifyReceipt(JSON.parse(await resign(bank(SANDBOX))), TRUST);
+    expect(results.at(-1)).toEqual({
+      step: "Bank transfer",
+      status: "pass",
+      detail: "SANDBOX transfer pay:000001 at increase, requested under this certificate; the account holder's Increase dashboard shows it",
+    });
+  });
+
+  it("refuses a rail it does not know", async () => {
+    expect((await failed(await resign(bank({ rail: "real" }))))?.detail).toBe("receipt: sd.bank.rail malformed");
+  });
+
+  it("refuses a gate-signed payload that leaves the bank claim out", async () => {
+    const omitted = await resign((p) => {
+      delete p.bank;
+    });
+    expect(await failed(omitted)).toEqual({ step: "Receipt disclosures", status: "fail", detail: "receipt: sd.bank malformed" });
+  });
+
+  it.each([
+    [{ provider: 1 }, "receipt: sd.bank.provider malformed"],
+    [{ idempotency_key: 2 }, "receipt: sd.bank.idempotency_key malformed"],
+    [{ transfer_id: null }, "receipt: sd.bank.transfer_id malformed"],
+    [{ extra: 1 }, "receipt: sd.bank malformed"],
+  ])("refuses a malformed gate-signed bank block %j at the disclosures", async (change, detail) => {
+    expect(await failed(await resign(bank(change)))).toEqual({ step: "Receipt disclosures", status: "fail", detail });
+  });
+
+  it("refuses a rail label changed without the gate key", async () => {
+    const r = JSON.parse(RECEIPT);
+    const [token, ...rest] = r.sd.split("~");
+    const [h, p, sig] = token.split(".");
+    const payload = JSON.parse(new TextDecoder().decode(fromBase64(p.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (p.length % 4)) % 4))));
+    payload.bank.rail = "sandbox";
+    const edited = btoa(JSON.stringify(payload)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    r.sd = [`${h}.${edited}.${sig}`, ...rest].join("~");
+    expect((await failed(JSON.stringify(r)))?.detail).toBe("Disclosures do not verify (sd-jwt: bad signature)");
+  });
+});
+
 describe("verifyCertificate", () => {
   const token = JSON.parse(RECEIPT).certificate;
 
@@ -156,6 +217,7 @@ describe("verifyCertificate", () => {
     const results = await verifyCertificate(token, TRUST);
     expect(results.map((r) => r.status)).toEqual([
       "unchecked", "pass", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked", "unchecked",
+      "unchecked",
     ]);
     expect(verdictOf(results)).toEqual({
       label: "INCOMPLETE",
@@ -173,9 +235,9 @@ describe("verifyCertificate", () => {
 });
 
 describe("verdictOf", () => {
-  it("is VERIFIED only when all nine steps passed", async () => {
+  it("is VERIFIED only when all ten steps passed", async () => {
     expect(verdictOf(await verifyReceipt(JSON.parse(RECEIPT), TRUST)).label).toBe("VERIFIED");
-    expect(verdictOf((await verifyReceipt(JSON.parse(RECEIPT), TRUST)).slice(0, 8)).label).toBe("INCOMPLETE");
+    expect(verdictOf((await verifyReceipt(JSON.parse(RECEIPT), TRUST)).slice(0, 9)).label).toBe("INCOMPLETE");
   });
 
   it("notes when no holder list was published", async () => {
@@ -299,7 +361,7 @@ describe("verifyReceipt on hostile input", () => {
   it("withholds the action and the consent when the salt alone is withheld", async () => {
     const results = await verifyReceipt(without(RECEIPT, ["action_salt"]), TRUST);
     expect(results.map((r) => r.status)).toEqual([
-      "pass", "pass", "pass", "withheld", "pass", "withheld", "pass", "pass", "pass",
+      "pass", "pass", "pass", "withheld", "pass", "withheld", "pass", "pass", "pass", "pass",
     ]);
     expect(results[2]?.detail).toBe("Signed by the gate key; disclosed: amount, payee, account, reference, holder; withheld: action_salt");
   });
@@ -382,7 +444,7 @@ describe("holder consent signed by real holder keys", () => {
     const signature = await seedSign(0x81, consentBytes({ ...CONSENT, recipient: "evil-666" }));
     const results = await verifyReceipt(JSON.parse(await reissue({ recipient: "evil-666", signature })), TRUST);
     expect(results.map((r) => r.status)).toEqual([
-      "pass", "pass", "pass", "pass", "pass", "fail", "unchecked", "unchecked", "unchecked",
+      "pass", "pass", "pass", "pass", "pass", "fail", "unchecked", "unchecked", "unchecked", "unchecked",
     ]);
     expect(results[5]).toEqual({ step: "Holder consent", status: "fail", detail: "Consent does not match the canonical action" });
   });

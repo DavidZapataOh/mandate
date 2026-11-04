@@ -16,10 +16,10 @@ test.beforeEach(async ({ page }) => {
 test("a payment made on this desk verifies by its id without its personal fields", async ({ page }) => {
   await verify(page, PAYMENT);
   await expect(page.locator("#verdict .label")).toHaveText("VERIFIED, FIELDS WITHHELD");
-  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(7);
+  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(8);
   await page.getByRole("button", { name: "Load the holder copy" }).click();
   await expect(page.locator("#verdict .label")).toHaveText("VERIFIED");
-  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(9);
+  await expect(page.locator('#steps li[data-status="pass"]')).toHaveCount(10);
 });
 
 test("its holder copy verifies with the network gone", async ({ page, context, request }) => {

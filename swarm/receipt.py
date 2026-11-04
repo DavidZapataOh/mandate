@@ -11,6 +11,8 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
+from bank.api import Payment
+from bank.rail import bank_view
 from gate.cava import CavaAction, canonical_bytes
 from gate.consent import Consent
 from gate.policy import Policy, matched_rule
@@ -85,6 +87,7 @@ def proof_receipt(
     reasoning: ReasoningAnchor | None = None,
     *,
     action_salt: bytes,
+    payment: Payment | None = None,
 ) -> dict[str, Any]:
     """Holder copy of a payment's receipt, with every Disclosure.
 
@@ -102,6 +105,8 @@ def proof_receipt(
         salt: Source of 16-byte Disclosure salts, one per concealed claim.
         reasoning: Reasoning anchor bound to the certificate, if any.
         action_salt: 32-byte key of the certificate's action hash.
+        payment: The payment the bank rail executed; its rail, transfer id
+            and idempotency key are signed, always visible, as ``bank``.
 
     Returns:
         The receipt dict in wire order.
@@ -131,6 +136,7 @@ def proof_receipt(
             "cert_jti": _cert_jti(certificate),
             "cava": cava,
             "consent": signed,
+            "bank": bank_view(payment),
         },
         gate_key,
         RECEIPT_TYP,

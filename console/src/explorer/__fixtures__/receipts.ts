@@ -119,3 +119,13 @@ export async function gateToken(header: string, payload: string): Promise<string
 export function disclosureText(name: unknown, value: unknown, salt: unknown = "AAAAAAAAAAAAAAAAAAAAAA"): string {
   return b64u(ascii(JSON.stringify([salt, name, value])));
 }
+
+/** The golden re-issued by the gate key with its signed payload edited; the Disclosures stay. */
+export async function resign(edit: (payload: Record<string, unknown>) => void): Promise<string> {
+  const { token, disclosures } = parts(RECEIPT);
+  const [header, body] = token.split(".");
+  const payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body!)));
+  edit(payload);
+  const input = `${header}.${b64u(ascii(JSON.stringify(payload)))}`;
+  return tamper("sd", [`${input}.${await gateSign(input)}`, ...disclosures, ""].join("~"));
+}

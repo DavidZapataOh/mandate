@@ -71,6 +71,15 @@ export interface ReceiptPolicy {
   rule_id: string;
 }
 
+/** The bank transfer the rail made for the payment, as the gate signed it. */
+export interface ReceiptBank {
+  rail: "simulated" | "sandbox";
+  provider: string | null;
+  transfer_id: string;
+  status: string;
+  idempotency_key: string | null;
+}
+
 /** Proof receipt v2, field for field in wire order. */
 export interface Receipt {
   v: 2;
@@ -96,6 +105,8 @@ export interface Disclosed {
         "amount_cents" | "currency" | "recipient" | "reference" | "source" | "signature" | "holder_key" | "key_signature"
       >
     >;
+  /** Null when no rail ran. */
+  bank: ReceiptBank | null;
 }
 
 /** A receipt that does not have the exact v2 shape; the message names the first malformed path. */
@@ -119,10 +130,24 @@ export type Kind =
 
 /** Extra top-level receipt keys, spread after this module's keys. */
 export const RECEIPT_EXTENSIONS: Readonly<Record<string, Kind>> = {};
-/** Extra always-visible claims of the gate-signed payload, spread after this module's keys. */
-export const DISCLOSED_EXTENSIONS: Readonly<Record<string, Kind>> = {};
-
 const strings: Kind = { array: "string" };
+const optStr: Kind = { nullable: "string" };
+
+/** Extra always-visible claims of the gate-signed payload, spread after this module's keys. */
+export const DISCLOSED_EXTENSIONS: Readonly<Record<string, Kind>> = {
+  // Inside the signed payload, so the rail label cannot be changed without the gate key.
+  bank: {
+    nullable: {
+      shape: {
+        rail: { pattern: /^(?:simulated|sandbox)$/ },
+        provider: optStr,
+        transfer_id: "string",
+        status: "string",
+        idempotency_key: optStr,
+      },
+    },
+  },
+};
 
 const RECEIPT_SHAPE: Kind = {
   shape: {
