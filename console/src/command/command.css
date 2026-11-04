@@ -183,7 +183,8 @@ main {
 /* Nine metric cells divided by hairlines. */
 #tiles {
   display: grid;
-  grid-template-columns: repeat(9, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  row-gap: 16px;
   margin-top: 13px;
   padding-bottom: 2px;
   border-bottom: 1px solid var(--hairline);
@@ -306,6 +307,11 @@ details[open] > summary {
   color: var(--bone);
 }
 
+/* A closed definition takes no box at all, so nothing can read it as covered text. */
+details:not([open]) > .definition {
+  display: none;
+}
+
 details > .definition {
   position: absolute;
   z-index: 4;
@@ -319,15 +325,21 @@ details > .definition {
   font: 400 14px/1.45 var(--sans);
 }
 
-/* The last cells' text opens leftward so it stays on the page. */
-#tiles article:nth-child(n + 7) details {
-  position: static;
-}
+/* Twelve cells in two full rows; the last two columns open their text leftward so it stays on the page. */
+@media (min-width: 1100.02px) {
+  #tiles article:nth-child(6n + 1) {
+    border-left: 0;
+  }
 
-#tiles article:nth-child(n + 7) details > .definition {
-  top: auto;
-  right: 0;
-  left: auto;
+  #tiles article:is(:nth-child(6n + 5), :nth-child(6n)) details {
+    position: static;
+  }
+
+  #tiles article:is(:nth-child(6n + 5), :nth-child(6n)) details > .definition {
+    top: auto;
+    right: 0;
+    left: auto;
+  }
 }
 
 #tiles details {
@@ -338,6 +350,7 @@ details > .definition {
 button.drill {
   justify-self: start;
   margin-top: 6px;
+  white-space: nowrap;
   padding: 0;
   border: 0;
   background: none;
@@ -389,7 +402,7 @@ button.drill:hover {
 #applicability {
   justify-self: end;
   color: var(--muted);
-  font: 400 14px/18px var(--sans);
+  font: 400 14px/1.3 var(--sans);
   text-align: right;
 }
 
@@ -430,7 +443,7 @@ button.drill:hover {
   z-index: 1;
   top: 0;
   height: 37px;
-  padding: 0 10px;
+  padding: 5px 10px;
   background: var(--register-band);
   font: 700 14px/1.1 var(--sans);
   white-space: normal;
@@ -453,7 +466,7 @@ button.drill:hover {
 .register tbody td,
 .register tbody th {
   padding: 6px 10px;
-  font: 400 14px/1.28 var(--sans);
+  font: 400 14px/1.3 var(--sans);
   text-align: left;
   vertical-align: top;
 }
@@ -479,12 +492,12 @@ button.drill:hover {
 }
 
 .register .evidence {
-  font: 700 14px/1.28 var(--mono);
+  font: 700 14px/1.3 var(--mono);
   font-variant-numeric: tabular-nums;
 }
 
 .register td:last-child {
-  font: 400 14px/1.28 var(--mono);
+  font: 400 14px/1.3 var(--mono);
 }
 
 /* Attacks and layers side by side, split by a hairline. */
@@ -592,12 +605,12 @@ button.drill:hover {
   text-align: left;
 }
 
-/* 24px tall: the smallest target the tables' stacked drill buttons may have. */
+/* 24px tall: the smallest target the tables' drill buttons may have; the link reads on one line. */
 .scroll button.drill {
   min-height: 24px;
   margin: 0;
   font-size: 14px;
-  white-space: normal;
+  white-space: nowrap;
 }
 
 #attacks tfoot tr {

@@ -9,11 +9,13 @@ ul { list-style: none; margin: 0; padding: 0; }
 li { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
 li span { flex: 1; }
 button { font: inherit; font-weight: 700; color: var(--ground); background: var(--bone);
-  border: 4px solid var(--bone); border-radius: 12px; padding: 12px 20px; }
+  border: 4px solid var(--bone); border-radius: 4px; padding: 12px 20px; }
 button:disabled { background: var(--ground); color: var(--muted); border-color: var(--muted); }
 button:focus-visible { outline: 4px solid var(--bone); outline-offset: 2px; }
-#shown { min-height: 3.9em; border: 2px solid var(--bone); border-radius: 12px;
+#shown { min-height: 3.9em; border: 2px solid var(--bone); border-radius: 4px;
   padding: 12px; margin: 16px 0; }
+/* Idle, the empty box takes no room, so the state line is read inside the 600 px display. It stays in the tree to announce. */
+#shown:empty { min-height: 0; padding: 0; border: 0; margin: 0; }
 #approve, #unpair { width: 100%; font-size: 36px; padding: 20px; }
 #unpair { color: var(--muted); background: var(--ground); border-color: var(--muted); }
 #pairing, #status { color: var(--bone); min-height: 1.3em; }

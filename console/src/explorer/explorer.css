@@ -503,6 +503,7 @@ main {
 .method {
   margin: 6px 0 0 5px;
   color: var(--muted);
+  max-width: 42em;
   font: 400 15px/1.3 var(--sans);
   letter-spacing: -0.02em;
 }
@@ -651,7 +652,7 @@ main {
 .actions button {
   background: none;
   height: 38px;
-  padding: 0 8px;
+  padding: 6px 10px;
   font-size: clamp(15px, 1.18vw, 17px);
   white-space: nowrap;
 }

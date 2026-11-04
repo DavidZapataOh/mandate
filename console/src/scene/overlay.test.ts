@@ -3,7 +3,7 @@ import { HOSTILE } from "../wire/__fixtures__/lines";
 import { parseLine } from "../wire/parse";
 import { desk, hook } from "./__fixtures__/cases";
 import { cueFor } from "./cues";
-import { Overlay, stageX } from "./overlay";
+import { Overlay, placeTags, stageX } from "./overlay";
 import { fitStage } from "./stage";
 import { createWorld, pushCue, stepWorld } from "./world";
 
@@ -117,4 +117,43 @@ test("a fixed tag on a cropped stage is pulled back inside it", () => {
   expect(stageX(6, 90, wide)).toBe(8);
   expect(stageX(145, 90, wide)).toBe(145 * 4 - 88);
   expect(stageX(440, 90, wide)).toBe(1600 - 8 - 90);
+});
+
+test("fixed tags that would overlap keep the one nearest the booth; apart, all show", () => {
+  const tag = () => document.createElement("span");
+  const [spark, code, courier] = [tag(), tag(), tag()];
+  placeTags([
+    { tag: spark, x: 8, y: 100, w: 90, h: 18, near: 201 },
+    { tag: code, x: 40, y: 100, w: 80, h: 18, near: 135 },
+    { tag: courier, x: 8, y: 110, w: 80, h: 18, near: 62 },
+  ], 400);
+  expect([spark, code, courier].map((t) => t.style.visibility)).toEqual(["hidden", "hidden", ""]);
+  placeTags([
+    { tag: spark, x: 8, y: 100, w: 90, h: 18, near: 201 },
+    { tag: code, x: 200, y: 120, w: 80, h: 18, near: 135 },
+    { tag: courier, x: 400, y: 100, w: 80, h: 18, near: 62 },
+  ], 400);
+  expect([spark, code, courier].map((t) => t.style.visibility)).toEqual(["", "", ""]);
+});
+
+test("at 390 a repeated name gives way first and different names move apart, so Muse Spark and Muse Code both show", () => {
+  const fit = fitStage(390, 844);
+  const named = (text: string) => Object.assign(document.createElement("span"), { textContent: text });
+  const tags = [
+    { tag: named("Muse Spark"), at: [6, 79], w: 94 },
+    { tag: named("Muse Code"), at: [72, 87], w: 86 },
+    { tag: named("Muse Code"), at: [145, 79], w: 86 },
+  ].map(({ tag, at, w }) => ({ tag, x: stageX(at[0]!, w, fit), y: at[1]! * fit.scale, w, h: 23, near: Math.abs(at[0]! - 207) }));
+  const shown = placeTags(tags, fit.height);
+  const visible = tags.filter((t) => t.tag.style.visibility !== "hidden");
+  expect(visible.map((t) => t.tag.textContent).sort()).toEqual(["Muse Code", "Muse Spark"]);
+  for (const a of shown) {
+    expect(a.y).toBeGreaterThanOrEqual(0);
+    expect(a.y + a.h).toBeLessThanOrEqual(fit.height);
+    for (const b of shown) {
+      if (a === b) continue;
+      expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(false);
+    }
+    expect(a.tag.style.transform).toBe(`translate(${a.x}px, ${a.y}px)`);
+  }
 });

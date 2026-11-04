@@ -77,6 +77,8 @@ describe("mountCommand", () => {
     setup({ server: bankTile({}) });
     await vi.waitFor(() => expect(text('[data-metric="unbacked"] .value')).toBe("0 of 3 · SANDBOX increase · checked 2027-01-15T08:20:00Z"));
     expect(document.querySelector('[data-metric="unbacked"]')?.hasAttribute("data-alert")).toBe(false);
+    // The check time breaks at its hyphens, so it is one unbroken part of the value.
+    expect(text('[data-metric="unbacked"] .value .part')).toBe("2027-01-15T08:20:00Z");
   });
 
   it("flags the bank tile when a transfer has no certificate", async () => {

@@ -54,5 +54,5 @@ test("each row names itself in words without relying on stylesheet spacing", () 
   store.add(parseLine(ATTACK));
   const name = (seq: number) => list.querySelector(`button[data-seq="${seq}"]`)?.getAttribute("aria-label");
   expect(name(4)).toBe("TEMPLATE · 08:16:40 · template attack · Blocked payee swap at model->gate: recipient differs from intent · (hash) 89F035 (struck) · DENIED");
-  expect(name(3)).toBe("SIMULATED · 08:16:40 · agent · Paid ✓ MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881 in 61µs · (hash) 52E9B1 · VERIFIED");
+  expect(name(3)).toBe("08:16:40 · agent · Paid ✓ MANDATE_FIXTURE Pay 200.00 USD to acme-991 (ref A-991) from checking-881 in 61µs · SIMULATED · (hash) 52E9B1 · VERIFIED");
 });

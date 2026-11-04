@@ -88,5 +88,7 @@ describe("mountLedger", () => {
       "SIMULATED",
     ]);
     expect(buttons.map((b) => b.dataset["rail"] ?? null)).toEqual(["sandbox", null, "simulated"]);
+    // The badge follows the sentence, so the time and actor columns start alike on every row.
+    expect([...buttons[2]!.children].map((c) => c.getAttribute("class"))).toEqual(["t", "who", "text", "rail", "hash", "verdict", "icon"]);
   });
 });

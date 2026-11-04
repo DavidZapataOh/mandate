@@ -240,6 +240,14 @@ export function mountCommand(doc: Document, store: LineStore, deps: CommandDeps)
       el.replaceChildren(count, " ", share);
       return;
     }
+    const stamp = key === "unbacked" ? /\d{4}-\d\d-\d\dT[\d:]+Z/.exec(value) : null;
+    if (stamp !== null) {
+      // An ISO time breaks at its hyphens; it is kept on one line.
+      const time = make("span", stamp[0]);
+      time.className = "part";
+      el.replaceChildren(value.slice(0, stamp.index), time, value.slice(stamp.index + stamp[0].length));
+      return;
+    }
     el.textContent = value;
   };
 

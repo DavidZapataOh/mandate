@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-03T23:53:17+00:00",
+  "generatedAt": "2026-11-04T15:56:51+00:00",
   "title": "Design System: Mandate Console",
   "extensions": {
     "colorMeta": {
@@ -376,7 +376,7 @@
       },
       "alert": {
         "displayName": "Alert",
-        "purpose": "The refusal sentence under the booth; follows the integer stage scale, floor 14px."
+        "purpose": "The refusal sentence under the booth: max(14px, scale x 6px), 18px at 3x."
       },
       "booth-sign": {
         "displayName": "Booth sign",
@@ -393,6 +393,22 @@
       "body-mono": {
         "displayName": "Body mono",
         "purpose": "Forensic records."
+      },
+      "panel-head": {
+        "displayName": "Panel head",
+        "purpose": "Explorer receipt label and panel headings; the only Inter 800."
+      },
+      "glance-title": {
+        "displayName": "Glance title",
+        "purpose": "Glasses page heading, 32px at 600x600."
+      },
+      "glance-body": {
+        "displayName": "Glance body",
+        "purpose": "Glasses page text, 28px at 600x600."
+      },
+      "glance-action": {
+        "displayName": "Glance action",
+        "purpose": "Glasses Approve and Unpair buttons, 36px, full width."
       }
     },
     "shadows": [
@@ -400,13 +416,18 @@
         "name": "row-hover-hairline",
         "value": "inset 0 0 0 1px #F6F4EE",
         "purpose": "Ledger row hover without changing the 31px pitch."
+      },
+      {
+        "name": "withheld-ring",
+        "value": "inset 0 0 0 2px #8A8F98",
+        "purpose": "Ring of the withheld chip on Ink."
       }
     ],
     "motion": [
       {
         "name": "snap",
         "value": "120ms cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "The seam snap: fast in, dead stop, no overshoot."
+        "purpose": "The snap curve: fast in, dead stop, no overshoot. Every authored state change uses it."
       },
       {
         "name": "snap-ms",
@@ -436,7 +457,7 @@
       {
         "name": "proof-surfaces",
         "value": "0ms",
-        "purpose": "Ledger, counters and top bar never animate."
+        "purpose": "Ledger, counters, top bar and every number never animate; no proof surface ever moves."
       },
       {
         "name": "command-drill",
@@ -472,6 +493,26 @@
         "name": "bubble-enter",
         "value": "120ms cubic-bezier(0.16, 1, 0.3, 1)",
         "purpose": "Sentence bubbles fade from opacity 0 to 1 in their final box."
+      },
+      {
+        "name": "explorer-settle",
+        "value": "180ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Explorer verdict, step discs and marks change colour; nothing moves."
+      },
+      {
+        "name": "holder-arrive",
+        "value": "120ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Holder cheque fields and stub fade in through @starting-style; no box moves."
+      },
+      {
+        "name": "holder-funds-delay",
+        "value": "180ms",
+        "purpose": "The funds stamp lands this long after its paper, so the verified line settles last."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0ms",
+        "purpose": "Under prefers-reduced-motion every CSS transition and animation is stilled and the world stops drifting; the seal's wait, verify and deny states still land at once."
       }
     ],
     "breakpoints": [
@@ -484,8 +525,58 @@
         "name": "stage",
         "value": "integer scale = max(2, min(floor(floor(h*0.66)/164), ceil(w/444)))",
         "purpose": "2x on phones, 3x at 1280-1440, 4x at 1600x1000; cropped around the booth."
+      },
+      {
+        "name": "explorer-single",
+        "value": "960px",
+        "purpose": "Explorer drops to one column, verdict first under the paste."
+      },
+      {
+        "name": "command-tiles",
+        "value": "1100px",
+        "purpose": "Command's nine cells go from six to three per row."
+      },
+      {
+        "name": "command-compact",
+        "value": "1380px",
+        "purpose": "Command's compact tables shrink to 13.5px so both stay whole side by side."
+      },
+      {
+        "name": "glasses",
+        "value": "600px x 600px",
+        "purpose": "The glasses display; glance type is fixed for it."
       }
-    ]
+    ],
+    "focusRing": {
+      "default": "outline: 2px solid #F6F4EE; outline-offset: 2px (:focus-visible)",
+      "glasses": "outline: 4px solid #F6F4EE; outline-offset: 2px"
+    },
+    "browserSurfaces": {
+      "colorScheme": "dark",
+      "selection": "background #F6F4EE, color #0B0D10",
+      "caret": "#F6F4EE",
+      "accentColor": "#F6F4EE",
+      "scrollbar": "thumb #8A8F98 on track #0B0D10, 10px"
+    },
+    "readabilityFloor": {
+      "text": "14px at 1440x900",
+      "heroSignals": "18px",
+      "alert": "max(14px, scale x 6px)"
+    },
+    "fontsShipped": {
+      "Inter": [
+        400,
+        700,
+        800
+      ],
+      "JetBrains Mono": [
+        400,
+        700
+      ],
+      "Press Start 2P": [
+        400
+      ]
+    }
   },
   "components": [
     {
@@ -510,7 +601,7 @@
       "refersTo": "alert-bar",
       "description": "The refusal under the booth; its ink snaps in over an already-placed box.",
       "html": "<p class=\"ds-alert\" role=\"status\">denied · poisoned MCP tool · at the MCP proxy</p>",
-      "css": ".ds-alert { display: inline-flex; align-items: center; justify-content: center; height: 30px; margin: 0; padding: 0 12px; background: #FF5C5C; color: #0B0D10; font: 700 16px/1 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: -0.04em; white-space: nowrap; animation: ds-snap 120ms cubic-bezier(0.16, 1, 0.3, 1) both; } @keyframes ds-snap { from { opacity: 0; } }"
+      "css": ".ds-alert { display: inline-flex; align-items: center; justify-content: center; height: 30px; margin: 0; padding: 0 12px; background: #FF5C5C; color: #0B0D10; font: 700 18px/1 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: -0.04em; white-space: nowrap; animation: ds-snap 120ms cubic-bezier(0.16, 1, 0.3, 1) both; } @keyframes ds-snap { from { opacity: 0; } }"
     },
     {
       "name": "Seal (refused)",
@@ -556,9 +647,9 @@
       "name": "Command Metric Cell",
       "kind": "stat",
       "refersTo": "command-metric",
-      "description": "One of eight posture cells: label, mono value, Definition disclosure and a drill button. Verify only on the verified value; Alert only on a non-zero breach count or moved cents.",
+      "description": "One of nine posture cells: label, mono value, Definition disclosure and a drill button. Verify only on the verified value; Alert only on a non-zero breach count or moved cents.",
       "html": "<article class=\"ds-metric\"><h3>Moved by attacks</h3><p class=\"v\">0.00</p><p class=\"d\">Definition</p><p class=\"s\">Show the 7 lines</p></article>",
-      "css": ".ds-metric { padding: 6px 8px 0 14px; border-left: 1px solid rgb(246 244 238 / 0.14); background: #0B0D10; color: #F6F4EE; } .ds-metric h3 { margin: 0; font: 700 15px/19px \"Inter\", system-ui, sans-serif; } .ds-metric .v { margin: 8px 0; font: 700 48px/1.05 \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; } .ds-metric .d { margin: 0; color: rgb(246 244 238 / 0.82); font: 400 15px/1.2 \"Inter\", system-ui, sans-serif; } .ds-metric .s { margin: 6px 0 0; color: #8A8F98; font: 400 12px/1.4 \"JetBrains Mono\", ui-monospace, monospace; text-decoration: underline; text-underline-offset: 3px; }"
+      "css": ".ds-metric { padding: 6px 8px 0 14px; border-left: 1px solid rgb(246 244 238 / 0.14); background: #0B0D10; color: #F6F4EE; } .ds-metric h3 { margin: 0; font: 700 15px/19px \"Inter\", system-ui, sans-serif; } .ds-metric .v { margin: 8px 0; font: 700 48px/1.05 \"JetBrains Mono\", ui-monospace, monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; } .ds-metric .d { margin: 0; color: rgb(246 244 238 / 0.82); font: 400 15px/1.2 \"Inter\", system-ui, sans-serif; } .ds-metric .s { margin: 6px 0 0; color: #8A8F98; font: 400 14px/1.4 \"JetBrains Mono\", ui-monospace, monospace; text-decoration: underline; text-underline-offset: 3px; }"
     },
     {
       "name": "Command Register Row",
@@ -566,7 +657,7 @@
       "refersTo": "command-register",
       "description": "A framework provision mapped to a Mandate control with this window's evidence and its gap; header band in mid grey.",
       "html": "<table class=\"ds-reg\"><thead><tr><th>Framework</th><th>Provision</th><th>Evidence in this window</th><th>Gap</th></tr></thead><tbody><tr><td>EU AI Act</td><td>Article 73(1): Reporting of serious incidents</td><td class=\"e\">0 attacks not blocked</td><td>Mandate does not report to any authority.</td></tr></tbody></table>",
-      "css": ".ds-reg { border-collapse: collapse; color: #F6F4EE; } .ds-reg th { padding: 0 10px; height: 37px; background: #5C5E62; font: 700 12.5px/1.1 \"Inter\", system-ui, sans-serif; text-align: left; text-transform: uppercase; } .ds-reg td { padding: 6px 10px; background: #16181C; font: 400 12px/1.28 \"Inter\", system-ui, sans-serif; vertical-align: top; } .ds-reg td:first-child { font: 700 15px/1.25 \"Inter\", system-ui, sans-serif; } .ds-reg .e { font: 700 12px/1.28 \"JetBrains Mono\", ui-monospace, monospace; }"
+      "css": ".ds-reg { border-collapse: collapse; color: #F6F4EE; } .ds-reg th { padding: 0 10px; height: 37px; background: #5C5E62; font: 700 14px/1.1 \"Inter\", system-ui, sans-serif; text-align: left; text-transform: uppercase; } .ds-reg td { padding: 6px 10px; background: #16181C; font: 400 14px/1.3 \"Inter\", system-ui, sans-serif; vertical-align: top; } .ds-reg td:first-child { font: 700 15px/1.25 \"Inter\", system-ui, sans-serif; } .ds-reg .e { font: 700 14px/1.3 \"JetBrains Mono\", ui-monospace, monospace; }"
     },
     {
       "name": "Command Attack Row (not stopped)",
@@ -583,17 +674,34 @@
       "description": "Square outlined export control; fills Bone on press.",
       "html": "<button class=\"ds-export\">Export Markdown</button>",
       "css": ".ds-export { height: 44px; padding: 0 22px; border: 1px solid rgb(246 244 238 / 0.55); border-radius: 4px; background: #0B0D10; color: #F6F4EE; font: 700 16px/1 \"Inter\", system-ui, sans-serif; } .ds-export:hover { border-color: #F6F4EE; } .ds-export:active { background: #F6F4EE; color: #0B0D10; }"
+    },
+    {
+      "name": "Withheld Chip",
+      "kind": "chip",
+      "refersTo": "withheld-chip",
+      "description": "A field not checked against anything: Ink fill, Muted ring, Muted word.",
+      "html": "<span class=\"ds-mark ds-pass\">PASSED</span> <span class=\"ds-mark ds-withheld\">WITHHELD</span>",
+      "css": ".ds-mark { display: inline-block; min-width: 76px; padding: 4px 12px; color: #0B0D10; font: 700 15px/1.2 \"JetBrains Mono\", ui-monospace, monospace; letter-spacing: 0.02em; text-align: center; white-space: nowrap; transition: color 180ms cubic-bezier(0.16, 1, 0.3, 1), background-color 180ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-pass { background: #1FD598; } .ds-withheld { background: #0B0D10; box-shadow: inset 0 0 0 2px #8A8F98; color: #8A8F98; }"
+    },
+    {
+      "name": "Glasses Approve",
+      "kind": "button",
+      "refersTo": "glance-action",
+      "description": "The glasses page's primary action on its pure black ground, with the 4px focus ring.",
+      "html": "<button class=\"ds-approve\" type=\"button\">Approve</button>",
+      "css": ".ds-approve { width: 100%; padding: 20px; border: 4px solid #F6F4EE; border-radius: 4px; background: #F6F4EE; color: #000000; font: 700 36px/1.3 \"Inter\", sans-serif; } .ds-approve:focus-visible { outline: 4px solid #F6F4EE; outline-offset: 2px; } .ds-approve:disabled { background: #000000; color: #8A8F98; border-color: #8A8F98; }"
     }
   ],
   "narrative": {
     "northStar": "The Teller Window",
-    "overview": "The console is one small pixel world seen through a dark frame. Meta's agents work in an office on the left, the bank branch sits on the right, and between them stands a teller booth with the Mandate seal on its face. Every request walks to that window. A verified request joins the seal's halves with a green seam. An attack is refused: the halves shake apart, a red bar drops under the booth, and the intruder is thrown back. Everything around the world is dark security: Ink ground, Bone monospace labels, one-pixel hairlines, and a ledger of real events below.\n\nThe pixel world carries the warmth and the motion. The chrome stays quiet so the verdict at the booth is always the loudest thing on screen. Text is never painted into the world: tags, bubbles, the alert, the sign and every ledger cell are live DOM text set over the canvas, so they stay sharp, selectable and spoken. The brand commitments behind the palette and type (Ink and Bone, Verify reserved for verified states, Inter with JetBrains Mono, \"dark security + pixel soul\") are stated in `PRODUCT.md`. The surface's direction contract is `.impeccable/surfaces/console-index-html.md`.",
+    "overview": "The console is one small pixel world seen through a dark frame. Meta's agents work in an office on the left, the bank branch sits on the right, and between them stands a teller booth with the Mandate seal on its face. Every request walks to that window. A verified request joins the seal's halves with a green seam. An attack is refused: the halves shake apart, a red bar drops under the booth, and the intruder is thrown back. Everything around the world is dark security: Ink ground, Bone monospace labels, one-pixel hairlines, and a ledger of real events below.\n\nThe pixel world carries the warmth and the motion. The chrome stays quiet so the verdict at the booth is always the loudest thing on screen. Text is never painted into the world: tags, bubbles, the alert, the sign and every ledger cell are live DOM text set over the canvas, so they stay sharp, selectable and spoken. The brand commitments behind the palette and type (Ink and Bone, Verify reserved for verified states, Inter with JetBrains Mono, \"dark security + pixel soul\") are stated in `PRODUCT.md`. The surface's direction contract is `.impeccable/surfaces/console-index-html.md`.\n\nThe same world reaches four more surfaces, each quieter than the last. Command (`console/command.html`) is the posture register with no scene. The explorer (`console/explorer.html`) is the teller window seen from the public side, with the small booth as its only scene element. The holder page (`console/holder.html`) is a cheque written on the holder's own phone. The glasses page (`webapp/`) is a 600×600 glance on a pure black ground. All five share one base: Ink and Bone, the 2px Bone focus ring, Bone selection, Muted scrollbars, and the readability floor below.",
     "keyCharacteristics": [
       "An integer-scaled 444×164 pixel world at the centre of the first viewport, the booth always centred.",
       "A 16-colour duotone-green world palette, separate from the UI palette.",
       "Green means verified and red means refused, and nothing else uses either.",
       "Square Ink tags with Bone monospace text, and no rounded bubbles.",
-      "One authored motion moment, the seal's verdict. The world drifts on its own; the proof surfaces never move."
+      "One authored motion moment, the seal's verdict. The world drifts on its own; the proof surfaces never move.",
+      "Every text run is at least 14px at 1440×900, and every hero signal at least 18px."
     ],
     "rules": [
       {
@@ -605,6 +713,16 @@
         "name": "The Two Palettes Rule",
         "body": "UI colours never enter the world, and world colours never style the UI. The one bridge is the booth face, which the seal borrows from the plate.",
         "section": "colors"
+      },
+      {
+        "name": "The Withheld Is Not A Verdict Rule",
+        "body": "A field that was not checked against anything is an Ink chip ringed in Muted (2px inset) with its word in Muted. It never takes Verify, Alert or the Muted fill of a link left unchecked, so it reads as neither a pass, a failure nor a skipped step.",
+        "section": "colors"
+      },
+      {
+        "name": "The Readability Floor Rule",
+        "body": "At 1440×900 every text run on every console page is at least 14px, and every hero signal (the verdict, the amount, a metric value, the alert at 3×) is at least 18px. In-world type follows the stage scale but never drops under 14px. Only narrower layouts step below the floor: Command's compact tables at 1100–1380px (13.5px, with 12px in their longest column); and at ≤720px Command's provenance line (13px) and stacked column names (10.5px), and the explorer's step numbers and marks (13px).",
+        "section": "typography"
       },
       {
         "name": "The Live Text Rule",
@@ -628,12 +746,12 @@
       },
       {
         "name": "The Alert Only On Breach Rule",
-        "body": "On Command, Refusal Red appears only where an attack was not blocked or moved money: those counts, their cents, the words not stopped, and a total that falls short. Blocked counts and zero values stay Bone, and the words always say it as well as the colour.",
+        "body": "On Command, Refusal Red appears only where an attack was not blocked or moved money, a Nimbus step ran when it should not, or a payment had no bank backing: those counts, their cents, the words `not stopped`, an unbacked bank check, and a total that falls short. Blocked counts and zero values stay Bone, and the words always say it as well as the colour.",
         "section": "command"
       },
       {
         "name": "The Real Columns Rule",
-        "body": "Every number on Command comes from a line in the window or from this process's registry and policies. A column the comp did not draw stays if the data has it; a value the comp invented never ships.",
+        "body": "Every number on Command comes from a line in the window or from this process's registry and policies. A column the approved design did not draw stays if the data has it; a value the design invented never ships.",
         "section": "command"
       }
     ],
@@ -643,7 +761,10 @@
       "**Do** carry pass and deny in words and shape as well as colour: VERIFIED / DENIED, the joined or split seal, the struck hash.",
       "**Do** put Ink text on Refusal Red, never Bone.",
       "**Do** label honest seams: `template attack` against `open-weights attacker`, TEMPLATE against MODEL, the layer that refused.",
-      "**Do** keep every word as live text over the canvas."
+      "**Do** keep every word as live text over the canvas.",
+      "**Do** give every focusable element the 2px Bone ring offset 2px (4px on the glasses page).",
+      "**Do** hold every text run at 14px or more at 1440×900, and every hero signal at 18px or more.",
+      "**Do** mark a withheld field as an Ink chip with a Muted ring and a Muted word."
     ],
     "donts": [
       "**Don't** use Verify Green for anything but a verified decision.",
@@ -651,7 +772,9 @@
       "**Don't** add cards, rounded bubbles, shadows or containers around the world. Tags are square Ink.",
       "**Don't** smooth, stretch or sub-pixel-position the world.",
       "**Don't** paint words into a plate. The booth sign is DOM text.",
-      "**Don't** track mono tighter than −0.04em, or set world type under 14px."
+      "**Don't** track mono tighter than −0.04em, or set world type under 14px.",
+      "**Don't** use pure black anywhere but the glasses page's ground.",
+      "**Don't** load or set a weight the system does not ship (Inter 400/700/800, JetBrains Mono 400/700, Press Start 2P 400)."
     ]
   }
 }

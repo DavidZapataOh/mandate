@@ -126,3 +126,20 @@ test("attacks not blocked and deploy steps that ran are separate tiles", async (
   await expect(page.locator('[data-metric="breaches"] h3')).toHaveText("Attacks not blocked");
   await expect(page.locator('[data-metric="stepsRan"] h3')).toHaveText("Deploy steps that ran when they should not");
 });
+
+for (const width of [1280, 1440, 1600]) {
+  test(`at ${width}x900 every opened definition stays on the page`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const disclosures = page.locator("details");
+    const count = await disclosures.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i += 1) {
+      const details = disclosures.nth(i);
+      await details.locator("summary").click();
+      const box = (await details.locator(".definition").boundingBox())!;
+      expect(box.x, await details.locator(".definition").innerText()).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      await details.locator("summary").click();
+    }
+  });
+}

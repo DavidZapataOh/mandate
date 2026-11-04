@@ -357,6 +357,11 @@ main {
   line-height: 22px;
 }
 
+#ledger .rail {
+  flex: none;
+  margin: 0 0 0 12px;
+}
+
 .t,
 .hash {
   color: var(--muted);
@@ -870,11 +875,6 @@ body:has(#killcam:not([hidden])) #forensic {
   margin-bottom: 4px;
 }
 
-/* Descriptions run to two lines at the 14px floor; a tighter leading keeps the whole panel in one laptop screen. */
-#attacks .what {
-  line-height: 1.15;
-}
-
 /* Collapsed, not display:none: a live region must already be in the tree to be announced. */
 #attacks .result:empty {
   height: 0;
@@ -889,8 +889,9 @@ button.scenario,
   align-items: center;
   gap: 8px;
   width: 100%;
-  min-height: 40px;
-  padding: 6px 12px;
+  /* 32px clears the 24px target floor and lets the whole panel, at reading leading, fit one laptop screen. */
+  min-height: 32px;
+  padding: 4px 12px;
   border: 2px solid var(--alert);
   border-radius: 0;
   background: var(--ink);
@@ -928,7 +929,7 @@ button.scenario .name {
 button.attack .badge,
 button.scenario .badge {
   flex: none;
-  padding: 4px 8px;
+  padding: 2px 8px;
   border: 1px solid var(--hairline);
   font: 400 14px/1.2 var(--mono);
   letter-spacing: 0.02em;
@@ -1225,9 +1226,11 @@ button.scenario .badge {
     content: none;
   }
 
+  /* One line on a phone: a clamped box would show the top of its second line in its padding. */
   .bubble .say {
-    -webkit-line-clamp: 1;
-    line-clamp: 1;
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   /* On a phone the held row sits right under the stage at full width, before the strip; the page
@@ -1266,6 +1269,11 @@ button.scenario .badge {
     padding: 8px 12px;
     font-size: 16px;
     line-height: 20px;
+  }
+
+  /* The device note wraps on a phone; give its lines the reading leading. */
+  #approval .where {
+    line-height: 21px;
   }
 
   #approval .status {

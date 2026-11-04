@@ -41,15 +41,14 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
     button.append(cell("span", "origin", origin), " ");
     name.push(origin);
   }
+  // The rail badge sits after the sentence, so time, actor and sentence keep their columns on every row.
   const rail = railOf(line);
-  if (rail !== null) {
-    button.dataset.rail = rail;
-    button.append(cell("span", "rail", RAIL_LABEL[rail]), " ");
-    name.push(RAIL_LABEL[rail]);
-  }
+  if (rail !== null) button.dataset.rail = rail;
   // Spoken name carries its own separators so it never depends on stylesheet spacing; the words the row
   // only shows by style are parenthesised, so the visible text stays a run of the name for speech input.
-  name.push(cells.time, cells.actor, sentence, `(hash) ${cells.hash}${cells.struck ? " (struck)" : ""}`, cells.verdict);
+  name.push(cells.time, cells.actor, sentence);
+  if (rail !== null) name.push(RAIL_LABEL[rail]);
+  name.push(`(hash) ${cells.hash}${cells.struck ? " (struck)" : ""}`, cells.verdict);
   button.setAttribute("aria-label", name.join(" · "));
   // Whitespace between flex items is not rendered; it keeps the cells separate words in the text.
   button.append(
@@ -59,6 +58,7 @@ function row(line: ConsoleLine, mode: Mode, onOpen: (seq: number) => void): HTML
     " ",
     cell("span", "text", sentence),
     " ",
+    ...(rail !== null ? [cell("span", "rail", RAIL_LABEL[rail]), " "] : []),
     cell(cells.struck ? "s" : "span", "hash", cells.hash),
     " ",
     cell("span", "verdict", cells.verdict),

@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mandate approval</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'">
-<link rel="stylesheet" href="/app/app.css">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
 <main>
 <h1>Approve payment</h1>
 <ul id="quotes"></ul>
 <div id="shown" aria-live="polite"></div>
+<p id="status" role="status"></p>
 <p id="hash"></p>
 <dl id="fields" aria-label="Consent fields"></dl>
 <div id="voice"><button id="speak" type="button" disabled>Speak to confirm</button><p id="voice-note">Voice is a confirmation, not proof of who spoke. Only your Approve tap signs, on this device.</p><p id="heard" aria-live="polite"></p></div>
@@ -19,7 +20,6 @@
 <p id="pairing" role="status"></p>
 <p id="device"></p>
 <button id="unpair" type="button">Unpair this device</button>
-<p id="status" role="status"></p>
 </main>
 <script type="module" src="/app/app.js"></script>
 </body>

@@ -8,10 +8,10 @@ import { type Atlas, loadAtlas } from "./atlas";
 import { cueFor } from "./cues";
 import { LiveCues } from "./live";
 import { FixedLoop, performanceClock } from "./loop";
-import { ANCHOR, Overlay, stageX } from "./overlay";
+import { ANCHOR, Overlay, placeTags, stageX } from "./overlay";
 import { blit } from "./render";
 import { fitStage, type StageFit } from "./stage";
-import { createWorld, drawList, pushCue, setReducedMotion, setVenue, stepWorld } from "./world";
+import { BOOTH_X, createWorld, drawList, pushCue, setReducedMotion, setVenue, stepWorld } from "./world";
 
 /** Native top-left of the idle courier's tag, over the figure standing by the office door. */
 const COURIER_TAG: readonly [number, number] = [145, 79];
@@ -66,11 +66,17 @@ export function mountScene(
     root.style.setProperty("--crop-x", `${fit.cropX}px`);
     root.style.setProperty("--stage-w", `${fit.width}px`);
     const widths = tags.map((tag) => tag.offsetWidth);
+    const placed: { tag: HTMLElement; x: number; y: number; w: number; h: number; near: number }[] = [];
     tags.forEach((tag, i) => {
       const at = tagPoint(tag.dataset.anchor);
+      if (!at) return;
       // A cropped stage would cut a fixed tag at its edge; it slides inside like a bubble.
-      if (at) tag.style.transform = `translate(${stageX(at[0], widths[i] ?? 0, fit)}px, ${at[1] * fit.scale}px)`;
+      const x = stageX(at[0], widths[i] ?? 0, fit);
+      const y = at[1] * fit.scale;
+      tag.style.transform = `translate(${x}px, ${y}px)`;
+      placed.push({ tag, x, y, w: widths[i] ?? 0, h: tag.offsetHeight, near: Math.abs(at[0] - BOOTH_X) });
     });
+    placeTags(placed, fit.height);
   };
   applyFit();
   // Tag widths settle once the mono face loads.
@@ -148,7 +154,11 @@ export function mountScene(
       boothEl.dataset.visitor = world.visitor ?? "";
       // The idle courier leaves its spot while it walks a desk request, and its tag goes with it.
       const away = world.walker?.cue.route === "desk";
-      if (courierTag && courierTag.hidden !== away) courierTag.hidden = away;
+      if (courierTag && courierTag.hidden !== away) {
+        courierTag.hidden = away;
+        // A tag the courier's covered may show while it is away.
+        applyFit();
+      }
       setAttr(stageEl, "data-venue", world.venue);
       setAttr(stageEl, "aria-label", STAGE_LABEL[world.venue]);
       const busy = world.walker !== null;
