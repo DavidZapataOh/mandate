@@ -18,8 +18,14 @@ from opentimestamps.core.serialize import (
 )
 from opentimestamps.core.timestamp import DetachedTimestampFile, Timestamp
 
-from gate.anchor_public import stamp
-from gate.conftest import OTS, OTS_FILE
+from gate.anchor_public import (
+    EsploraHeaders,
+    attested_heights,
+    confirm,
+    stamp,
+    upgrade,
+)
+from gate.conftest import OTS, OTS_FILE, unb64
 
 GOLDEN = OTS_FILE.parent / "receipt.json"
 GATE_KEY = "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w="
@@ -178,3 +184,43 @@ def test_stamp_reaches_the_public_calendars():
     read = DetachedTimestampFile.deserialize(BytesDeserializationContext(proof))
     assert read.file_digest == root
     assert len(list(read.timestamp.all_attestations())) >= 2
+
+
+class _Recording:
+    """A live calendar that keeps every answer it gives, by commitment."""
+
+    def __init__(self, uri, answers):
+        self.calendar = RemoteCalendar(uri)
+        self.uri = uri
+        self.answers = answers
+
+    def submit(self, digest, timeout=None):
+        return self.calendar.submit(digest, timeout=timeout)
+
+    def get_timestamp(self, commitment, timeout=None):
+        got = self.calendar.get_timestamp(commitment, timeout=timeout)
+        answer = {"uri": self.uri, "answer": _b64(_bytes(got))}
+        self.answers[commitment.hex()] = answer
+        return got
+
+
+@pytest.mark.live
+def test_upgrade_the_golden_stamp():
+    answers = {}
+    proof = upgrade(
+        unb64(OTS["golden"]["pending"]), lambda uri: _Recording(uri, answers)
+    )
+    heights = attested_heights(proof)
+    if not heights:
+        pytest.skip("live: the golden stamp is not in a Bitcoin block yet")
+    height = heights[0]
+    header = EsploraHeaders().header(height)
+    digest = bytes.fromhex(OTS["golden"]["digest"])
+    assert isinstance(confirm(proof, digest, height, header), int)
+    if os.environ.get("MANDATE_CAPTURE") != "1":
+        return
+    fixture = json.loads(OTS_FILE.read_text())
+    fixture["golden"]["confirmed"] = _b64(proof)
+    fixture["golden"]["bitcoin"] = {"height": height, "header": header.hex()}
+    fixture["golden"]["answers"] = answers
+    OTS_FILE.write_text(json.dumps(fixture, indent=2, sort_keys=True) + "\n")

@@ -412,6 +412,32 @@ describe("public anchor step", () => {
     expect(await anchorDigest(seal, TRUST.gateKey)).toBe("fe28838c6cdcfc365aef8d643ea05cd90abb7e58ffe7f60dfb57ea077fcf071a");
     expect(await anchorDigest(seal, fromBase64(OTS.foreign.gate_key))).not.toBe(OTS.golden.digest);
   });
+
+  const CONFIRMED = { height: OTS.golden.bitcoin!.height, header: OTS.golden.bitcoin!.header };
+  const flipped = (hex: string) => hex.slice(0, -2) + (parseInt(hex.slice(-2), 16) ^ 1).toString(16).padStart(2, "0");
+
+  it("passes as CONFIRMED only when the proof reaches a header with real work", async () => {
+    const results = await verifyReceipt(JSON.parse(anchored(OTS.golden.confirmed!, CONFIRMED)), TRUST);
+    expect(anchorOf(results)).toEqual({
+      step: "Public anchor",
+      status: "pass",
+      detail:
+        "CONFIRMED: this seal is committed in Bitcoin block 974543 " +
+        "(00000000000000000000f7813784860e3eb0202a11238f2848130e94889d94d6), mined 2026-11-04T15:50:08Z; " +
+        "this browser checked the proof and the header's proof of work, not that the block is in the main chain: " +
+        "look the block up at any Bitcoin explorer or run ots verify",
+    });
+    expect(verdictOf(results).text).toBe("Every link of the chain verified in this browser; its seal is timestamped in Bitcoin");
+  });
+
+  it.each([
+    [{ ...CONFIRMED, header: flipped(CONFIRMED.header) }, "Bitcoin block 974543 header misses its proof-of-work target"],
+    [{ ...CONFIRMED, header: OTS.hello2015.header }, "Bitcoin block 974543 header is below the work floor"],
+    [{ ...CONFIRMED, header: OTS.core29.headers["892418"] }, "Bitcoin block 974543 header does not hold the proof's merkle root"],
+  ])("fails the golden stamp beside a header that is not its block %#", async (bitcoin, detail) => {
+    const results = await verifyReceipt(JSON.parse(anchored(OTS.golden.confirmed!, bitcoin)), TRUST);
+    expect(anchorOf(results)).toEqual({ step: "Public anchor", status: "fail", detail });
+  });
 });
 
 describe("verdictOf", () => {

@@ -86,7 +86,10 @@ def test_recorded_fixtures_are_the_published_proofs():
     assert len(core["answers"]) == 4
     assert (golden["root"], golden["digest"]) == (ROOT, DIGEST)
     assert unb64(golden["pending"]).hex().startswith(MAGIC + DIGEST + "f010")
-    assert (golden["confirmed"], golden["bitcoin"]) == (None, None)
+    assert golden["confirmed"] is not None
+    assert _block(golden["bitcoin"]["header"]) == (
+        "00000000000000000000f7813784860e3eb0202a11238f2848130e94889d94d6"
+    )
     assert OTS["foreign"]["digest"] == FOREIGN
     assert unb64(OTS["foreign"]["pending"]).hex().startswith(MAGIC + FOREIGN + "f010")
     assert unb64(OTS["bare"]["pending"]).hex().startswith(MAGIC + ROOT + "f010")
@@ -263,6 +266,20 @@ def test_confirm_refuses(proof, digest, height, header, reason):
         confirm(proof, digest, height, header)
 
 
+GOLDEN_HEIGHT = 974543
+
+
+def test_confirm_accepts_the_golden_stamp():
+    golden = OTS["golden"]
+    proof = unb64(golden["confirmed"])
+    header = bytes.fromhex(golden["bitcoin"]["header"])
+    assert confirm(proof, D1, GOLDEN_HEIGHT, header) == 1793807408
+    with pytest.raises(
+        AnchorError, match="^anchor: proof is not over this seal's anchor digest$"
+    ):
+        confirm(proof, bytes.fromhex(ROOT), GOLDEN_HEIGHT, header)
+
+
 def _source(routes):
     seen = []
 
@@ -383,6 +400,37 @@ def test_a_round_never_confirms_a_proof_of_another_digest(state_store):
     assert anchors.view(1)["bitcoin"] is None
     # Refused before any header is fetched.
     assert headers.asked == []
+
+
+def _golden_pending(store):
+    store.add_seal(_golden_seal())
+    store.put("anchored_to", "1")
+    record = {"bitcoin": None, "ots": OTS["golden"]["pending"], "stamped_at": 1}
+    store.put_record("ots-pending", "1", json.dumps(record))
+
+
+def test_a_round_confirms_a_proof_bitcoin_attests(state_store):
+    _golden_pending(state_store)
+    golden = OTS["golden"]
+    headers = RecordedHeaders(
+        {GOLDEN_HEIGHT: bytes.fromhex(golden["bitcoin"]["header"])}
+    )
+    anchors = _anchors(state_store, answers=golden["answers"], headers=headers)
+    assert anchors.round() == AnchorRound(0, 1, 0, None)
+    assert anchors.view(1) == {
+        "v": 1, "ots": golden["confirmed"], "bitcoin": golden["bitcoin"]
+    }  # fmt: skip
+
+
+def test_a_header_that_fails_keeps_the_proof_pending(state_store):
+    _golden_pending(state_store)
+    # Both heights the proof is attested in get a header of another block.
+    headers = RecordedHeaders({GOLDEN_HEIGHT: H21, 974545: H21})
+    anchors = _anchors(state_store, answers=OTS["golden"]["answers"], headers=headers)
+    assert anchors.round() == AnchorRound(
+        0, 0, 1, "anchor: block header does not hold the proof's merkle root"
+    )
+    assert anchors.view(1)["bitcoin"] is None
 
 
 class _WrongAnswerCalendar:
