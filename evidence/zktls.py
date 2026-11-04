@@ -22,7 +22,9 @@ CLOCK_SKEW_S = 30
 VERIFY_TIMEOUT_S = 30.0
 
 _REQUEST = re.compile(r"GET /accounts/([A-Za-z0-9_]+)/balance HTTP/1\.1\r\n")
-_HEADER_END = re.compile(r"\r\n\x00*\r\n")
+# The prover hides only the Authorization value ("Bearer <key>").
+_AUTH_VALUE = re.compile(r"\r\nauthorization: \x00{1,512}\r\n")
+_HEAD_END = "\r\n\r\n"
 _ACCOUNT = re.compile(r'"account_id"\s*:\s*"([A-Za-z0-9_]+)"')
 _BALANCE = re.compile(r'"available_balance"\s*:\s*(-?[0-9]{1,18})(?=[\s,}\x00])')
 
@@ -120,7 +122,52 @@ def run_verifier(binary: str, presentation: bytes) -> Disclosed:
             raise _refuse("verifier timed out") from None
         except OSError:
             raise _refuse("verifier unavailable") from None
-    return read_output(done.stdout)
+    disclosed = read_output(done.stdout)
+    if done.returncode != 0:
+        raise _refuse("presentation invalid")
+    return disclosed
+
+
+def _check_one_request(sent: str) -> None:
+    """Refuse unless `sent` is one request that asks the bank to close.
+
+    Only the Authorization value may be hidden, so a second request cannot
+    hide in the transcript; the request ends at its blank line.
+    """
+    if sent.count("\r\nconnection: close\r\n") != 1:
+        raise _refuse("request not closed")
+    if "\x00" in _AUTH_VALUE.sub("\r\n", sent, count=1):
+        raise _refuse("not one request")
+    if sent.find(_HEAD_END) + len(_HEAD_END) != len(sent):
+        raise _refuse("not one request")
+
+
+def _one_response_body(recv: str) -> str:
+    """Return the body of the only response in `recv`.
+
+    The head must be fully revealed and its content-length must account for
+    every byte after it, so no second response can follow the first.
+    """
+    head_end = recv.find(_HEAD_END)
+    if head_end < 0:
+        raise _refuse("not one response")
+    head = recv[:head_end]
+    if "\x00" in head:
+        raise _refuse("response head hidden")
+    lengths = []
+    for line in head.split("\r\n")[1:]:
+        name, _, value = line.partition(":")
+        name = name.strip().lower()
+        if name == "transfer-encoding":
+            raise _refuse("response length not disclosed")
+        if name == "content-length":
+            lengths.append(value.strip())
+    if len(lengths) != 1 or not re.fullmatch(r"[0-9]{1,6}", lengths[0]):
+        raise _refuse("response length not disclosed")
+    body = recv[head_end + len(_HEAD_END) :]
+    if len(body.encode()) != int(lengths[0]):
+        raise _refuse("not one response")
+    return body
 
 
 def check_balance(
@@ -153,11 +200,11 @@ def check_balance(
         raise _refuse("different account")
     if sent.count(f"\r\nmandate-nonce: {nonce}\r\n") != 1:
         raise _refuse("not bound to this intent")
+    _check_one_request(sent)
     recv = disclosed.recv
     if not recv.startswith("HTTP/1.1 200 OK\r\n"):
         raise _refuse("bank did not answer 200")
-    # Hidden header bytes are NUL, so the blank line may be split by a run of them.
-    body = _HEADER_END.split(recv, maxsplit=1)[-1] if _HEADER_END.search(recv) else ""
+    body = _one_response_body(recv)
     accounts = _ACCOUNT.findall(body)
     if len(accounts) != 1 or body.count('"account_id"') != 1:
         raise _refuse("account not disclosed")

@@ -83,12 +83,15 @@ On the sandbox rail the holder can replace the cooperative funds statement with 
  Authorization hidden)                     Mozilla roots, notary signature
                                          evidence/zktls.check_balance
                                            notary key, server, <= 300 s,
-                                           request, account, nonce, 200,
+                                           one request (connection: close),
+                                           one response (head revealed,
+                                           content-length = the rest),
+                                           account, nonce, 200,
                                            balance covers the amount
                                          intent funds ref := ev:zktls-attestation:<sha256[:32]>
 ```
 
-Trust boundary: the holder key stays in the holder's process and reaches the prover by name (`--auth-env`); the presentation carries the `Authorization` header name with its value hidden. The desk's side holds the notary key and runs the verifier, and it sees the account id and the balance in the clear; the balance stays in the desk's memory and is reduced to "covers the amount". The proof is only as strong as Mandate's notary key, because Mandate both notarizes and verifies. The browser never sees the presentation: the receipt's gate-signed `funds` view carries its digest, server name, session time and notary key, and the explorer's `Funds proof` step checks that this view matches the certified `evidence_refs`. The verifier runs outside the desk lock, and the intent is checked again before the proof is kept.
+Trust boundary: the holder key stays in the holder's process and reaches the prover by name (`--auth-env`), and the holder CLI runs the prover only for the pinned host, path, fields, nonce form and a loopback notary; the presentation carries the `Authorization` header name with its value hidden. The desk's side holds the notary key and runs the verifier, and it sees the account id and the balance in the clear; the balance stays in the desk's memory and is reduced to "covers the amount". The proof is only as strong as Mandate's notary key, because Mandate both notarizes and verifies. The browser never sees the presentation: the receipt's gate-signed `funds` view carries its digest, server name, session time and notary key, and the explorer's `Funds proof` step checks that this view matches the certified `evidence_refs`. The verifier runs outside the desk lock, and the intent is checked again before the proof is kept.
 
 ## Threat model
 TODO: principals, trust boundaries, and out-of-scope threats.

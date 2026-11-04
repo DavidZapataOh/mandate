@@ -4,19 +4,56 @@ import argparse
 import base64
 import json
 import os
+import re
 import subprocess
 import tempfile
 from collections.abc import Mapping
 from typing import Any, NoReturn
+from urllib.parse import urlsplit
 
 import httpx2
 
 from bank.credentials import HOLDER_KEY_ENV
-from evidence.zktls import ZKTLS_BIN_ENV, find_verifier
+from evidence.zktls import BANK_HOST, REVEALED_FIELDS, ZKTLS_BIN_ENV, find_verifier
 
 PROVE_TIMEOUT_S = 120.0
 # The desk runs its verifier before it answers the upload.
 _DESK_TIMEOUT_S = 60.0
+
+
+_PATH = re.compile(r"/accounts/(sandbox_)?account_[A-Za-z0-9]{1,64}/balance")
+_NONCE = re.compile(r"[0-9a-f]{64}")
+_NOTARY = re.compile(r"(127\.0\.0\.1|\[::1\]):([0-9]{1,5})")
+_LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+
+def _str(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def challenge_is_pinned(challenge: Mapping[str, Any]) -> bool:
+    """Whether a desk challenge names only the pinned bank lookup.
+
+    The prover sends the holder key to ``host``, so a desk must not choose it;
+    nor the path, the revealed fields, a non-hex nonce or a remote notary.
+    """
+    notary = _NOTARY.fullmatch(_str(challenge.get("notary")))
+    return (
+        challenge.get("host") == BANK_HOST
+        and _PATH.fullmatch(_str(challenge.get("path"))) is not None
+        and challenge.get("reveal") == list(REVEALED_FIELDS)
+        and _NONCE.fullmatch(_str(challenge.get("nonce"))) is not None
+        and notary is not None
+        and 0 < int(notary.group(2)) < 65536
+    )
+
+
+def desk_url_is_safe(url: str) -> bool:
+    """Whether the desk URL is https, or plain http only to this machine."""
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return bool(parts.hostname)
+    return parts.scheme == "http" and parts.hostname in _LOOPBACK_HOSTS
 
 
 def _error_of(stdout: str) -> str:
@@ -46,9 +83,12 @@ def prove_presentation(
         The presentation the prover wrote.
 
     Raises:
-        RuntimeError: The prover failed; the message is its reported error.
+        RuntimeError: The challenge is not pinned (the prover never runs), or
+            the prover failed; the message is the reason.
         subprocess.TimeoutExpired: The prover ran past ``PROVE_TIMEOUT_S``.
     """
+    if not challenge_is_pinned(challenge):
+        raise RuntimeError("desk challenge not pinned")
     with tempfile.TemporaryDirectory() as directory:
         out = os.path.join(directory, "presentation.bin")
         done = subprocess.run(  # noqa: S603
@@ -137,6 +177,8 @@ def cli(
             2,
             f"holder proof unavailable: set {ZKTLS_BIN_ENV} to a built mandate-zktls\n",
         )
+    if not desk_url_is_safe(args.desk):
+        _refused("desk URL must be https or loopback")
     desk = args.desk.rstrip("/")
     with http_client or httpx2.Client(timeout=_DESK_TIMEOUT_S) as client:
         challenge = _post(

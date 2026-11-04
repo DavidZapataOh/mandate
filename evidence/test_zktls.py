@@ -12,7 +12,10 @@ from evidence.conftest import (
     NOW,
     H,
     fake_binary,
+    increase_body,
     increase_disclosed,
+    increase_recv,
+    verifier_line,
 )
 from evidence.zktls import (
     BankProofSetup,
@@ -55,6 +58,12 @@ def _recv(old, new):
     return dataclasses.replace(GOOD, recv=RECV.replace(old, new))
 
 
+def _body(old, new):
+    """Edit the body and keep the revealed content-length in step with it."""
+    body = increase_body().replace(old, new)
+    return dataclasses.replace(GOOD, recv=increase_recv(body))
+
+
 @pytest.mark.parametrize(
     ("disclosed", "now", "reason"),
     [
@@ -77,7 +86,7 @@ def _recv(old, new):
         (_recv("200 OK", "401 Unauthorized"), NOW, "bank did not answer 200"),
         (_recv(f'"{ACCT}"', f'"{H * 28}"'), NOW, "account not disclosed"),
         (
-            _recv(f'"account_id": "{ACCT}"', '"account_id": "account_other"'),
+            _body(f'"account_id": "{ACCT}"', '"account_id": "account_other"'),
             NOW,
             "different account",
         ),
@@ -94,11 +103,91 @@ def test_each_refusal_names_its_reason(disclosed, now, reason):
         _check(disclosed, now=now)
 
 
+def _two_responses(first_head_hidden):
+    """Two exchanges on one keep-alive session; only the second's balance shows."""
+    first_body = H * 120
+    if first_head_hidden:
+        first = f"HTTP/1.1 200 OK\r\n{H * 90}\r\n{first_body}"
+    else:
+        first = increase_recv(first_body)
+    second = f"{H * 150}\r\n\r\n" + increase_body(99999999)
+    return dataclasses.replace(
+        GOOD,
+        sent=SENT.replace("connection: close\r\n", ""),
+        recv=first + second,
+    )
+
+
+@pytest.mark.parametrize("first_head_hidden", [True, False])
+def test_a_second_response_on_a_kept_alive_session_is_refused(first_head_hidden):
+    smuggled = _two_responses(first_head_hidden)
+    with pytest.raises(ZktlsError):
+        _check(smuggled)
+    # Even with the request asking to close, the response side alone refuses it.
+    closed = dataclasses.replace(smuggled, sent=SENT)
+    reason = "response head hidden" if first_head_hidden else "not one response"
+    with pytest.raises(ZktlsError, match=f"^zktls: {reason}$"):
+        _check(closed)
+
+
+@pytest.mark.parametrize(
+    ("disclosed", "reason"),
+    [
+        (_sent("connection: close\r\n", ""), "request not closed"),
+        (_sent("connection: close", "connection: keep-alive"), "request not closed"),
+        (
+            dataclasses.replace(GOOD, sent=SENT + f"GET /accounts/{ACCT}/balance "),
+            "not one request",
+        ),
+        (
+            dataclasses.replace(GOOD, sent=SENT + "GET /x HTTP/1.1\r\nhost: a\r\n\r\n"),
+            "not one request",
+        ),
+        (_sent("accept: application/json", f"accept: {H * 16}"), "not one request"),
+        (_sent("authorization: ", f"authorization: {H * 600}"), "not one request"),
+        (
+            dataclasses.replace(GOOD, sent=SENT.replace("\r\n\r\n", "\r\n")),
+            "not one request",
+        ),
+        (
+            _recv("x-request-id: req_5d1e", f"x-request-id: {H * 8}"),
+            "response head hidden",
+        ),
+        (_recv("content-length: ", "x-length: "), "response length not disclosed"),
+        (
+            dataclasses.replace(
+                GOOD,
+                recv=increase_recv(increase_body(), "content-length: 147\r\n"),
+            ),
+            "response length not disclosed",
+        ),
+        (
+            dataclasses.replace(
+                GOOD,
+                recv=increase_recv(increase_body(), "transfer-encoding: chunked\r\n"),
+            ),
+            "response length not disclosed",
+        ),
+        (dataclasses.replace(GOOD, recv=RECV + H), "not one response"),
+        (dataclasses.replace(GOOD, recv=RECV[:-1]), "not one response"),
+        (dataclasses.replace(GOOD, recv=RECV.split("\r\n\r\n")[0]), "not one response"),
+    ],
+)
+def test_exactly_one_closed_exchange_is_accepted(disclosed, reason):
+    with pytest.raises(ZktlsError, match=f"^zktls: {reason}$"):
+        _check(disclosed)
+
+
+def test_header_names_are_matched_without_case():
+    upper = _recv("content-length: ", "Content-Length: ")
+    assert _check(upper).available_balance == 50000
+
+
 def test_a_hidden_minus_sign_never_reads_as_a_positive_balance():
-    negative = _recv('"available_balance": 50000', f'"available_balance": {H}50000')
+    negative = _body('"available_balance": 50000', f'"available_balance": {H}50000')
     with pytest.raises(ZktlsError, match="balance not disclosed"):
         _check(negative)
-    assert _check(_recv("50000", "-50000")).available_balance == -50000
+    assert _check(_body("50000", "-50000")).available_balance == -50000
 
 
 @pytest.mark.parametrize(
@@ -162,6 +251,12 @@ def test_run_verifier_refusals(tmp_path, monkeypatch):
         run_verifier(binary, PRESENTATION)
     with pytest.raises(ZktlsError, match="^zktls: verifier unavailable$"):
         run_verifier(str(tmp_path / "missing"), PRESENTATION)
+
+
+def test_run_verifier_refuses_a_failing_exit_even_with_good_output(tmp_path):
+    body = f"print({verifier_line(GOOD)!r})\nraise SystemExit(3)"
+    with pytest.raises(ZktlsError, match="^zktls: presentation invalid$"):
+        run_verifier(fake_binary(tmp_path, body), PRESENTATION)
 
 
 def test_find_verifier_needs_an_executable(tmp_path):

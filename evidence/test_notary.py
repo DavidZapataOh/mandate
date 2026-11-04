@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 
@@ -10,6 +11,7 @@ from evidence.notary import (
     notary_public_key,
     start_notary,
 )
+from evidence.zktls import find_verifier
 
 SEED7 = bytes([7]) * 32
 
@@ -52,3 +54,39 @@ def test_start_notary_refusals(tmp_path, monkeypatch):
     silent = fake_binary(tmp_path, "import time\ntime.sleep(5)")
     with pytest.raises(NotaryError, match="^notary: did not start$"):
         start_notary(silent, SEED7)
+
+
+def test_a_partial_announcement_does_not_block_past_the_deadline(tmp_path, monkeypatch):
+    monkeypatch.setattr(notary, "START_TIMEOUT_S", 0.5)
+    partial = fake_binary(
+        tmp_path,
+        "import sys, time\nsys.stdout.write('{\"listening\"')\n"
+        "sys.stdout.flush()\ntime.sleep(10)",
+    )
+    started = time.monotonic()
+    with pytest.raises(NotaryError, match="^notary: did not start$"):
+        start_notary(partial, SEED7)
+    assert time.monotonic() - started < 3
+
+
+def test_the_notary_child_is_told_to_exit_with_its_parent(tmp_path):
+    binary = fake_binary(tmp_path, _notary_script(SEED7.hex()))
+    running = start_notary(binary, SEED7, "127.0.0.1:7999")
+    try:
+        assert "--exit-on-stdin-eof" in running.process.args
+        assert running.process.stdin is not None
+    finally:
+        running.stop()
+
+
+def test_the_real_notary_exits_when_its_parent_closes_stdin():
+    binary = find_verifier(os.environ)
+    if binary is None:
+        pytest.skip("set MANDATE_ZKTLS_BIN to a built mandate-zktls")
+    running = start_notary(binary, new_notary_key(), "127.0.0.1:0")
+    assert running.process.stdin is not None
+    running.process.stdin.close()
+    try:
+        assert running.process.wait(timeout=5) == 0
+    finally:
+        running.stop()

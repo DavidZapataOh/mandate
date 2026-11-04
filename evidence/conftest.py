@@ -14,6 +14,25 @@ NOTARY = "02989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f"
 H = "\x00"
 
 
+def increase_body(balance: int = 50000) -> str:
+    """A balance body as revealed: only the two pinned pairs are visible."""
+    return (
+        "{\n"
+        f'  "account_id": "{ACCT}",{H * 3}'
+        f'  "available_balance": {balance}{H * 3}'
+        f"{H * 60}}}"
+    )
+
+
+def increase_recv(body: str, extra_headers: str = "") -> str:
+    """One response whose head is fully revealed and sized to `body`."""
+    return (
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
+        f"x-request-id: req_5d1e\r\ncontent-length: {len(body.encode())}\r\n"
+        f"date: Wed, 04 Nov 2026 05:00:00 GMT\r\n{extra_headers}\r\n{body}"
+    )
+
+
 def increase_disclosed(
     balance: int = 50000, nonce: str = NONCE, time: int = NOW - 5
 ) -> Disclosed:
@@ -24,17 +43,7 @@ def increase_disclosed(
         "accept-encoding: identity\r\nconnection: close\r\n"
         f"mandate-nonce: {nonce}\r\nauthorization: {H * 30}\r\n\r\n"
     )
-    body = (
-        "{\n"
-        f'  "account_id": "{ACCT}",{H * 3}'
-        f'  "available_balance": {balance}{H * 3}'
-        f"{H * 60}}}"
-    )
-    recv = (
-        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n"
-        f"{H * 60}content-length: 139\r\n{H * 17}date: Wed, 04 Nov 2026 GMT\r\n"
-        f"{H * 51}\r\n{H * 25}{body}"
-    )
+    recv = increase_recv(increase_body(balance))
     return Disclosed("sandbox.increase.com", time, NOTARY, sent, recv)
 
 

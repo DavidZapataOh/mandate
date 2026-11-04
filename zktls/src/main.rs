@@ -1,6 +1,10 @@
 //! Notary, prover and verifier for balance proofs over a bank's HTTPS API.
 
-use std::{env, time::Instant};
+use std::{
+    env,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -10,6 +14,7 @@ use hyper_util::rt::TokioIo;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::Semaphore,
 };
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 
@@ -44,7 +49,7 @@ const MAX_SENT: usize = 1024;
 const MAX_RECV: usize = 4096;
 const MAX_FRAME: u32 = 1 << 20;
 const SENT_HEADERS: [&str; 5] = ["host", "accept", "accept-encoding", "connection", "mandate-nonce"];
-const RECV_HEADERS: [&str; 3] = ["content-type", "content-length", "date"];
+const MAX_SESSIONS: usize = 4;
 
 #[derive(Parser)]
 #[command(name = "mandate-zktls")]
@@ -61,6 +66,9 @@ enum Cmd {
         listen: String,
         #[arg(long)]
         key_file: String,
+        /// Exit when stdin reaches end of file (the parent died or let go).
+        #[arg(long)]
+        exit_on_stdin_eof: bool,
     },
     /// Prove one GET and write a presentation that reveals only the plan.
     Prove {
@@ -89,7 +97,11 @@ enum Cmd {
 #[tokio::main]
 async fn main() {
     let result = match Cli::parse().cmd {
-        Cmd::Notary { listen, key_file } => notary(listen, key_file).await,
+        Cmd::Notary {
+            listen,
+            key_file,
+            exit_on_stdin_eof,
+        } => notary(listen, key_file, exit_on_stdin_eof).await,
         Cmd::Prove {
             notary,
             host,
@@ -108,7 +120,7 @@ async fn main() {
 }
 
 /// The ranges a presentation reveals: everything a verifier must read, and
-/// nothing else (never the Authorization value, never unlisted fields).
+/// nothing else (never the Authorization value, never unlisted body fields).
 #[derive(Debug, Default, PartialEq)]
 struct Plan {
     sent: Vec<std::ops::Range<usize>>,
@@ -140,12 +152,11 @@ fn reveal_plan(http: &HttpTranscript, fields: &[String]) -> Result<Plan> {
             plan.sent.extend(ranges!(header.without_value()));
         }
     }
+    // The whole response head is revealed so a verifier can check that the
+    // content-length accounts for every received byte: one response only.
     plan.recv.extend(ranges!(resp.without_data()));
     for header in &resp.headers {
-        let name = header.name.as_str().to_ascii_lowercase();
-        if RECV_HEADERS.contains(&name.as_str()) {
-            plan.recv.extend(ranges!(header.span().indices()));
-        }
+        plan.recv.extend(ranges!(header.span().indices()));
     }
     let body = resp.body.as_ref().context("response has no body")?;
     let BodyContent::Json(JsonValue::Object(object)) = &body.content else {
@@ -190,7 +201,7 @@ fn notary_provider(key_hex: &str) -> Result<(CryptoProvider, String)> {
     Ok((provider, public))
 }
 
-async fn notary(listen: String, key_file: String) -> Result<()> {
+async fn notary(listen: String, key_file: String, exit_on_stdin_eof: bool) -> Result<()> {
     let key_hex = std::fs::read_to_string(&key_file)?;
     let (_, public) = notary_provider(&key_hex)?;
     let listener = TcpListener::bind(&listen).await?;
@@ -198,13 +209,34 @@ async fn notary(listen: String, key_file: String) -> Result<()> {
         "{}",
         serde_json::json!({"listening": listener.local_addr()?.to_string(), "notary_key": public})
     );
+    if exit_on_stdin_eof {
+        tokio::spawn(async {
+            let mut sink = Vec::new();
+            let _ = tokio::io::stdin().read_to_end(&mut sink).await;
+            std::process::exit(0);
+        });
+    }
+    let sessions = Arc::new(Semaphore::new(MAX_SESSIONS));
     loop {
-        let (socket, _) = listener.accept().await?;
+        let socket = match listener.accept().await {
+            Ok((socket, _)) => socket,
+            Err(err) => {
+                // e.g. EMFILE: keep serving once descriptors free up.
+                eprintln!("accept failed: {err}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        let Ok(permit) = sessions.clone().try_acquire_owned() else {
+            eprintln!("notarization refused: {MAX_SESSIONS} sessions running");
+            continue;
+        };
         let key_hex = key_hex.clone();
         tokio::spawn(async move {
             if let Err(err) = notarize(socket, &key_hex).await {
                 eprintln!("notarization failed: {err:#}");
             }
+            drop(permit);
         });
     }
 }
@@ -441,7 +473,11 @@ mod tests {
         assert!(recv.contains("\"available_balance\":50000"));
         assert!(recv.contains("\"account_id\":\"account_abc\""));
         assert!(!recv.contains("current_balance"));
-        assert!(!recv.contains("r1"));
+        let head = RECV.find("\r\n\r\n").unwrap() + 4;
+        assert_eq!(&recv[..head], &RECV[..head], "every response header is revealed");
+        assert_eq!(recv.len(), RECV.len());
+        let hidden = sent.bytes().filter(|b| *b == b'X').count();
+        assert_eq!(hidden, "Bearer secret-key".len(), "only the key value is hidden");
     }
 
     #[test]

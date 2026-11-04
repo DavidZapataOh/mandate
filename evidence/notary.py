@@ -6,6 +6,7 @@ import select
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 
 from cryptography.hazmat.primitives import serialization
@@ -48,23 +49,35 @@ class Notary:
 
     def stop(self) -> None:
         """Kill the child and reap it."""
-        self.process.kill()
-        self.process.wait()
-        if self.process.stdout is not None:
-            self.process.stdout.close()
+        _kill(self.process)
 
 
 def _kill(process: "subprocess.Popen[str]") -> None:
     process.kill()
     process.wait()
-    if process.stdout is not None:
-        process.stdout.close()
+    for pipe in (process.stdin, process.stdout):
+        if pipe is not None:
+            pipe.close()
 
 
 def _first_line(process: "subprocess.Popen[str]") -> str:
+    """Read the child's first line, or "" once `START_TIMEOUT_S` has passed."""
     assert process.stdout is not None  # noqa: S101
-    ready, _, _ = select.select([process.stdout], [], [], START_TIMEOUT_S)
-    return process.stdout.readline() if ready else ""
+    fd = process.stdout.fileno()
+    deadline = time.monotonic() + START_TIMEOUT_S
+    line = b""
+    while b"\n" not in line and len(line) < 4096:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return ""
+        ready, _, _ = select.select([fd], [], [], left)
+        if not ready:
+            return ""
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        line += chunk
+    return line.split(b"\n", 1)[0].decode("utf-8", "replace")
 
 
 def start_notary(binary: str, key: bytes, listen: str = NOTARY_LISTEN) -> Notary:
@@ -84,7 +97,18 @@ def start_notary(binary: str, key: bytes, listen: str = NOTARY_LISTEN) -> Notary
         with os.fdopen(fd, "w") as handle:
             handle.write(key.hex())
         process = subprocess.Popen(  # noqa: S603
-            [binary, "notary", "--listen", listen, "--key-file", path],
+            # The child exits when this process dies and its stdin closes,
+            # so a killed console never leaves the notary port taken.
+            [
+                binary,
+                "notary",
+                "--listen",
+                listen,
+                "--exit-on-stdin-eof",
+                "--key-file",
+                path,
+            ],
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
