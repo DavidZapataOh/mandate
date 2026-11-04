@@ -17,7 +17,7 @@ _SEGMENTS = re.compile(r"&&|\|\||;|\|")
 _SHELL_FORBIDDEN = frozenset("\n\r\x00<>`$(){}!")
 _PLAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 _PLAIN_ARG = re.compile(r"-{0,2}[A-Za-z0-9][A-Za-z0-9._:=+-]*")
-_BLANKS = re.compile(r"[ \t]+")
+_BLANKS = re.compile(r" +")
 # Words that make the next word the command (bash, zsh, sh), so their atom
 # would name syntax instead of the program the shell runs.
 _SHELL_KEYWORDS = frozenset(
@@ -92,8 +92,8 @@ _RUNNERS = frozenset(
     }
 )
 _SHELL_FIELDS = frozenset({"command", "description", "workdir"})
-# Shells split words on space and tab only; any other blank or control
-# character is read differently by the shell and by the reader.
+# Shells split words on space and tab, and tab is refused on its own; any other
+# blank or control character is read differently by the shell and the reader.
 _OTHER_BLANK_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Zs"})
 _NOT_PLAIN_NAME = "scope: command name not plain"
 _NOT_PLAIN = "scope: governed command not plain"
@@ -292,7 +292,7 @@ def _plain_name(name: str) -> bool:
 
 
 def _other_blank(char: str) -> bool:
-    if char in " \t":
+    if char == " ":
         return False
     return char.isspace() or unicodedata.category(char) in _OTHER_BLANK_CATEGORIES
 
@@ -309,7 +309,7 @@ def plain_argv(argv: Sequence[str]) -> bool:
 def _governed_atom(segment: str, argv: list[str], alone: bool) -> str:
     if not alone:
         raise ScopeError(_ALONE)
-    if _BLANKS.split(segment.strip(" \t")) != argv or not plain_argv(argv):
+    if _BLANKS.split(segment.strip(" ")) != argv or not plain_argv(argv):
         raise ScopeError(_NOT_PLAIN)
     return argv_atom(argv)
 
@@ -318,11 +318,15 @@ def _shell_atoms(
     tool_input: dict[str, Any], cwd: str, governed: frozenset[str]
 ) -> tuple[str, ...]:
     command = tool_input.get("command")
-    if not isinstance(command, str) or not command.strip(" \t"):
+    if not isinstance(command, str) or not command.strip(" "):
         raise ScopeError("scope: missing tool target")
     if _SHELL_FORBIDDEN.intersection(command) or "&" in command.replace("&&", ""):
         raise ScopeError("scope: shell redirection or substitution")
     _check_workdir(tool_input.get("workdir"), cwd)
+    # Interactive bash and sh read even piped input through readline, where a
+    # tab completes the word before it into a name the reader never saw.
+    if "\t" in command:
+        raise ScopeError("scope: unparseable shell command")
     commands: list[tuple[str, list[str]]] = []
     candidates: list[str] = []
     for segment in _SEGMENTS.split(command):

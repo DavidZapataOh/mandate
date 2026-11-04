@@ -17,7 +17,7 @@ def _atoms(command):
     ("command", "atoms"),
     [
         ("nimbus deploy api-v2 prod-eu", (DEPLOY,)),
-        ("  nimbus\tdeploy  api-v2 prod-eu ", (DEPLOY,)),
+        ("  nimbus deploy  api-v2 prod-eu ", (DEPLOY,)),
         ("nimbus status prod-eu", ("cmd:nimbus status prod-eu",)),
         (
             "nimbus migrate migration-0017 prod-eu",
@@ -130,8 +130,43 @@ def test_shell_keywords_and_lookalikes_never_yield_an_argv_atom(command, reason)
         _atoms(command)
 
 
-def test_trailing_tab_is_a_blank():
-    assert _atoms("nimbus deploy api-v2 prod-eu\t") == (DEPLOY,)
+# Interactive bash and sh read input through readline even from a pipe: a tab
+# completes the word before it, and other control keys edit the line.
+@pytest.mark.parametrize(
+    "command",
+    [
+        "nimbus deploy\tapi-v2 prod-eu",
+        "cat .mand\tgate.key",
+        "ls .mu\t",
+        "nimbus deploy api-v2 prod-eu\t",
+        "  nimbus\tdeploy  api-v2 prod-eu ",
+        "\tls",
+        "cat RUNBOOK.md\t&& ls",
+        "ls \x1b.",
+        "ls \x1b[A",
+        "ls \x7f",
+        "ls \x16\t",
+        "ls \x16",
+        "ls \x01",
+        "ls \x05",
+        "ls \x08",
+        "ls \x12",
+        "ls \x15",
+        "ls \x17",
+        "ls \x18\x05",
+        "ls \x19",
+        "ls \x1f",
+    ],
+)
+def test_readline_keys_are_refused_anywhere(command):
+    with pytest.raises(ScopeError, match=re.escape(UNPARSEABLE)):
+        _atoms(command)
+
+
+@pytest.mark.parametrize("key", ["\x7f", "\x1b", "\x16"])
+def test_readline_keys_in_a_governed_command_are_refused(key):
+    with pytest.raises(ScopeError, match=re.escape(NOT_PLAIN)):
+        _atoms("nimbus deploy api-v2 prod-eu" + key)
 
 
 @pytest.mark.parametrize(
