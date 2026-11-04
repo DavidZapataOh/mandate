@@ -156,6 +156,7 @@ module = [
     "swarm.test_server_lookup",
     "swarm.test_server_holders",
     "swarm.test_server_health",
+    "swarm.test_server_loop",
     "swarm.test_state",
     "swarm.test_meta_client",
     "swarm.test_voice",

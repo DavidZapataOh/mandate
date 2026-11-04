@@ -264,12 +264,13 @@ def _draft_busy() -> JSONResponse:
 
 
 def _device_proved(
-    request: Request, domain: str, body: bytes, desk: PaymentDesk
+    request: Request, domain: str, body: bytes, keys: tuple[bytes, ...]
 ) -> bool:
-    """True when a paired holder key signed the exact body received.
+    """True when one of the paired holder keys signed the exact body received.
 
     The signature authenticates the uploading device before any model call.
-    Its domain differs per route and from consent and voice signatures.
+    Its domain differs per route and from consent and voice signatures. The
+    keys are read from the desk by the caller, off the event loop.
     """
     offered = request.headers.get(_DEVICE_SIG_HEADER)
     if offered is None or not _VOICE_SIG.fullmatch(offered):
@@ -277,7 +278,7 @@ def _device_proved(
     signature = base64.urlsafe_b64decode(offered + "==")
     digest = hashlib.sha256(body).hexdigest()
     message = f"{domain}\n{digest}".encode()
-    for key in desk.holder_keys:
+    for key in keys:
         try:
             Ed25519PublicKey.from_public_bytes(key).verify(signature, message)
         except (InvalidSignature, ValueError):
@@ -508,6 +509,9 @@ state is returned."""
     async def pending(request: Request) -> Response:
         return JSONResponse({"pending": await anyio.to_thread.run_sync(desk.pending)})
 
+    async def holder_keys() -> tuple[bytes, ...]:
+        return await anyio.to_thread.run_sync(lambda: desk.holder_keys)
+
     async def approve(request: Request) -> Response:
         body = await _fields(request, "quote_id", *_APPROVAL)
         approval = _approval(body) if body else None
@@ -567,12 +571,13 @@ state is returned."""
         if raw is None:
             return _bad_request()
         # The run spends model calls, so the paired device must ask for it.
-        if not _device_proved(request, _AGENT_DOMAIN, raw, desk):
+        if not _device_proved(request, _AGENT_DOMAIN, raw, await holder_keys()):
             return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
         body = _parse_fields(raw, ("intent_id",))
         if body is None:
             return _bad_request()
-        started = handoff.start(body["intent_id"])
+        # It reads the desk and may look the transfer up at the bank.
+        started = await anyio.to_thread.run_sync(handoff.start, body["intent_id"])
         if started.get("error") == "unknown intent":
             return JSONResponse(started, status_code=404)
         # Busy, already paid, or a transfer the bank has not settled.
@@ -598,7 +603,7 @@ state is returned."""
             raw = await _capped_body(request, _MAX_BODY)
             if raw is None:
                 return _bad_request()
-            if not _device_proved(request, _DRAFT_DOMAIN, raw, desk):
+            if not _device_proved(request, _DRAFT_DOMAIN, raw, await holder_keys()):
                 return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
             body = _parse_fields(raw, ("text",))
             if body is None or not 1 <= len(body["text"]) <= _MAX_TEXT:
@@ -616,7 +621,7 @@ state is returned."""
             audio = await _capped_body(request, MAX_WAV_BYTES)
             if audio is None:
                 return JSONResponse({"error": "audio too large"}, status_code=413)
-            if not _device_proved(request, _VOICE_DOMAIN, audio, desk):
+            if not _device_proved(request, _VOICE_DOMAIN, audio, await holder_keys()):
                 return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
             return await _draft(intake.from_voice, audio)
 
@@ -648,10 +653,11 @@ state is returned."""
         Holder keys are published so a holder can check their own disclosure;
         retired keys stay so receipts they approved keep verifying.
         """
+        held = await anyio.to_thread.run_sync(lambda: desk.all_holder_keys)
         return JSONResponse(
             {
                 "gate_key": _b64(desk.gate_public_key),
-                "holder_keys": [_b64(key) for key in desk.all_holder_keys],
+                "holder_keys": [_b64(key) for key in held],
             }
         )
 
@@ -700,7 +706,7 @@ state is returned."""
         # A count only: naming a device would link payments to a holder.
         return JSONResponse(
             {
-                "holders": len(desk.holder_keys),
+                "holders": len(await holder_keys()),
                 # Read-only, so the holder page offers the microphone only when
                 # the desk would answer.
                 "voice": voice is not None and voice.available,
@@ -720,8 +726,9 @@ state is returned."""
                 {"error": "voice unavailable", "reason": reason}, status_code=503
             )
         quote_id = request.query_params.get("quote")
-        shown = next((q for q in desk.pending() if q["quote_id"] == quote_id), None)
-        if quote_id is None or shown is None or not desk.holder_keys:
+        open_quotes = await anyio.to_thread.run_sync(desk.pending)
+        shown = next((q for q in open_quotes if q["quote_id"] == quote_id), None)
+        if quote_id is None or shown is None or not await holder_keys():
             return _bad_request()
         consent = shown["consent"]
         if desk.expired(consent["expires_at"]):
@@ -730,7 +737,7 @@ state is returned."""
         if signature is None:
             return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
         # A signed clip is transcribed once per quote; forget closed quotes.
-        open_ids = {q["quote_id"] for q in desk.pending()}
+        open_ids = {q["quote_id"] for q in await anyio.to_thread.run_sync(desk.pending)}
         for closed in transcribed.keys() - open_ids:
             del transcribed[closed]
         if signature in transcribed.get(quote_id, ()):
@@ -757,7 +764,8 @@ state is returned."""
             return JSONResponse({"error": "audio too large"}, status_code=413)
         # The digest covers the body actually received, so a signature over
         # other audio or another quote fails here, before any model call.
-        if not verify_voice(quote_id, audio, signature, desk.approver_keys(quote_id)):
+        approvers = await anyio.to_thread.run_sync(desk.approver_keys, quote_id)
+        if not verify_voice(quote_id, audio, signature, approvers):
             return JSONResponse(dict(_NOT_PAIRED_DEVICE), status_code=401)
         transcribed.setdefault(quote_id, set()).add(signature)
         keywords = (consent["recipient"], consent["reference"])
@@ -881,9 +889,8 @@ state is returned."""
             kind = None
         if kind is None or attacks is None:
             return _bad_request()
-        return Response(
-            console_line_json(attacks.run(kind)), media_type="application/json"
-        )
+        line = await anyio.to_thread.run_sync(attacks.run, kind)
+        return Response(console_line_json(line), media_type="application/json")
 
     async def deploy(request: Request) -> Response:
         body = await _fields(request, "step")
