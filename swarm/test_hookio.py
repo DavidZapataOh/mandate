@@ -177,8 +177,10 @@ def test_targets_reject_nul_in_path():
 
 
 def test_targets_wrapper_forms_map_to_their_first_token():
-    assert targets_for(_call("bash", {"command": "FOO=1 rm x"})) == ("cmd:FOO=1",)
-    assert targets_for(_call("bash", {"command": "env rm x"})) == ("cmd:env",)
+    with pytest.raises(ScopeError, match="scope: command name not plain"):
+        targets_for(_call("bash", {"command": "FOO=1 rm x"}))
+    with pytest.raises(ScopeError, match="scope: command name not plain"):
+        targets_for(_call("bash", {"command": "env rm x"}))
 
 
 @pytest.mark.parametrize(

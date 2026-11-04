@@ -1,8 +1,9 @@
 """Hook process Muse Code invokes to gate subagent tool calls.
 
-Cmd atoms govern only the first binary of each shell segment, and a shell
-`workdir` must stay inside the agent's cwd; code run by an allowed binary is
-contained by Muse Code's own OS sandbox, not by Mandate.
+Cmd atoms name the first binary of each shell segment, or the whole argv of a
+binary the manifest governs by argv; a shell `workdir` must stay inside the
+agent's cwd; code run by an allowed binary is contained by Muse Code's own OS
+sandbox, not by Mandate.
 
 Authority (manifest, state, keys, journal) lives in a state directory outside
 the governed repo and is pinned by the hook's argv; nothing under the repo is
@@ -180,7 +181,7 @@ def _spawn(ctx: _Ctx, call: ToolCall) -> tuple[int, str]:
 
 def _governed(ctx: _Ctx, call: ToolCall) -> tuple[int, str]:
     try:
-        atoms = targets_for(call)
+        atoms = targets_for(call, ctx.manifest.argv_governed)
     except ScopeError as err:
         return ctx.deny(call, (), str(err))
     record = ctx.state.agents.get(call.session_id)

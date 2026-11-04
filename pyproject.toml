@@ -120,6 +120,8 @@ module = [
     "swarm.test_desk_holders",
     "swarm.test_holders",
     "swarm.test_hook",
+    "swarm.test_hook_args",
+    "swarm.test_hook_nimbus",
     "swarm.test_nimbus",
     "swarm.test_hub",
     "swarm.test_provenance",

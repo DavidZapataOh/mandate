@@ -4,6 +4,8 @@ import json
 import posixpath
 import re
 import shlex
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -11,7 +13,91 @@ from typing import Any
 _MALFORMED = "malformed hook payload"
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _SEGMENTS = re.compile(r"&&|\|\||;|\|")
-_SHELL_FORBIDDEN = frozenset("\n\r\x00<>`$(){}")
+# `!` is history expansion in interactive bash, zsh and sh.
+_SHELL_FORBIDDEN = frozenset("\n\r\x00<>`$(){}!")
+_PLAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+_PLAIN_ARG = re.compile(r"-{0,2}[A-Za-z0-9][A-Za-z0-9._:=+-]*")
+_BLANKS = re.compile(r"[ \t]+")
+# Words that make the next word the command (bash, zsh, sh), so their atom
+# would name syntax instead of the program the shell runs.
+_SHELL_KEYWORDS = frozenset(
+    {
+        "builtin",
+        "case",
+        "command",
+        "coproc",
+        "do",
+        "done",
+        "elif",
+        "else",
+        "end",
+        "esac",
+        "exec",
+        "fi",
+        "for",
+        "foreach",
+        "function",
+        "if",
+        "in",
+        "nocorrect",
+        "noglob",
+        "repeat",
+        "select",
+        "then",
+        "time",
+        "until",
+        "while",
+    }
+)
+# Builtins and programs that run other words, re-run history, or change how a
+# later call in the same shell resolves or parses its words.
+_RUNNERS = frozenset(
+    {
+        "alias",
+        "autoload",
+        "caffeinate",
+        "cd",
+        "declare",
+        "doas",
+        "emulate",
+        "enable",
+        "env",
+        "eval",
+        "export",
+        "fc",
+        "hash",
+        "history",
+        "nice",
+        "nohup",
+        "popd",
+        "pushd",
+        "r",
+        "readonly",
+        "script",
+        "set",
+        "setopt",
+        "setsid",
+        "shopt",
+        "source",
+        "stdbuf",
+        "sudo",
+        "timeout",
+        "trap",
+        "typeset",
+        "unalias",
+        "unset",
+        "unsetopt",
+        "xargs",
+        "zmodload",
+    }
+)
+_SHELL_FIELDS = frozenset({"command", "description", "workdir"})
+# Shells split words on space and tab only; any other blank or control
+# character is read differently by the shell and by the reader.
+_OTHER_BLANK_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Zs"})
+_NOT_PLAIN_NAME = "scope: command name not plain"
+_NOT_PLAIN = "scope: governed command not plain"
+_ALONE = "scope: governed command must stand alone"
 _FILE_TOOLS = frozenset({"write_file", "edit_file", "delete_file"})
 _SHELL_TOOLS = frozenset({"bash", "shell", "exec_command"})
 _PROTECTED = frozenset({".mandate", ".muse"})
@@ -191,29 +277,81 @@ def _check_workdir(workdir: object, cwd: str) -> None:
         raise ScopeError("scope: shell path escapes worktree")
 
 
-def _shell_atoms(tool_input: dict[str, Any], cwd: str) -> tuple[str, ...]:
+def argv_atom(argv: Sequence[str]) -> str:
+    """The scope atom of an argv-governed command: `cmd:` and its plain words."""
+    return "cmd:" + " ".join(argv)
+
+
+def _plain_name(name: str) -> bool:
+    folded = name.casefold()
+    return (
+        _PLAIN_NAME.fullmatch(name) is not None
+        and folded not in _SHELL_KEYWORDS
+        and folded not in _RUNNERS
+    )
+
+
+def _other_blank(char: str) -> bool:
+    if char in " \t":
+        return False
+    return char.isspace() or unicodedata.category(char) in _OTHER_BLANK_CATEGORIES
+
+
+def plain_argv(argv: Sequence[str]) -> bool:
+    """Whether every word is plain: the shell passes it on unchanged."""
+    return (
+        bool(argv)
+        and _plain_name(argv[0])
+        and all(_PLAIN_ARG.fullmatch(word) is not None for word in argv[1:])
+    )
+
+
+def _governed_atom(segment: str, argv: list[str], alone: bool) -> str:
+    if not alone:
+        raise ScopeError(_ALONE)
+    if _BLANKS.split(segment.strip(" \t")) != argv or not plain_argv(argv):
+        raise ScopeError(_NOT_PLAIN)
+    return argv_atom(argv)
+
+
+def _shell_atoms(
+    tool_input: dict[str, Any], cwd: str, governed: frozenset[str]
+) -> tuple[str, ...]:
     command = tool_input.get("command")
-    if not isinstance(command, str) or not command.strip():
+    if not isinstance(command, str) or not command.strip(" \t"):
         raise ScopeError("scope: missing tool target")
     if _SHELL_FORBIDDEN.intersection(command) or "&" in command.replace("&&", ""):
         raise ScopeError("scope: shell redirection or substitution")
     _check_workdir(tool_input.get("workdir"), cwd)
-    atoms: dict[str, None] = {}
+    commands: list[tuple[str, list[str]]] = []
     candidates: list[str] = []
     for segment in _SEGMENTS.split(command):
-        if not segment.strip():
-            continue
         try:
             argv = shlex.split(segment)
         except ValueError:
             raise ScopeError("scope: unparseable shell command") from None
         candidates.extend(c for token in argv for c in _candidates(token))
         if argv:
-            atoms[f"cmd:{argv[0]}"] = None
+            commands.append((segment, argv))
     if any(_escapes(c) for c in candidates):
         raise ScopeError("scope: shell path escapes worktree")
     if any(_protected(c) for c in candidates):
         raise ScopeError("scope: protected path")
+    if not _SHELL_FIELDS.issuperset(tool_input):
+        raise ScopeError("scope: unknown shell tool field")
+    names = frozenset(name.casefold() for name in governed)
+    alone = _SEGMENTS.search(command) is None
+    atoms: dict[str, None] = {}
+    for segment, argv in commands:
+        name = argv[0]
+        if not _plain_name(name):
+            raise ScopeError(_NOT_PLAIN_NAME)
+        if name.casefold() in names:
+            atoms[_governed_atom(segment, argv, alone)] = None
+        else:
+            atoms[f"cmd:{name}"] = None
+    if any(_other_blank(char) for char in command):
+        raise ScopeError("scope: unparseable shell command")
     if not atoms:
         raise ScopeError("scope: missing tool target")
     return tuple(atoms)
@@ -251,8 +389,14 @@ def _check_pass_paths(call: ToolCall) -> None:
             _check_strings(value)
 
 
-def targets_for(call: ToolCall) -> tuple[str, ...]:
+def targets_for(
+    call: ToolCall, governed: frozenset[str] = frozenset()
+) -> tuple[str, ...]:
     """Map a tool call to exact scope atoms, failing closed.
+
+    Args:
+        call: The tool call to map.
+        governed: Binaries whose atoms name the whole argv.
 
     Raises:
         ScopeError: The call escapes the worktree, touches Mandate or Muse Code
@@ -261,7 +405,7 @@ def targets_for(call: ToolCall) -> tuple[str, ...]:
     if call.tool in _FILE_TOOLS:
         return (_file_atom(call.tool_input),)
     if call.tool in _SHELL_TOOLS:
-        return _shell_atoms(call.tool_input, call.cwd)
+        return _shell_atoms(call.tool_input, call.cwd, governed)
     if call.tool == "apply_patch":
         raise ScopeError("scope: apply_patch not governed; use edit_file")
     kind = classify(call.tool)

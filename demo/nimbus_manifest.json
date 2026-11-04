@@ -1,0 +1,31 @@
+{
+  "root": {
+    "atoms": [
+      "file:RUNBOOK.md",
+      "cmd:nimbus deploy api-v2 prod-eu",
+      "cmd:nimbus status prod-eu",
+      "cmd:cat",
+      "cmd:ls"
+    ],
+    "max_spend_cents": 0
+  },
+  "roles": {
+    "lead": {
+      "atoms": [
+        "cmd:nimbus deploy api-v2 prod-eu",
+        "cmd:nimbus status prod-eu",
+        "cmd:cat",
+        "cmd:ls"
+      ],
+      "max_spend_cents": 0
+    },
+    "release": {
+      "atoms": [
+        "cmd:nimbus deploy api-v2 prod-eu",
+        "cmd:nimbus status prod-eu",
+        "cmd:cat"
+      ],
+      "max_spend_cents": 0
+    }
+  }
+}

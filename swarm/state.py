@@ -8,11 +8,12 @@ from typing import Any
 
 from gate.broker import Delegation, Scope, mint
 from gate.certs import generate_keypair
-from swarm.hookio import ChildStarted
+from swarm.hookio import ChildStarted, argv_atom, plain_argv
 
 TTL_S = 3600
 PENDING_TTL_S = 60
 _LEAD = "lead"
+_CMD = "cmd:"
 
 
 def _scope(raw: dict[str, Any]) -> Scope:
@@ -28,6 +29,30 @@ def _strictly_inside(scope: Scope, parent: Scope) -> bool:
     )
 
 
+def _argv_words(scope: Scope) -> list[list[str]]:
+    return [
+        atom.removeprefix(_CMD).split(" ")
+        for atom in scope.atoms
+        if atom.startswith(_CMD) and " " in atom
+    ]
+
+
+def _check_argv_atoms(root: Scope) -> None:
+    for atom in root.atoms:
+        if atom.startswith(_CMD) and " " in atom:
+            words = atom.removeprefix(_CMD).split(" ")
+            if not plain_argv(words) or argv_atom(words) != atom:
+                raise ValueError(f"manifest: atom not plain: {atom}")
+            # A case-insensitive file system runs `NIMBUS` as `nimbus`.
+            if words[0] != words[0].lower():
+                raise ValueError(f"manifest: argv-governed name not lowercase: {atom}")
+    # A bare atom for a governed binary would allow every argv, in any case.
+    governed = {words[0].casefold() for words in _argv_words(root)}
+    for atom in root.atoms:
+        if atom.startswith(_CMD) and atom.removeprefix(_CMD).casefold() in governed:
+            raise ValueError(f"manifest: {atom} names an argv-governed binary")
+
+
 @dataclass(frozen=True)
 class SwarmManifest:
     """Human-written roles, each strictly inside the root scope."""
@@ -35,18 +60,26 @@ class SwarmManifest:
     root: Scope
     roles: dict[str, Scope]
 
+    @property
+    def argv_governed(self) -> frozenset[str]:
+        """Binaries whose atoms name the whole argv, never the binary alone."""
+        return frozenset(words[0] for words in _argv_words(self.root))
+
     @classmethod
     def load(cls, path: Path) -> "SwarmManifest":
         """Read and validate a manifest file.
 
         Raises:
-            ValueError: No lead role, or a role not strictly inside root.
+            ValueError: No lead role, an argv atom that is not plain words, a
+                bare or case-variant atom for an argv-governed binary, or a role
+                not strictly inside root.
         """
         raw = json.loads(path.read_text())
         root = _scope(raw["root"])
         roles = {name: _scope(value) for name, value in raw["roles"].items()}
         if _LEAD not in roles:
             raise ValueError("manifest needs a lead role")
+        _check_argv_atoms(root)
         for name, scope in roles.items():
             if not _strictly_inside(scope, root):
                 raise ValueError(f"role exceeds root: {name}")

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import stat
 
 import pytest
@@ -166,3 +167,57 @@ def test_state_file_private_even_with_stale_tmp(tmp_path):
     save_state(state, path)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert not tmp.exists()
+
+
+@pytest.mark.parametrize(
+    ("atoms", "reason"),
+    [
+        (
+            ["cmd:nimbus deploy api-v2 prod-eu", "cmd:nimbus", "cmd:ls"],
+            "manifest: cmd:nimbus names an argv-governed binary",
+        ),
+        (
+            ["cmd:nimbus deploy api-v2 prod-eu", "cmd:NIMBUS", "cmd:ls"],
+            "manifest: cmd:NIMBUS names an argv-governed binary",
+        ),
+        (
+            ["cmd:nimbus  deploy api-v2", "cmd:ls"],
+            "manifest: atom not plain: cmd:nimbus  deploy api-v2",
+        ),
+        (
+            ["cmd:nimbus deploy 'api-v2'", "cmd:ls"],
+            "manifest: atom not plain: cmd:nimbus deploy 'api-v2'",
+        ),
+        (
+            ["cmd:nimbus deploy api-v?", "cmd:ls"],
+            "manifest: atom not plain: cmd:nimbus deploy api-v?",
+        ),
+        (
+            ["cmd:nimbus deploy api-v2 prod-eu", "cmd:Nimbus status prod-eu"],
+            "manifest: argv-governed name not lowercase: cmd:Nimbus status prod-eu",
+        ),
+        (
+            ["cmd:NIMBUS deploy api-v2 prod-eu", "cmd:ls"],
+            "manifest: argv-governed name not lowercase: cmd:NIMBUS deploy api-v2",
+        ),
+        (
+            ["cmd:env nimbus migrate migration-0017 prod-eu", "cmd:ls"],
+            "manifest: atom not plain: cmd:env nimbus migrate migration-0017",
+        ),
+        (
+            ["cmd:time nimbus migrate migration-0017 prod-eu", "cmd:ls"],
+            "manifest: atom not plain: cmd:time nimbus migrate migration-0017",
+        ),
+    ],
+)
+def test_manifest_refuses_ambiguous_argv_atoms(tmp_path, atoms, reason):
+    raw = {
+        "root": {"atoms": atoms, "max_spend_cents": 0},
+        "roles": {"lead": {"atoms": ["cmd:ls"], "max_spend_cents": 0}},
+    }
+    with pytest.raises(ValueError, match=re.escape(reason)):
+        _manifest(tmp_path, raw)
+
+
+def test_manifest_without_argv_atoms_governs_no_binary(tmp_path):
+    assert _manifest(tmp_path).argv_governed == frozenset()
