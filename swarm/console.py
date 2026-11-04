@@ -254,21 +254,51 @@ class DeployRunner:
 class _ConsoleServer(uvicorn.Server):
     """Closes the event hub on exit, since open streams would block shutdown."""
 
-    def __init__(self, config: uvicorn.Config, hub: EventHub) -> None:
+    def __init__(
+        self,
+        config: uvicorn.Config,
+        hub: EventHub,
+        on_shutdown: Callable[[], object] | None = None,
+    ) -> None:
         super().__init__(config)
         self._hub = hub
+        self._on_shutdown = on_shutdown
 
     def handle_exit(self, sig: int, frame: FrameType | None) -> None:
         self._hub.close()
         super().handle_exit(sig, frame)
 
+    async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
+        await super().shutdown(sockets)
+        # uvicorn re-raises the stop signal once `run` returns, so code after
+        # `run` never runs on a signal; this is the last point that does.
+        if self._on_shutdown is not None:
+            self._on_shutdown()
 
-def console_server(app: Any, host: str, port: int, hub: EventHub) -> _ConsoleServer:
-    """Build the console's uvicorn server with a bounded graceful shutdown."""
+
+def console_server(
+    app: Any,
+    host: str,
+    port: int,
+    hub: EventHub,
+    on_shutdown: Callable[[], object] | None = None,
+) -> _ConsoleServer:
+    """Build the console's uvicorn server with a bounded graceful shutdown.
+
+    Args:
+        app: ASGI application to serve.
+        host: Interface to bind.
+        port: Port to bind.
+        hub: Event hub closed on the exit signal.
+        on_shutdown: Called once after every connection has closed.
+
+    Returns:
+        The server.
+    """
     config = uvicorn.Config(
         app, host=host, port=port, timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_S
     )
-    return _ConsoleServer(config, hub)
+    return _ConsoleServer(config, hub, on_shutdown)
 
 
 def _payee_book(path: Path) -> PayeeBook | None:
@@ -364,9 +394,9 @@ def _open_state(
         except OSError as exc:
             parser.exit(2, f"state: {path}: {exc.strerror}\n")
         store = StateStore(path / "state.db")
-    # A start that fails closes the store; a server that ran leaves it to the
-    # process exit, since requests still in flight at shutdown may write.
-    held.push(lambda failed, *_: store.close() if failed else None)
+    # Closed before the lock is released: the last connection folds the
+    # write-ahead log into state.db, so that one file holds every commit.
+    held.callback(store.close)
     return store, gate_key
 
 
@@ -441,10 +471,10 @@ def cli(argv: list[str] | None = None) -> None:
     ``--rail sandbox`` the desk pays through the Increase sandbox; the bank key
     leaves this process's environment either way, so nothing it spawns holds it.
     With ``--state-dir`` the gate key, registry, receipts and fences live in
-    that directory, locked to this process; the sandbox rail requires it. The
-    desk reconciles with its bank at start, and every ``RECONCILE_EVERY_S`` on
-    the sandbox rail. Template attacks always run on a simulated bank of their
-    own and an in-memory verifier.
+    that directory, locked to this process and closed when the server stops;
+    the sandbox rail requires it. The desk reconciles with its bank at start,
+    and every ``RECONCILE_EVERY_S`` on the sandbox rail. Template attacks
+    always run on a simulated bank of their own and an in-memory verifier.
     """
     parser = argparse.ArgumentParser(
         prog="mandate-console", description="Serve the Mandate live console."
@@ -544,9 +574,7 @@ def cli(argv: list[str] | None = None) -> None:
         if args.record is not None:
             hub.record(args.record)
         desk = _desk(parser, args.source, rail, gate_key, zktls, state, hub)
-        stop = threading.Event()
-        held.callback(stop.set)
-        _serve(parser, args, book, desk, gate_key, hub, stop)
+        _serve(parser, args, book, desk, gate_key, hub, held)
 
 
 def _desk(
@@ -581,7 +609,7 @@ def _serve(
     desk: PaymentDesk,
     gate_key: bytes,
     hub: EventHub,
-    stop: threading.Event,
+    held: ExitStack,
 ) -> None:
     intake, agent = _spark(os.environ, book)
     token = secrets.token_urlsafe(16)
@@ -608,11 +636,20 @@ def _serve(
     with _state_errors(parser):
         desk.reconcile()
     if desk.bank.rail == SANDBOX:
-        reconcile_every(desk, RECONCILE_EVERY_S, stop)
+        stop = threading.Event()
+        loop = reconcile_every(desk, RECONCILE_EVERY_S, stop)
+        # Unwound first: a round still asking the bank ends before the store
+        # closes.
+        held.callback(_end_loop, stop, loop)
     if args.journal is not None:
         # A daemon thread: the process ends with the server.
         JournalTail(args.journal, hub).start()
     base = f"http://{args.host}:{args.port}"
     print(f"Pair the holder device: {base}/app/#pair={token}", flush=True)
     print(f"Console: {base}/console/", flush=True)
-    console_server(app, args.host, args.port, hub).run()
+    console_server(app, args.host, args.port, hub, held.close).run()
+
+
+def _end_loop(stop: threading.Event, loop: threading.Thread) -> None:
+    stop.set()
+    loop.join(RECONCILE_EVERY_S)

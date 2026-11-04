@@ -61,6 +61,7 @@ module = [
     "e2e.test_webapp",
     "e2e.test_smoke_imports",
     "e2e.test_explorer_walkthrough",
+    "e2e.test_restart_durability",
     "evidence.test_evidence",
     "evidence.test_notary",
     "evidence.test_tlsn_live",

@@ -98,13 +98,22 @@ async def _tool(client: Client, name: str, args: dict[str, Any]) -> dict[str, An
     return body
 
 
-async def _pay(url: str, token: str) -> dict[str, Any]:
+async def _pair(url: str, token: str) -> bytes:
     holder_priv, holder_pub = generate_keypair()
     async with httpx2.AsyncClient(base_url=url) as http:
         paired = await http.post(
             "/api/holder", json={"public_key": _b64(holder_pub), "pairing": token}
         )
-        assert paired.json() == {"registered": True}
+    assert paired.json() == {"registered": True}
+    return holder_priv
+
+
+async def _pay(url: str, token: str) -> dict[str, Any]:
+    return await _pay_as(url, await _pair(url, token))
+
+
+async def _pay_as(url: str, holder_priv: bytes) -> dict[str, Any]:
+    async with httpx2.AsyncClient(base_url=url) as http:
         async with Client(f"{url}/mcp") as client:
             quote = await _tool(client, "quote_payment", QUOTE)
             consent = Consent(**quote["consent"], signature=b"")

@@ -14,10 +14,14 @@ from bank.credentials import BANK_KEY_ENV
 from bank.increase import IncreaseRail, ensure_accounts, sandbox_client
 from bank.verifier import Verifier
 from gate.certs import generate_keypair
+from gate.consent import Consent, sign_approval
 from gate.policy import Intent
 from gate.shim import Mode, RawCall
+from gate.state import StateStore
 from mandate.client import RunRequest, run_governed, to_proposed
+from swarm.desk import PaymentDesk
 from swarm.flow import PAYMENTS_POLICY
+from swarm.intent import sign_intent
 
 CAPTURE = ("capture-payer", "capture-payee")
 
@@ -140,7 +144,9 @@ def test_capture_reconcile_responses():
             assert set(record["body"]) == set(body), name
 
 
-DEMO = ("checking-881", "acme-991")
+# Accounts of their own, so these transfers never reach the demo
+# account's reconciliation.
+LIVE = ("live-payer", "live-payee")
 SANDBOX_TRANSFER = re.compile(r"(sandbox_)?account_transfer_[A-Za-z0-9]{1,64}")
 
 
@@ -154,8 +160,8 @@ def _governed(rail, verifier, gate_key, amount_cents):
         args=(
             ("amount", str(amount_cents)),
             ("currency", "USD"),
-            ("from", DEMO[0]),
-            ("to", DEMO[1]),
+            ("from", LIVE[0]),
+            ("to", LIVE[1]),
             ("ref", "A-991"),
         ),
         category="payments",
@@ -165,7 +171,7 @@ def _governed(rail, verifier, gate_key, amount_cents):
     request = RunRequest(
         call=call,
         policy=PAYMENTS_POLICY,
-        intent=Intent(amount_cents, "USD", DEMO[1], "A-991"),
+        intent=Intent(amount_cents, "USD", LIVE[1], "A-991"),
         private_key=gate_key,
         mode=Mode.ENFORCE,
         now=now,
@@ -181,10 +187,10 @@ def _governed(rail, verifier, gate_key, amount_cents):
 @pytest.mark.live
 def test_certified_payment_moves_sandbox_money_exactly_once():
     client = sandbox_client(_key())
-    ensure_accounts(client, DEMO, DEMO[0], 1_000_000)
+    ensure_accounts(client, LIVE, LIVE[0], 1_000_000)
     rail = IncreaseRail.connect(client)
     gate_key, gate_pub = generate_keypair()
-    before = rail.get_balance(DEMO[1])
+    before = rail.get_balance(LIVE[1])
     result, jti, now = _governed(rail, Verifier(gate_pub), gate_key, 20000)
     assert result.reason == "ok: executed"
     payment = result.payment
@@ -202,21 +208,61 @@ def test_certified_payment_moves_sandbox_money_exactly_once():
         payment.payment_id,
     )
     found = rail.reconcile(
-        PaymentRequest(DEMO[0], DEMO[1], 20000, "USD", "A-991"),
+        PaymentRequest(LIVE[0], LIVE[1], 20000, "USD", "A-991"),
         payment.action_hash,
         payment.idempotency_key,
     )
     assert found is not None and found.payment_id == payment.payment_id
-    assert rail.get_balance(DEMO[1]) == before + 20000
+    assert rail.get_balance(LIVE[1]) == before + 20000
 
 
 @pytest.mark.live
 def test_overdraft_is_refused_and_moves_nothing():
     client = sandbox_client(_key())
-    ensure_accounts(client, DEMO, DEMO[0], 1_000_000)
+    ensure_accounts(client, LIVE, LIVE[0], 1_000_000)
     rail = IncreaseRail.connect(client)
     gate_key, gate_pub = generate_keypair()
-    available = rail.get_balance(DEMO[0])
+    available = rail.get_balance(LIVE[0])
     result, _, _ = _governed(rail, Verifier(gate_pub), gate_key, available + 1)
     assert (result.reason, result.payment) == ("denied: insufficient funds", None)
-    assert rail.get_balance(DEMO[0]) == available
+    assert rail.get_balance(LIVE[0]) == available
+
+
+@pytest.mark.live
+def test_reconciler_names_every_live_transfer(tmp_path):
+    client = sandbox_client(_key())
+    ensure_accounts(client, LIVE, LIVE[0], 1_000_000)
+    rail = IncreaseRail.connect(client)
+    gate_key, gate_pub = generate_keypair()
+    holder_key, holder_pub = generate_keypair()
+    store = StateStore(tmp_path / "state.db")
+    # The registry begins at the desk's clock in whole seconds; the next
+    # second keeps earlier tests' transfers out of its list.
+    time.sleep(1 - time.time() % 1)
+    desk = PaymentDesk(
+        source=LIVE[0],
+        bank=rail,
+        verifier=Verifier(gate_pub, state=store),
+        gate_key=gate_key,
+        clock=lambda: int(time.time()),
+        nonces=lambda: secrets.token_hex(16),
+        state=store,
+    )
+    desk.register_holder(holder_pub)
+    intent = Intent(100, "USD", LIVE[1], "A-991")
+    recorded = desk.record_intent(intent, sign_intent(holder_key, intent))
+    assert recorded["status"] == "signed"
+    quoted = desk.quote(LIVE[1], 100, "USD", "A-991", intent_id=recorded["intent_id"])
+    consent = Consent(**quoted["consent"], signature=b"")
+    desk.approve(quoted["quote_id"], sign_approval(holder_key, consent))
+    paid = desk.confirm(quoted["quote_id"])
+    assert (paid["status"], paid["reason"]) == ("confirmed", "ok: executed")
+    report = desk.reconcile()
+    assert (report.transfers, report.certified, report.unbacked, report.missing) == (
+        1,
+        1,
+        (),
+        (),
+    )
+    assert report.error is None
+    store.close()

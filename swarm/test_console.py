@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 
+import anyio
 import httpx
 import pytest
 import uvicorn
@@ -198,15 +199,21 @@ async def test_console_skips_links_that_leave_the_build(make_desk, dist):
     assert (inside.status_code, normal.status_code) == (200, 200)
 
 
-def _run_cli(monkeypatch, capsys, *argv):
+def _run_cli(monkeypatch, capsys, *argv, serving=None):
     seen = {}
 
     def run(self, sockets=None):
         seen.update(app=self.config.app, hub=self._hub)
+        # Requests that write must arrive while the server runs: a stopped
+        # console has closed its store.
+        if serving is not None:
+            seen["out"] = capsys.readouterr().out
+            printed = seen["out"].splitlines()
+            seen["served"] = anyio.run(serving, self.config.app, printed)
 
     monkeypatch.setattr(console._ConsoleServer, "run", run)
     console.cli(["--port", "18780", *argv])
-    return seen, capsys.readouterr().out.splitlines()
+    return seen, (seen.get("out", "") + capsys.readouterr().out).splitlines()
 
 
 @pytest.mark.anyio
@@ -261,6 +268,29 @@ def test_exit_signal_closes_the_hub():
     server = console._ConsoleServer(uvicorn.Config(lambda *a: None), hub)
     server.handle_exit(signal.SIGINT, None)
     assert (hub.closed, server.should_exit) == (True, True)
+
+
+def test_a_server_that_shuts_down_runs_its_shutdown_hook_once(make_desk):
+    desk, _ = make_desk()
+    hub = EventHub()
+    app = build_server(desk, PAIR, hub=hub).streamable_http_app()
+    closed = []
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    server = console.console_server(
+        app, "127.0.0.1", sock.getsockname()[1], hub, lambda: closed.append(1)
+    )
+    thread = threading.Thread(
+        target=server.run, kwargs={"sockets": [sock]}, daemon=True
+    )
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert closed == []
+    server.handle_exit(signal.SIGTERM, None)
+    thread.join(10)
+    assert closed == [1]
 
 
 def test_shutdown_is_bounded_with_a_client_that_never_reads(make_desk):
@@ -724,23 +754,29 @@ def test_cli_zktls_refuses_a_busy_notary_port(monkeypatch, capsys, dist, tmp_pat
     )
 
 
-@pytest.mark.anyio
-async def test_cli_state_dir_keeps_the_gate_key_and_the_holder(
+def test_cli_state_dir_keeps_the_gate_key_and_the_holder(
     monkeypatch, capsys, dist, tmp_path
 ):
     state = ["--console-dir", str(dist), "--state-dir", str(tmp_path / "state")]
-    seen, out = _run_cli(monkeypatch, capsys, *state)
-    token = out[0].rsplit("#pair=", 1)[1]
     holder = base64.b64encode(b"\x07" * 32).decode()
-    async with _asgi(seen["app"]) as http:
-        paired = await http.post(
-            "/api/holder", json={"public_key": holder, "pairing": token}
-        )
-        keys = (await http.get("/api/keys")).json()
-    assert paired.json() == {"registered": True}
-    again, _ = _run_cli(monkeypatch, capsys, *state)
-    async with _asgi(again["app"]) as http:
-        assert (await http.get("/api/keys")).json() == keys
+
+    async def pair(app, printed):
+        token = printed[0].rsplit("#pair=", 1)[1]
+        async with _asgi(app) as http:
+            paired = await http.post(
+                "/api/holder", json={"public_key": holder, "pairing": token}
+            )
+            return paired.json(), (await http.get("/api/keys")).json()
+
+    async def keys_of(app, printed):
+        async with _asgi(app) as http:
+            return (await http.get("/api/keys")).json()
+
+    first, _ = _run_cli(monkeypatch, capsys, *state, serving=pair)
+    paired, keys = first["served"]
+    assert paired == {"registered": True}
+    again, _ = _run_cli(monkeypatch, capsys, *state, serving=keys_of)
+    assert again["served"] == keys
     assert keys["holder_keys"] == [holder]
 
 
@@ -878,3 +914,24 @@ def test_the_reconcile_loop_repeats_until_stopped(make_desk, monkeypatch):
     monkeypatch.setattr(desk, "reconcile", counted)
     console.reconcile_every(desk, 0.001, stop).join(timeout=5)
     assert len(runs) == 3
+
+
+def test_a_stopped_console_closes_its_store(monkeypatch, capsys, dist, tmp_path):
+    state = tmp_path / "state"
+    _run_cli(monkeypatch, capsys, "--console-dir", str(dist), "--state-dir", str(state))
+    # Closing the last connection checkpoints the log into state.db, so a
+    # copy of that one file holds every commit.
+    assert (state / "state.db").exists()
+    assert not (state / "state.db-wal").exists()
+
+
+def test_a_stopped_sandbox_console_ends_its_reconcile_loop(
+    monkeypatch, capsys, dist, tmp_path
+):
+    _sandbox(monkeypatch)
+    _run_cli(
+        monkeypatch, capsys, "--console-dir", str(dist),
+        "--state-dir", str(tmp_path / "state"), "--rail", "sandbox",
+    )  # fmt: skip
+    assert "reconcile" not in [t.name for t in threading.enumerate()]
+    assert not (tmp_path / "state" / "state.db-wal").exists()
