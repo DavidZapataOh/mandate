@@ -93,6 +93,23 @@ On the sandbox rail the holder can replace the cooperative funds statement with 
 
 Trust boundary: the holder key stays in the holder's process and reaches the prover by name (`--auth-env`), and the holder CLI runs the prover only for the pinned host, path, fields, nonce form and a loopback notary; the presentation carries the `Authorization` header name with its value hidden. The desk's side holds the notary key and runs the verifier, and it sees the account id and the balance in the clear; the balance stays in the desk's memory and is reduced to "covers the amount". The proof is only as strong as Mandate's notary key, because Mandate both notarizes and verifies. The browser never sees the presentation: the receipt's gate-signed `funds` view carries its digest, server name, session time and notary key, and the explorer's `Funds proof` step checks that this view matches the certified `evidence_refs`. The verifier runs outside the desk lock, and the intent is checked again before the proof is kept.
 
+## Console budgets
+Each row is enforced by a test that fails the build or the run: `console/src/budget.test.ts` (measured on a fresh `vite build`; JS and CSS gzip level 9, fonts, wasm and world plates raw) and `console/e2e/perf.spec.ts` (in-page standard APIs, localhost, 1440x900).
+
+| Budget | Limit | Measured |
+|---|---|---|
+| JS a page loads before any script runs (entry + module preloads), pages `index`, `explorer`, `command`, `holder` | 40 KB per page | 21.8, 12.5, 17.9, 5.8 KB |
+| CSS a page loads up front | 10 KB per page | 5.4, 4.2, 4.7, 3.1 KB |
+| UI faces preloaded per page | exactly 5 files, 120 KB raw | 5 files, 115,496 B |
+| Seal runtime JS (lazy `rive-*.js`) | 90 KB | 86.0 KB |
+| Seal runtime wasm | one file, 2,300 KB raw | 2,235.9 KB |
+| World plates and frames (`dist/world/`) | 1,500 KB raw | 354.7 KB for 54 rasters |
+| First contentful paint, every surface | 1,000 ms | under budget |
+| Largest contentful paint | 2,000 ms | under budget |
+| Cumulative layout shift | 0.05 | under budget |
+| Seal runtime on explorer, Command, holder, `/app/` | never fetched | never fetched |
+| Ten attacks in one burst at 1440x900 | p95 frame 20 ms; longest animation frame 100 ms | under budget |
+
 ## Threat model
 TODO: principals, trust boundaries, and out-of-scope threats.
 
