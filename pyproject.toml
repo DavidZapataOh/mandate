@@ -5,7 +5,7 @@ description = "Independent authorization and verification layer between AI agent
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16", "mcp==2.3.0", "uvicorn==0.54.0", "starlette==1.10.0", "increase==0.555.0"]
+dependencies = ["cryptography>=42", "pyjwt>=2.10", "openai>=3.42", "httpx2>=2.16", "mcp==2.3.0", "uvicorn==0.54.0", "starlette==1.10.0", "increase==0.555.0", "opentimestamps==0.5.0"]
 
 [project.scripts]
 mandate = "mandate.cli:main"
@@ -49,6 +49,7 @@ module = [
     "e2e.test_drills_service",
     "e2e.test_agent_live",
     "e2e.test_anchor_live",
+    "e2e.test_public_anchor_live",
     "e2e.test_flow_a",
     "e2e.test_increase_live",
     "e2e.test_zktls_live",
@@ -67,6 +68,7 @@ module = [
     "evidence.test_tlsn_live",
     "evidence.test_zktls",
     "evidence.test_zktls_live",
+    "gate.test_anchor_public",
     "gate.test_approval",
     "gate.test_broker",
     "gate.test_cava",
@@ -130,6 +132,10 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = ["demo.swarm_repo.*", "payments.*", "test_handler"]
 ignore_errors = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["opentimestamps.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
