@@ -74,7 +74,12 @@ def test_a_third_party_verifies_live_receipts_and_refuses_forgeries(
     run = subprocess.run(  # noqa: S603
         VITEST,
         cwd=CONSOLE,
-        env={**os.environ, "MANDATE_CASE": str(path)},
+        # Plain output whatever the runner forces, so the summary line is matchable.
+        env={
+            **{k: v for k, v in os.environ.items() if k != "FORCE_COLOR"},
+            "NO_COLOR": "1",
+            "MANDATE_CASE": str(path),
+        },
         capture_output=True,
         text=True,
         timeout=180,
