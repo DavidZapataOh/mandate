@@ -685,6 +685,8 @@ def bank_events_round(
 def _port_free(listen: str) -> bool:
     host, _, port = listen.rpartition(":")
     with socket.socket() as probe:
+        # As uvicorn binds: a closed connection's TIME_WAIT is no tenant.
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, int(port)))
         except OSError:

@@ -1974,6 +1974,26 @@ def test_cli_refuses_a_busy_local_port(monkeypatch, capsys, dist, doctor):
     assert "Pair the holder device" not in out
 
 
+def _closed_by_the_server() -> int:
+    """A loopback port whose only tenant is a TIME_WAIT left by a closed tunnel."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        with socket.create_connection(("127.0.0.1", port)) as client:
+            served, _ = listener.accept()
+            served.close()  # the server closes first, so its side waits
+            client.recv(1)
+    return port
+
+
+def test_a_closed_connection_does_not_hold_the_local_port():
+    port = _closed_by_the_server()
+    with socket.socket() as plain, pytest.raises(OSError):
+        plain.bind(("127.0.0.1", port))  # the wait is really there
+    assert console._port_free(f"127.0.0.1:{port}")
+
+
 def test_cli_names_a_device_the_moment_it_pairs(monkeypatch, capsys, dist):
     async def pairing(app, printed):
         return await _pair(app, HOLDER, _tokens(printed)[0])
