@@ -62,11 +62,12 @@ def test_a_report_from_this_host_is_compared(tmp_path, capsys):
 
 
 def test_a_report_from_another_host_is_not_compared(tmp_path, capsys):
-    epyc = {"cpu": "AMD EPYC 7763 64-Core Processor", "cores": "4", "python": "3.12.13"}
-    other = _published(tmp_path / "report.json", epyc)
+    # This host in every field but the CPU, so no runner can match it.
+    elsewhere = {**host(), "cpu": "Elsewhere CPU 9000"}
+    other = _published(tmp_path / "report.json", elsewhere)
     assert main(["gate", "--only", ONE, "--against", other]) == 0
     assert capsys.readouterr().out == (
-        "baseline: published on AMD EPYC 7763 64-Core Processor, skipped\n"
+        "baseline: published on Elsewhere CPU 9000, skipped\n"
     )
 
 
