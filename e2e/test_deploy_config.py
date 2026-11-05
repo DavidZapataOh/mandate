@@ -28,6 +28,14 @@ def test_the_unit_publishes_through_the_local_proxy_only() -> None:
         "--host": "127.0.0.1", "--port": "8766", "--local-port": "8767",
     }  # fmt: skip
     assert _flag(argv, "--trusted-proxy") == "127.0.0.1"
+    # An installed package carries none of these: each points into the release tree.
+    assert {
+        n: _flag(argv, n) for n in ("--console-dir", "--webapp-dir", "--payees")
+    } == {
+        "--console-dir": "/opt/mandate/current/console/dist",
+        "--webapp-dir": "/opt/mandate/current/webapp",
+        "--payees": "/opt/mandate/current/demo/payees.json",
+    }
     assert _flag(argv, "--public-host") == "${MANDATE_PUBLIC_HOST}"
     assert argv[-2:] == ["$MANDATE_RAIL_FLAGS", "$MANDATE_EXTRA_FLAGS"]
     assert _unit_argv("ExecStartPre") == [*argv, "--doctor"]
