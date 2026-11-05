@@ -1,0 +1,22 @@
+[Unit]
+Description=Mandate console behind an HTTPS proxy on this machine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mandate
+Group=mandate
+EnvironmentFile=/etc/mandate/console.conf
+EnvironmentFile=-/etc/mandate/console.env
+ExecStartPre=/opt/mandate/current/.venv/bin/mandate-console --host 127.0.0.1 --port 8766 --local-port 8767 --public-host ${MANDATE_PUBLIC_HOST} --trusted-proxy 127.0.0.1 --console-dir /opt/mandate/current/console/dist --webapp-dir /opt/mandate/current/webapp --state-dir ${MANDATE_STATE_DIR} --holders ${MANDATE_HOLDERS} $MANDATE_RAIL_FLAGS $MANDATE_EXTRA_FLAGS --doctor
+ExecStart=/opt/mandate/current/.venv/bin/mandate-console --host 127.0.0.1 --port 8766 --local-port 8767 --public-host ${MANDATE_PUBLIC_HOST} --trusted-proxy 127.0.0.1 --console-dir /opt/mandate/current/console/dist --webapp-dir /opt/mandate/current/webapp --state-dir ${MANDATE_STATE_DIR} --holders ${MANDATE_HOLDERS} $MANDATE_RAIL_FLAGS $MANDATE_EXTRA_FLAGS
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/mandate
+
+[Install]
+WantedBy=multi-user.target

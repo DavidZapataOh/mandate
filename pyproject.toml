@@ -78,6 +78,7 @@ module = [
     "e2e.test_smoke_imports",
     "e2e.test_explorer_walkthrough",
     "e2e.test_public_deploy",
+    "e2e.test_deploy_config",
     "e2e.test_restart_durability",
     "e2e.attack_world",
     "e2e.test_attacks",

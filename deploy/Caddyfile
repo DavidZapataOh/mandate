@@ -1,0 +1,8 @@
+{$MANDATE_PUBLIC_HOST} {
+	handle /increase/card-authorizations {
+		reverse_proxy 127.0.0.1:8768
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8766
+	}
+}

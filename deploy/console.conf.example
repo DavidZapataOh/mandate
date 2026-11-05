@@ -1,0 +1,7 @@
+# Secrets go in /etc/mandate/console.env (root, mode 600), never here.
+# Sandbox: MANDATE_RAIL_FLAGS=--rail sandbox --card-webhook-port 8768 and MANDATE_STATE_DIR=/var/lib/mandate/sandbox
+MANDATE_PUBLIC_HOST=desk.example.com
+MANDATE_STATE_DIR=/var/lib/mandate/simulated
+MANDATE_HOLDERS=0
+MANDATE_RAIL_FLAGS=--rail simulated
+MANDATE_EXTRA_FLAGS=
