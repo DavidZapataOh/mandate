@@ -1,23 +1,254 @@
-# Mandate
+<p align="center">
+  <img src="console/public/brand/icon-512.png" alt="Mandate" width="18%" />
+</p>
 
-> Don't trust agents. Verify them.
+<h1 align="center">Mandate</h1>
 
-Mandate is the independent authorization and verification layer between AI
-agents and the world: no action touches money, data, or production without
-a valid cryptographic certificate. No certificate, no execution.
+<p align="center">
+  <strong>Cryptographic authorization between AI agents and the world</strong>
+</p>
 
-## Demo
-TODO: link the live demo and the 3-minute video.
+<p align="center">
+  Don't trust agents. Verify them.
+</p>
 
-## What was built during the event
-Built for the Meta Global AI Developer Hackathon × Cerebral Valley
-(27 Oct – 4 Nov 2026). Every commit in this repo is event work; nothing
-predates it.
+<p align="center">
+  <a href="https://mandate.davidzo.com/console/">Live</a> · <a href="#demo-video">Video</a> · <a href="#how-it-works">How It Works</a> · <a href="#meta-models">Meta Models</a> · <a href="#getting-started">Run Locally</a> · <a href="#reference">Verify Every Claim</a>
+</p>
 
-## Quickstart
-TODO: install and first governed run (lands with the SDK).
+<p align="center">
+  <img src="docs/img/hero.png" alt="Mandate console: a forged approval denied at the teller in 821 µs, zero cents moved" width="100%" />
+</p>
 
-## How to verify
+---
+
+## The Problem
+
+Banks are starting to block AI agents: a valid login no longer tells the bank **who is acting**, or whether the person who owns the money approved **this exact payment**. An agent that holds credentials can be prompt-injected, fed a poisoned tool, or replay an old approval, and every one of those looks like a normal API call.
+
+| Approach | Bound to the holder's exact approval | Checked at execution time | Receipt anyone can verify offline |
+|---|:---:|:---:|:---:|
+| API keys and OAuth scopes | No | Yes | No |
+| Prompt guardrails | No | Probabilistic | No |
+| Agent monitoring and audit logs | No | After the fact | No |
+| **Mandate** | **Yes** | **Yes** | **Yes** |
+
+Mandate is the independent layer between the agent and the bank (or production): **no certificate, no execution**.
+
+---
+
+## How It Works
+
+The holder states what should be paid and signs it on their own device. The agent only ever gets an intent id.
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                               MANDATE                                  │
+│                                                                        │
+│  ┌──────────────┐   ┌───────────────┐   ┌───────────────────────────┐  │
+│  │   Holder     │   │  Muse Spark   │   │   Gate                    │  │
+│  │  (device)    │   │  (agent)      │   │                           │  │
+│  │              │   │               │   │ 4. Canonicalize + hash    │  │
+│  │ 1. Sign the  │──▶│ 2. Quote from │──▶│ 5. Policy rule            │  │
+│  │    intent    │   │    intent id  │   │ 6. Holder consent (sig)   │  │
+│  │ 3. Approve   │   │               │   │ 7. Certificate (EdDSA)    │  │
+│  │    7 fields  │   │               │   │ 8. Bank verifier          │  │
+│  └──────────────┘   └───────────────┘   └─────────────┬─────────────┘  │
+│                                                       │                │
+│                                                       ▼                │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │  Bank rail: Increase sandbox (test money) or SIMULATED         │   │
+│   │  Pays only with a valid, unspent certificate                   │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│  Output: SD-JWT receipt · sealed registry entry · Bitcoin timestamp    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**What an attacker gets:** a poisoned MCP tool, a replayed certificate, a swapped payee, an inflated amount or a forged approval dies at the check it breaks, with **zero cents moved**. The console's kill-cam replays which check refused it.
+
+<p align="center">
+  <img src="docs/img/killcam.png" alt="Kill-cam: the forged approval passes canonicalize, hash and policy, and is killed at holder consent; certificate and bank never reached" width="100%" />
+</p>
+
+**What anyone can verify:** every receipt verifies in the browser, offline, against the gate key. An auditor copy discloses only the fields the holder chooses; the rest stay salted digests.
+
+<p align="center">
+  <img src="docs/img/explorer.png" alt="Proof explorer: receipt pay:000001 verified link by link in the browser, Bitcoin timestamp pending" width="100%" />
+</p>
+
+**The same kernel governs software:** a real Muse Code agent deploying through Mandate's hooks shipped a release to a simulated prod-eu and was refused an old migration outside its delegation.
+
+---
+
+## Demo Video
+
+> **[Watch the 3-minute demo →](#)** *(link pending)*
+
+**Live product:** [mandate.davidzo.com/console](https://mandate.davidzo.com/console/) (SIMULATED rail, labelled on every line). Proof explorer: [mandate.davidzo.com/console/explorer.html](https://mandate.davidzo.com/console/explorer.html), paste `pay:000001`.
+
+The demo shows the full flow: the holder signs an intent → Muse Spark quotes → the holder approves the seven fields → the gate certifies → the bank pays → a forged approval dies at the consent check → the receipt verifies in the browser.
+
+---
+
+## Meta Models
+
+| # | Model | Role | File |
+|---|---|---|---|
+| 1 | **Muse Spark 1.3** | Drafts the holder's intent; runs the bill-paying agent | [`swarm/intent.py`](swarm/intent.py), [`swarm/agent.py`](swarm/agent.py) |
+| 2 | **Muse Code (Muse Wonder 1.0)** | Governed swarm and the live Nimbus deploy under Mandate's hooks | [`swarm/hook.py`](swarm/hook.py), [`swarm/hookio.py`](swarm/hookio.py) |
+| 3 | **Muse Voice Transcribe 1.0** | Voice intent and spoken confirmation on the holder's device | [`swarm/voice.py`](swarm/voice.py) |
+| 4 | **Muse Image 1.0** | The console's world plates and frames | [`console/tools/muse_image.ts`](console/tools/muse_image.ts) |
+| 5 | **Muse Spark Open** (Baseten) | Plans attacks for the red team (opt-in `--live-attacker`) | [`swarm/attacker.py`](swarm/attacker.py) |
+
+Certificates bind the model, response id and encrypted reasoning Meta returned ([`swarm/anchor.py`](swarm/anchor.py)). The [Reference](#how-to-verify) table maps every model to the command that exercises it.
+
+---
+
+## Architecture
+
+```
+            ┌──────────────────────────────────────────────┐
+            │  Console (Vite + TypeScript + Rive)          │
+            │  Live ledger · Kill-cam · Command · Explorer │
+            │  holder.html (intent) · /app/ (approval)     │
+            └──────────────────────┬───────────────────────┘
+                                   │ HTTPS (Caddy)
+            ┌──────────────────────▼───────────────────────┐
+            │  mandate-console (Starlette + uvicorn)       │
+            │  Desk: quote · approve · confirm · receipt   │
+            │  MCP for agents (loopback only)              │
+            └──────────────────────┬───────────────────────┘
+                                   │
+            ┌──────────────────────▼───────────────────────┐
+            │  Gate                                        │
+            │  Canonical action · policy · holder consent  │
+            │  EdDSA certificate · spent once              │
+            │  SD-JWT receipt · Merkle registry + seals    │
+            └─────────┬─────────────────────────┬──────────┘
+                      │                         │
+      ┌───────────────▼─────────────┐ ┌─────────▼──────────────────┐
+      │ Bank rail                   │ │ Public anchor              │
+      │ Increase sandbox:           │ │ OpenTimestamps → Bitcoin   │
+      │ transfers, two-step, ACH,   │ │ one digest per seal        │
+      │ card authorizer, events     │ │                            │
+      │ or SIMULATED                │ │                            │
+      └─────────────────────────────┘ └────────────────────────────┘
+```
+
+Details: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Tests
+
+**2,718 Python tests passing** (`pytest -q`), plus the console's Vitest and Playwright suites. Highlights:
+
+| Suite | What it proves | Files |
+|---|---|---|
+| Attack suite | Every attack the console names, forged approval or proof, bad bank answer and forged receipt is refused with its exact reason and zero cents moved | [`e2e/test_attacks.py`](e2e/test_attacks.py), [`e2e/test_desk_attacks.py`](e2e/test_desk_attacks.py), [`e2e/test_proof_attacks.py`](e2e/test_proof_attacks.py), [`e2e/test_bank_attacks.py`](e2e/test_bank_attacks.py), [`e2e/test_card_attacks.py`](e2e/test_card_attacks.py), [`e2e/test_hook_attacks.py`](e2e/test_hook_attacks.py) |
+| Third-party verifier | Live receipts verify in the browser; forgeries are refused | [`e2e/test_third_party.py`](e2e/test_third_party.py) |
+| Public deploy | Exact CSP, local-only paths unreachable through the proxy, foreign Host refused | [`e2e/test_public_deploy.py`](e2e/test_public_deploy.py), [`e2e/test_deploy_config.py`](e2e/test_deploy_config.py) |
+| Live (opt-in) | Real Meta models, Increase sandbox, OpenTimestamps, Muse Code deploy | `pytest -m live e2e/` |
+| Benchmarks | Every gate, desk, registry and receipt path within its budget in CI | [`bench/REPORT.md`](bench/REPORT.md) |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.12+
+- Node.js 22+ (console build)
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/DavidZapataOh/mandate.git
+cd mandate
+python3 -m venv .venv && .venv/bin/pip install -e . -r requirements-dev.txt
+```
+
+### 2. Build the console
+
+```bash
+cd console && npm ci && npm run build && cd ..
+```
+
+### 3. Run it
+
+```bash
+.venv/bin/mandate-console
+```
+
+It prints `Pair the holder device: http://127.0.0.1:8766/app/#pair=<token>` and `Console: http://127.0.0.1:8766/console/`. Open the pairing URL once in your browser, then the console. Press **ATTACK** to run a pinned attack; it is denied with zero cents moved. Paying through Muse Spark needs `MODEL_API_KEY` (or `META_API_KEY`); the Increase sandbox rail needs `INCREASE_SANDBOX_API_KEY` (see [Reference](#reference)).
+
+### 4. Test
+
+```bash
+.venv/bin/pytest -q
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Gate and desk | Python 3.12, `cryptography` (Ed25519), PyJWT (SD-JWT receipts), Starlette, uvicorn, MCP |
+| Agents | Meta Model API (Muse Spark, Voice, Image), Muse Code, Baseten |
+| Bank | Increase sandbox API (transfers, two-step, ACH, card authorizations, events) |
+| Public anchor | OpenTimestamps, Bitcoin |
+| Balance proof | TLSNotary (Rust, `zktls/`) |
+| Console | TypeScript, Vite, Rive, Vitest, Playwright |
+| Deploy | Ubuntu 24.04, Caddy, systemd ([`deploy/`](deploy/)) |
+
+---
+
+## Project Structure
+
+```
+mandate/
+├── gate/          Certificates, policy, consent, SD-JWT receipts, Merkle registry, anchors
+├── swarm/         Desk, console server, MCP, agents (Spark, Muse Code hooks), voice, card webhook
+├── bank/          Increase sandbox rail, reconciliation, events, ACH, card
+├── evidence/      Funds proofs: cooperative statement, TLSNotary verifier
+├── zktls/         TLSNotary prover/verifier (Rust)
+├── mandate/       Python SDK and CLI
+├── console/       Live console, kill-cam, Command view, proof explorer, holder page
+├── webapp/        Holder approval app (/app/)
+├── demo/          Payee book, governed repos for the swarm and Nimbus scenarios
+├── e2e/           End-to-end, attack and live tests
+├── bench/         Benchmarks, budgets and the published report
+└── deploy/        One-VPS recipe: Caddyfile, systemd unit, settings example
+```
+
+---
+
+## Honest Seams
+
+| Seam | What is true |
+|---|---|
+| Bank rail | SANDBOX is the Increase sandbox (test money); SIMULATED is our ledger. Every line says which. The live site runs SIMULATED. |
+| Increase dashboard | Private to the key holder; a judge verifies the receipt offline and the public anchor instead. |
+| zkTLS | A real TLSNotary proof; our verifier sees the balance and the notary is ours; the browser checks only the binding. |
+| Nimbus | prod-eu is a local simulated target; the live deploy was decided by the hook. |
+| Reasoning anchor | Proves non-substitution after issuance; Meta does not re-verify replayed reasoning. |
+| Glasses approval | Tested in browser and Node, not on real glasses. |
+
+---
+
+## What Was Built During the Event
+
+Built for the Meta Global AI Developer Hackathon × Cerebral Valley (27 Oct – 4 Nov 2026). Every commit in this repo is event work; nothing predates it. First commit: 30 Oct 2026.
+
+---
+
+## Reference
+
+The full operating detail, kept verbatim. Every claim above has a row here.
+
+### How to verify
 Each row maps a Meta model to its role, provider, source file and the command that exercises it. Run commands from the repository root.
 
 | Role | Model | Provider | File | Verify |
@@ -78,7 +309,7 @@ The Mandate desk (`mandate-desk`) serves quote, status, confirm and receipt tool
 
 To run the desk locally, start `mandate-desk` (after `pip install -e .`). It prints one line, `Pair the holder device: http://127.0.0.1:8765/app/#pair=<token>`. Open that URL once on the approving device: the page registers its holder key with the one-time token and removes it from the address bar. Each approval is signed by a fresh key that the paired key certifies, so the signature over a payment never names the paired key. Later visits use `http://127.0.0.1:8765/app/`. The `/api` and `/app` routes accept only `127.0.0.1`, `localhost` and `[::1]` as Host, and `mandate-desk` binds a loopback interface only. `mandate-desk` serves this machine only; publish with `mandate-console` (see Publishing a console below). The console routes (`/api/lines`, `/api/events`, `/api/forensic/<seq>`) show every payment's amount, payee, reference and debit account in clear to anyone who can reach a `--public-host` name, so a public host is for demo data only.
 
-### Publishing a console
+#### Publishing a console
 
 Run `mandate-console --rail sandbox --state-dir ~/.mandate-demo --public-host desk.example.com --trusted-proxy 127.0.0.1 --local-port 8767` behind an HTTPS proxy on the same machine. With `--trusted-proxy 127.0.0.1`, every process on this machine is trusted like the proxy; prefer a proxy on an address of its own. The proxy forwards to `127.0.0.1:8766`, passes the original `Host`, and sets `X-Forwarded-Proto` and `X-Forwarded-For`; forwarded headers are believed only from the `--trusted-proxy` addresses or networks (`0.0.0.0/0` is refused). Port 8767 is a second loopback socket in the same process: it alone serves `/mcp`, the holder copies (`?disclose=all`) and the operator rounds (`POST /api/reconcile`, `POST /api/anchor`), to this machine only, and it must never be forwarded. On the proxied port those paths answer 404 (the holder copy 403 `holder copy is local only`), whatever the proxy does to `Host` or the forwarding headers. Agents on the host use `http://127.0.0.1:8767/mcp`. The printed pairing and console URLs use the first public name (`https://desk.example.com/app/#pair=<token>`), never a value read from a request. A listener is public when `--public-host` is given or `--host` is not loopback; a public listener without `--local-port`, or a `--public-host` without `--trusted-proxy`, stops the start with the reason. A console started without these flags cannot tell that a proxy is in front of it: a proxy that rewrites `Host` to `127.0.0.1:8766` and adds no forwarding header (nginx's default) reaches `/mcp` and the holder copies, so any proxy in front of a console needs `--public-host`, `--trusted-proxy` and `--local-port`. Every page (`/console/…` and `/app/`) carries the same Content-Security-Policy header. An installed package carries no pages, so pass `--console-dir` (the console build), `--webapp-dir` (the repository's `webapp/`) and `--payees` (the repository's `demo/payees.json`); a directory without `index.html` stops the start (`console build missing: …`, `holder web app missing: …`). The card webhook (`--card-webhook-port`) is a separate loopback listener with its own app: the tunnel publishes that port alone, a request is admitted by its Increase signature, not by its `Host`, and forwarded headers are never believed there; its port must differ from `--port` and `--local-port`. `mandate-console --doctor` with the same flags checks a start without opening the store or creating a file: one line per check, each key only as `present` or `absent`, ending `doctor: ready`; on `--rail sandbox` it makes the read a start makes before serving (`GET /accounts`, plus the account numbers with `--ach`); with `--zktls` it finds the verifier and checks the notary port, and starts nothing. `GET /api/health` answers `{"rail", "reconciled_at", "bank"}` from the last reconciliation and never calls the bank, so a host can poll it. A state directory inside a git work tree is refused (`state: directory is inside a git work tree (<tree>); keep it outside any repository`). `deploy/` holds this recipe for one VPS: a Caddyfile (HTTPS, proxies to 8766 and the card webhook on 8768, never 8767), a systemd unit that runs `--doctor` before each start, and an example settings file; secrets go in a root-only environment file systemd reads for the console alone.
 
@@ -100,8 +331,12 @@ The ATTACK button in the top bar opens the attack panel. It has seven pinned tem
 
 `POST /api/deploy {"step": "release" | "poisoned_tool" | "stale_migration"}` runs one pinned Nimbus step through the gate, the MCP proxy and a simulated prod-eu target (no model call). The console's right-hand world shows Nimbus HQ for deploy and Muse Code hook lines and the bank for payment lines, and the BRANCH / NIMBUS HQ toggle shows either while the booth is idle.
 
-## Architecture
-See [ARCHITECTURE.md](ARCHITECTURE.md).
+---
 
-## License
-MIT. See [LICENSE](LICENSE).
+<p align="center">
+  <em>Don't trust agents. Verify them.</em>
+</p>
+
+<p align="center">
+  Built for the Meta Global AI Developer Hackathon × Cerebral Valley · Indie track · MIT License
+</p>
