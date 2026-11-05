@@ -1,42 +1,42 @@
 # Mandate benchmarks
 
-Measured 2026-11-04T23:40:56Z on Apple M4, 10 cores, macOS-27.0.1, Python 3.14.3, commit 42f7c8b-dirty.
+Measured 2026-11-04T23:59:16Z on Apple M4, 10 cores, macOS-27.0.1, Python 3.14.3, commit b54441e.
 Each path ran three rounds after a warmup; each statistic is the median of its round values. Budgets: `bench/budgets.toml`. Reproduce: `python -m bench report --dist console/dist`.
 
 ## Headline
 
-- Gate decision (`gate.shim.decide`): p50 10.2 µs, p95 10.5 µs, 95,426/s on one thread.
-- Governed payment, gate and bank verifier (`gate.governed.run`): p50 147.0 µs, p95 158.2 µs, 6,530/s on one thread.
-- Desk payment, quote to sealed receipt, durable (`desk.pay.durable`): p50 1,053.5 µs, p95 1,196.4 µs, 911/s on one thread.
+- Gate decision (`gate.shim.decide`): p50 10.1 µs, p95 10.3 µs, 98,617/s on one thread.
+- Governed payment, gate and bank verifier (`gate.governed.run`): p50 143.1 µs, p95 152.4 µs, 6,957/s on one thread.
+- Desk payment, quote to sealed receipt, durable (`desk.pay.durable`): p50 1,002.3 µs, p95 1,105.3 µs, 955/s on one thread.
 - Template attacks that got past their layer: 0 of 2100; cents moved: 0 (`attacks.templates`, seven kinds on the simulated bank).
 
 ## In process: one thread, fixed inputs
 
 | Path | Samples | p50 µs | p95 µs | per s |
 |---|---:|---:|---:|---:|
-| gate.cava.hash | 6000 | 3.5 | 3.5 | 272,963 |
-| gate.cava.commit | 6000 | 5.2 | 12.0 | 164,232 |
-| gate.policy.evaluate | 6000 | 2.8 | 3.0 | 377,944 |
-| gate.certs.verify | 6000 | 71.2 | 75.0 | 13,525 |
-| gate.shim.decide | 6000 | 10.2 | 10.5 | 95,426 |
-| gate.approval.verify | 6000 | 43.1 | 43.8 | 22,943 |
-| gate.consent.check | 6000 | 88.3 | 272.7 | 9,517 |
-| gate.consent.find_holder | 1500 | 665.8 | 695.9 | 1,477 |
-| gate.governed.run | 3000 | 147.0 | 158.2 | 6,530 |
-| desk.pay.memory | 180 | 689.2 | 732.8 | 1,432 |
-| registry.append_seal | 180 | 40.7 | 42.3 | 24,179 |
-| registry.prove | 180 | 7.1 | 7.3 | 136,843 |
-| receipt.verify | 6000 | 176.0 | 410.2 | 4,945 |
-| desk.reconcile | 60 | 5,142.9 | 5,296.2 | 194 |
-| desk.receipt_by_hash | 6000 | 15.3 | 30.1 | 56,793 |
-| attacks.templates | 300 | 995.2 | 1,049.9 | 995 |
+| gate.cava.hash | 6000 | 3.4 | 3.6 | 280,089 |
+| gate.cava.commit | 6000 | 5.0 | 5.4 | 192,933 |
+| gate.policy.evaluate | 6000 | 1.3 | 1.4 | 688,933 |
+| gate.certs.verify | 6000 | 69.4 | 74.7 | 14,427 |
+| gate.shim.decide | 6000 | 10.1 | 10.3 | 98,617 |
+| gate.approval.verify | 6000 | 42.5 | 45.3 | 23,541 |
+| gate.consent.check | 6000 | 85.9 | 91.3 | 11,596 |
+| gate.consent.find_holder | 1500 | 653.3 | 674.4 | 1,537 |
+| gate.governed.run | 3000 | 143.1 | 152.4 | 6,957 |
+| desk.pay.memory | 180 | 674.9 | 694.2 | 1,480 |
+| registry.append_seal | 180 | 40.0 | 40.9 | 24,727 |
+| registry.prove | 180 | 7.0 | 7.2 | 138,368 |
+| receipt.verify | 6000 | 174.0 | 184.1 | 5,704 |
+| desk.reconcile | 60 | 4,867.8 | 5,038.2 | 205 |
+| desk.receipt_by_hash | 6000 | 14.8 | 15.2 | 67,658 |
+| attacks.templates | 300 | 1,004.5 | 1,066.9 | 990 |
 
 ## Local disk: in process, SQLite state store, synchronous=FULL
 
 | Path | Samples | p50 µs | p95 µs | per s |
 |---|---:|---:|---:|---:|
-| desk.pay.durable | 180 | 1,053.5 | 1,196.4 | 911 |
-| state.reopen | 9 | 15,085.0 | 15,107.2 | 67 |
+| desk.pay.durable | 180 | 1,002.3 | 1,105.3 | 955 |
+| state.reopen | 9 | 14,510.6 | 14,789.8 | 69 |
 
 ## Console build: gzip -9 bytes
 

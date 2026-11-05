@@ -4,18 +4,18 @@
     "cores": "10",
     "os": "macOS-27.0.1",
     "python": "3.14.3",
-    "commit": "42f7c8b-dirty"
+    "commit": "b54441e"
   },
-  "measured_at": "2026-11-04T23:40:56Z",
+  "measured_at": "2026-11-04T23:59:16Z",
   "measured": [
     {
       "label": "in process",
       "result": {
         "name": "gate.cava.hash",
         "samples": 6000,
-        "p50_us": 3.458932042121887,
-        "p95_us": 3.5420525819063187,
-        "decisions_per_s": 272963.01678862446,
+        "p50_us": 3.4170225262641907,
+        "p95_us": 3.582914359867573,
+        "decisions_per_s": 280089.1378893401,
         "counters": {
           "ops": 6000
         }
@@ -26,9 +26,9 @@
       "result": {
         "name": "gate.cava.commit",
         "samples": 6000,
-        "p50_us": 5.249981768429279,
-        "p95_us": 11.958996765315533,
-        "decisions_per_s": 164232.2666111472,
+        "p50_us": 5.042064003646374,
+        "p95_us": 5.375011824071407,
+        "decisions_per_s": 192933.01842412053,
         "counters": {
           "ops": 6000
         }
@@ -39,9 +39,9 @@
       "result": {
         "name": "gate.policy.evaluate",
         "samples": 6000,
-        "p50_us": 2.791057340800762,
-        "p95_us": 3.0440918635576946,
-        "decisions_per_s": 377943.8055759543,
+        "p50_us": 1.3329554349184036,
+        "p95_us": 1.375097781419754,
+        "decisions_per_s": 688932.7517915997,
         "counters": {
           "ops": 6000
         }
@@ -52,9 +52,9 @@
       "result": {
         "name": "gate.certs.verify",
         "samples": 6000,
-        "p50_us": 71.16701453924179,
-        "p95_us": 74.99998901039362,
-        "decisions_per_s": 13525.313896269015,
+        "p50_us": 69.41601168364286,
+        "p95_us": 74.66914248652756,
+        "decisions_per_s": 14426.822313121897,
         "counters": {
           "ops": 6000
         }
@@ -65,9 +65,9 @@
       "result": {
         "name": "gate.shim.decide",
         "samples": 6000,
-        "p50_us": 10.167015716433525,
-        "p95_us": 10.458054021000862,
-        "decisions_per_s": 95426.10733092601,
+        "p50_us": 10.08401159197092,
+        "p95_us": 10.333023965358734,
+        "decisions_per_s": 98616.69392776975,
         "counters": {
           "ops": 6000
         }
@@ -78,9 +78,9 @@
       "result": {
         "name": "gate.approval.verify",
         "samples": 6000,
-        "p50_us": 43.12500823289156,
-        "p95_us": 43.79090969450772,
-        "decisions_per_s": 22943.02607765466,
+        "p50_us": 42.50009078532457,
+        "p95_us": 45.29207944869995,
+        "decisions_per_s": 23541.14771412304,
         "counters": {
           "ops": 6000
         }
@@ -91,9 +91,9 @@
       "result": {
         "name": "gate.consent.check",
         "samples": 6000,
-        "p50_us": 88.29100988805294,
-        "p95_us": 272.7267041336745,
-        "decisions_per_s": 9516.705980277156,
+        "p50_us": 85.91695223003626,
+        "p95_us": 91.25005453824997,
+        "decisions_per_s": 11596.085161269217,
         "counters": {
           "ops": 6000
         }
@@ -104,9 +104,9 @@
       "result": {
         "name": "gate.consent.find_holder",
         "samples": 1500,
-        "p50_us": 665.8330094069242,
-        "p95_us": 695.8915677387267,
-        "decisions_per_s": 1477.3914797439534,
+        "p50_us": 653.332972433418,
+        "p95_us": 674.3590056430548,
+        "decisions_per_s": 1537.184691348916,
         "counters": {
           "ops": 1500
         }
@@ -117,9 +117,9 @@
       "result": {
         "name": "gate.governed.run",
         "samples": 3000,
-        "p50_us": 147.04209752380848,
-        "p95_us": 158.17528474144638,
-        "decisions_per_s": 6529.892626789639,
+        "p50_us": 143.1250711902976,
+        "p95_us": 152.3832674138248,
+        "decisions_per_s": 6957.336438479135,
         "counters": {
           "ops": 3000,
           "unpaid": 0
@@ -131,9 +131,9 @@
       "result": {
         "name": "desk.pay.memory",
         "samples": 180,
-        "p50_us": 689.2289966344833,
-        "p95_us": 732.8277337364852,
-        "decisions_per_s": 1432.381154980908,
+        "p50_us": 674.9164895154536,
+        "p95_us": 694.1813218872994,
+        "decisions_per_s": 1480.1110062989512,
         "counters": {
           "ops": 180,
           "unpaid": 0
@@ -145,9 +145,9 @@
       "result": {
         "name": "desk.pay.durable",
         "samples": 180,
-        "p50_us": 1053.4789762459695,
-        "p95_us": 1196.4266770519312,
-        "decisions_per_s": 910.5993733505629,
+        "p50_us": 1002.3335344158113,
+        "p95_us": 1105.2982124965638,
+        "decisions_per_s": 955.3221005962462,
         "counters": {
           "ops": 180,
           "unpaid": 0
@@ -159,9 +159,9 @@
       "result": {
         "name": "registry.append_seal",
         "samples": 180,
-        "p50_us": 40.66701512783766,
-        "p95_us": 42.29819169268012,
-        "decisions_per_s": 24179.33318014322,
+        "p50_us": 40.041981264948845,
+        "p95_us": 40.88334389962256,
+        "decisions_per_s": 24726.545094360506,
         "counters": {
           "ops": 180
         }
@@ -172,9 +172,9 @@
       "result": {
         "name": "registry.prove",
         "samples": 180,
-        "p50_us": 7.125083357095718,
-        "p95_us": 7.2520459070801735,
-        "decisions_per_s": 136843.19294718513,
+        "p50_us": 7.041962817311287,
+        "p95_us": 7.171143079176545,
+        "decisions_per_s": 138368.42027378577,
         "counters": {
           "ops": 180
         }
@@ -185,9 +185,9 @@
       "result": {
         "name": "receipt.verify",
         "samples": 6000,
-        "p50_us": 175.95908138900995,
-        "p95_us": 410.21110373549163,
-        "decisions_per_s": 4944.505136724472,
+        "p50_us": 174.0000443533063,
+        "p95_us": 184.0892538893968,
+        "decisions_per_s": 5703.714841660923,
         "counters": {
           "ops": 6000,
           "refused": 0
@@ -199,9 +199,9 @@
       "result": {
         "name": "desk.reconcile",
         "samples": 60,
-        "p50_us": 5142.8540027700365,
-        "p95_us": 5296.154448296875,
-        "decisions_per_s": 193.72641221594202,
+        "p50_us": 4867.812036536634,
+        "p95_us": 5038.206320023164,
+        "decisions_per_s": 205.0202612935343,
         "counters": {
           "ops": 60,
           "unbacked": 0
@@ -213,9 +213,9 @@
       "result": {
         "name": "desk.receipt_by_hash",
         "samples": 6000,
-        "p50_us": 15.3339933604002,
-        "p95_us": 30.125025659799576,
-        "decisions_per_s": 56792.5686642342,
+        "p50_us": 14.833989553153515,
+        "p95_us": 15.208031982183456,
+        "decisions_per_s": 67657.5681995351,
         "counters": {
           "ops": 6000,
           "missed": 0
@@ -227,9 +227,9 @@
       "result": {
         "name": "state.reopen",
         "samples": 9,
-        "p50_us": 15084.999962709844,
-        "p95_us": 15107.162552885711,
-        "decisions_per_s": 67.03998094333058,
+        "p50_us": 14510.583016090095,
+        "p95_us": 14789.84581772238,
+        "decisions_per_s": 68.75831931903868,
         "counters": {
           "ops": 9
         }
@@ -240,9 +240,9 @@
       "result": {
         "name": "attacks.templates",
         "samples": 300,
-        "p50_us": 995.1670072041452,
-        "p95_us": 1049.9188210815191,
-        "decisions_per_s": 995.0483909096482,
+        "p50_us": 1004.5205126516521,
+        "p95_us": 1066.8851318769157,
+        "decisions_per_s": 990.3690764712676,
         "counters": {
           "attempts": 2100,
           "unblocked": 0,
