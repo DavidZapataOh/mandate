@@ -85,7 +85,7 @@ The holder states what should be paid and signs it on their own device. The agen
 
 > **[Watch the 3-minute demo →](#)** *(link pending)*
 
-**Live product:** [mandate.davidzo.com/console](https://mandate.davidzo.com/console/) (SIMULATED rail, labelled on every line). Proof explorer: [mandate.davidzo.com/console/explorer.html](https://mandate.davidzo.com/console/explorer.html), paste `pay:000001`.
+**Live product:** [mandate.davidzo.com/console](https://mandate.davidzo.com/console/), on the Increase sandbox rail (test money, labelled `SANDBOX` on every line). Proof explorer: [mandate.davidzo.com/console/explorer.html](https://mandate.davidzo.com/console/explorer.html), paste `sandbox_account_transfer_e1gc4vgrrtpsdzqe5p9p`, a certified payment the public site moved through Increase.
 
 The demo shows the full flow: the holder signs an intent → Muse Spark quotes → the holder approves the seven fields → the gate certifies → the bank pays → a forged approval dies at the consent check → the receipt verifies in the browser.
 
@@ -229,7 +229,7 @@ mandate/
 
 | Seam | What is true |
 |---|---|
-| Bank rail | SANDBOX is the Increase sandbox (test money); SIMULATED is our ledger. Every line says which. The live site runs SIMULATED. |
+| Bank rail | SANDBOX is the Increase sandbox (test money); SIMULATED is our ledger. Every line says which. The live site runs SANDBOX; template attacks always run SIMULATED. |
 | Increase dashboard | Private to the key holder; a judge verifies the receipt offline and the public anchor instead. |
 | zkTLS | A real TLSNotary proof; our verifier sees the balance and the notary is ours; the browser checks only the binding. |
 | Nimbus | prod-eu is a local simulated target; the live deploy was decided by the hook. |
