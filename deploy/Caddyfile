@@ -1,3 +1,9 @@
+{
+	servers {
+		strict_sni_host on
+	}
+}
+
 {$MANDATE_PUBLIC_HOST} {
 	handle /increase/card-authorizations {
 		reverse_proxy 127.0.0.1:8768

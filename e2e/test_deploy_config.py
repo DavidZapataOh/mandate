@@ -58,6 +58,12 @@ def test_the_proxy_never_reaches_the_local_port() -> None:
     assert f"handle {WEBHOOK_PATH} {{" in text
 
 
+def test_the_proxy_refuses_a_host_other_than_the_tls_name() -> None:
+    # Without it, a foreign Host on the same TLS connection gets an empty 200.
+    lines = [x.strip() for x in (DEPLOY / "Caddyfile").read_text().splitlines()]
+    assert lines[:5] == ["{", "servers {", "strict_sni_host on", "}", "}"]
+
+
 def test_the_unit_flags_pass_the_doctor(tmp_path: Path) -> None:
     build = tmp_path / "dist"
     build.mkdir()
